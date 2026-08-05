@@ -62,30 +62,30 @@ export function MarkdownImage({
   const sourceURL = typeof src === 'string' ? src : null;
   const proxied =
     sourceURL != null ? createGitHubWebAssetProxyURL(sourceURL, webURL) : null;
-  if (sourceURL != null && proxied != null) {
-    if (failed) {
-      return (
-        <a
-          className="border-border text-muted-foreground hover:text-foreground inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 !no-underline"
-          href={sourceURL}
-          rel="noreferrer noopener"
-          target="_blank"
-        >
-          <IconImage size={14} />
-          {alt !== '' && alt != null ? alt : 'Image'} — open on GitHub
-        </a>
-      );
-    }
+  if (sourceURL == null || proxied == null) {
+    return <img {...rest} alt={alt ?? ''} loading="lazy" src={src} />;
+  }
+  if (failed) {
     return (
-      <GitHubAssetImage
-        {...rest}
-        alt={alt ?? ''}
-        src={proxied}
-        onError={() => setFailed(true)}
-      />
+      <a
+        className="border-border text-muted-foreground hover:text-foreground inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 !no-underline"
+        href={sourceURL}
+        rel="noreferrer noopener"
+        target="_blank"
+      >
+        <IconImage size={14} />
+        {alt !== '' && alt != null ? alt : 'Image'} — open on GitHub
+      </a>
     );
   }
-  return <img {...rest} alt={alt ?? ''} loading="lazy" src={src} />;
+  return (
+    <GitHubAssetImage
+      {...rest}
+      alt={alt ?? ''}
+      src={proxied}
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 // ```mermaid fences render as diagrams (as GitHub does); every other code

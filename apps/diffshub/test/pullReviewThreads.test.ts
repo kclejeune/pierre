@@ -15,6 +15,7 @@ function createComment(
     author: { avatarUrl: 'https://avatars.example/u/1', login: 'octocat' },
     body: 'Looks good',
     createdAt: '2026-08-01T12:00:00Z',
+    htmlUrl: null,
     inReplyToId: null,
     line: 10,
     path: 'src/index.ts',

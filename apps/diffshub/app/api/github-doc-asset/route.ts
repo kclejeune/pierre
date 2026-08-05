@@ -1,6 +1,7 @@
 import { type NextRequest } from 'next/server';
 
 import { loadGitHubDiffAssetResponse } from '@/lib/githubDiffFileServer';
+import { createInertAssetResponse } from '@/lib/inertAssetResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
 
@@ -40,20 +41,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  return new Response(upstream.body, {
-    headers: {
-      'Content-Type':
-        upstream.headers.get('content-type') ?? 'application/octet-stream',
-      // The refs behind a diff can move (the server re-resolves them every
-      // few minutes), so keep browser caching short.
-      'Cache-Control': 'private, max-age=300',
-      // Mirror raw.githubusercontent.com's defenses so a crafted SVG opened
-      // directly cannot run scripts on this origin.
-      'Content-Security-Policy':
-        "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-      'X-Content-Type-Options': 'nosniff',
-    },
-  });
+  return createInertAssetResponse(upstream);
 }
 
 function isSafeRepoPath(file: string): boolean {

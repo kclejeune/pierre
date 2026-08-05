@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-import { readStoredGitHubToken } from './useGitHubToken';
+import { storedGitHubTokenHeaders } from './useGitHubToken';
 import {
   deriveSuggestQuery,
   filterPullSuggestions,
@@ -13,41 +13,27 @@ import {
 export interface DiffUrlSuggestion {
   key: string;
   label: string;
-  // Input text the suggestion fills in when accepted. Pull suggestions also
-  // carry the viewer path to navigate to directly.
+  // Input text the suggestion fills in when accepted.
   fill: string;
-  href?: string;
 }
 
-// Open-PR lists keyed by repo so keystrokes after "owner/repo#" filter
-// client-side instead of refetching; a failed load caches as [] until the
-// page reloads.
-const pullsByRepo = new Map<string, Promise<PullSuggestion[]>>();
+// Suggestion payloads keyed by query so repeated keystrokes reuse in-flight
+// or completed lookups; a failed load caches as null until the page reloads.
+const suggestCache = new Map<string, Promise<unknown>>();
 
-function authHeaders(): HeadersInit {
-  const token = readStoredGitHubToken();
-  return token === '' ? {} : { Authorization: `Bearer ${token}` };
-}
-
-function fetchPulls(owner: string, repo: string): Promise<PullSuggestion[]> {
-  const cacheKey = `${owner}/${repo}`;
-  let pending = pullsByRepo.get(cacheKey);
+// Fetches /api/github-suggest with the given params, deduped through
+// suggestCache. Resolves the parsed JSON payload, or null on any failure.
+function fetchSuggestPayload(params: Record<string, string>): Promise<unknown> {
+  const search = new URLSearchParams(params);
+  const cacheKey = search.toString();
+  let pending = suggestCache.get(cacheKey);
   if (pending == null) {
-    const params = new URLSearchParams({ kind: 'pulls', owner, repo });
-    pending = fetch(`/api/github-suggest?${params}`, {
-      headers: authHeaders(),
+    pending = fetch(`/api/github-suggest?${search}`, {
+      headers: storedGitHubTokenHeaders(),
     })
-      .then(async (response) => {
-        if (!response.ok) {
-          return [];
-        }
-        const payload = (await response.json()) as {
-          pulls?: PullSuggestion[];
-        };
-        return payload.pulls ?? [];
-      })
-      .catch(() => []);
-    pullsByRepo.set(cacheKey, pending);
+      .then((response) => (response.ok ? response.json() : null))
+      .catch(() => null);
+    suggestCache.set(cacheKey, pending);
   }
   return pending;
 }
@@ -56,19 +42,12 @@ async function loadSuggestions(
   query: SuggestQuery
 ): Promise<DiffUrlSuggestion[]> {
   if (query.kind === 'repos') {
-    const params = new URLSearchParams({
+    const payload = (await fetchSuggestPayload({
       kind: 'repos',
       owner: query.owner ?? '',
       q: query.query,
-    });
-    const response = await fetch(`/api/github-suggest?${params}`, {
-      headers: authHeaders(),
-    }).catch(() => null);
-    if (response == null || !response.ok) {
-      return [];
-    }
-    const payload = (await response.json()) as { repos?: string[] };
-    return (payload.repos ?? []).map((fullName) => ({
+    })) as { repos?: string[] } | null;
+    return (payload?.repos ?? []).map((fullName) => ({
       key: `repo:${fullName}`,
       label: fullName,
       // The trailing "#" keeps the flow going: the next suggestion pass
@@ -77,15 +56,16 @@ async function loadSuggestions(
     }));
   }
 
-  const pulls = filterPullSuggestions(
-    await fetchPulls(query.owner, query.repo),
-    query.filter
-  );
+  const payload = (await fetchSuggestPayload({
+    kind: 'pulls',
+    owner: query.owner,
+    repo: query.repo,
+  })) as { pulls?: PullSuggestion[] } | null;
+  const pulls = filterPullSuggestions(payload?.pulls ?? [], query.filter);
   return pulls.slice(0, 8).map((pull) => ({
     key: `pull:${pull.number}`,
     label: `#${pull.number} · ${pull.title}`,
     fill: `${query.owner}/${query.repo}#${pull.number}`,
-    href: `/${query.owner}/${query.repo}/pull/${pull.number}`,
   }));
 }
 

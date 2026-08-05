@@ -54,6 +54,14 @@ export function saveGitHubTokenToStorage(token: string): void {
   writeStoredToken(token.trim());
 }
 
+// The stored token as request headers: a Bearer Authorization header when a
+// token is saved, empty otherwise. The single client-side spelling of
+// "attach my token if I have one".
+export function storedGitHubTokenHeaders(): HeadersInit {
+  const token = readStoredGitHubToken();
+  return token === '' ? {} : { Authorization: `Bearer ${token}` };
+}
+
 // Synchronous read of the stored token, for callers that need the answer
 // before the hook's hydration effect runs (e.g. the require-login gate).
 export function readStoredGitHubToken(): string {

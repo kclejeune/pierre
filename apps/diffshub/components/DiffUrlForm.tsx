@@ -58,14 +58,8 @@ export function DiffUrlForm({
   const [isPending, startTransition] = useTransition();
   const [url, setURL] = useState(initialUrl);
   const [validationError, setValidationError] = useState<string | null>(null);
-  // Tracks the input's viewport position when an error is shown so the portal
-  // can be fixed-positioned outside any contain-paint boundary.
-  const [errorAnchor, setErrorAnchor] = useState<{
-    top: number;
-    left: number;
-  } | null>(null);
-  // Preserves the last message so the popover still has content while fading out.
-  const lastErrorText = useRef<string | null>(null);
+  // Keeps the error popover mounted while it fades out after the error clears.
+  const [errorVisible, setErrorVisible] = useState(false);
   // Prevents the onBlur restore from firing when blur is caused by Enter.
   const isSubmittingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -75,32 +69,39 @@ export function DiffUrlForm({
   // dropdown never lingers after navigation.
   const [isFocused, setIsFocused] = useState(false);
   const suggestions = useDiffUrlSuggestions(isFocused ? url : '');
-  const [activeSuggestion, setActiveSuggestion] = useState(-1);
+  // Highlighted row, remembered with the list it belongs to so a fresh
+  // suggestion list naturally resets the highlight without an effect.
+  const [activeEntry, setActiveEntry] = useState<{
+    list: DiffUrlSuggestion[];
+    index: number;
+  } | null>(null);
+  const activeSuggestion =
+    activeEntry !== null && activeEntry.list === suggestions
+      ? activeEntry.index
+      : -1;
   const suggestionsOpen =
     isFocused && suggestions.length > 0 && validationError === null;
-  const [suggestAnchor, setSuggestAnchor] = useState<{
+
+  // Both popovers (suggestions list, error message) are fixed-position portals
+  // anchored under the input to escape contain-paint boundaries. One shared
+  // measurement covers both; resize (including DevTools opening) and scroll
+  // change the input's viewport position, so re-measure on those events.
+  const anchorNeeded = suggestionsOpen || errorVisible;
+  const [anchor, setAnchor] = useState<{
     top: number;
     left: number;
     width: number;
   } | null>(null);
 
   useEffect(() => {
-    setActiveSuggestion(-1);
-  }, [suggestions]);
-
-  useEffect(() => {
-    if (!suggestionsOpen) {
-      setSuggestAnchor(null);
+    if (!anchorNeeded) {
+      setAnchor(null);
       return;
     }
     const updatePosition = () => {
       const rect = inputRef.current?.getBoundingClientRect();
       if (rect != null) {
-        setSuggestAnchor({
-          left: rect.left,
-          top: rect.bottom,
-          width: rect.width,
-        });
+        setAnchor({ left: rect.left, top: rect.bottom, width: rect.width });
       }
     };
     updatePosition();
@@ -110,18 +111,21 @@ export function DiffUrlForm({
       window.removeEventListener('resize', updatePosition);
       window.removeEventListener('scroll', updatePosition, true);
     };
-  }, [suggestionsOpen]);
+  }, [anchorNeeded]);
 
   const acceptSuggestion = useStableCallback(
     (suggestion: DiffUrlSuggestion) => {
       setURL(suggestion.fill);
       setValidationError(null);
-      if (suggestion.href != null) {
+      // Pull suggestions fill a complete shorthand that resolves to a viewer
+      // path; repo suggestions fill "owner/repo#", which doesn't resolve yet,
+      // so keep focus for the pull-number pass.
+      const viewerHref = getPatchViewerHref(suggestion.fill, githubHost);
+      if (viewerHref != null) {
         isSubmittingRef.current = true;
         inputRef.current?.blur();
-        const { href } = suggestion;
         startTransition(() => {
-          router.push(href);
+          router.push(viewerHref);
         });
       } else {
         inputRef.current?.focus();
@@ -137,25 +141,6 @@ export function DiffUrlForm({
     onUrlChange?.(url);
   }, [onUrlChange, url]);
 
-  // Keep the portal position in sync with the input whenever it's visible.
-  // Resize (including DevTools opening) and scroll both change the input's
-  // viewport position, so we re-measure on those events.
-  useEffect(() => {
-    if (errorAnchor === null) return;
-
-    const updatePosition = () => {
-      const rect = inputRef.current?.getBoundingClientRect();
-      if (rect != null) setErrorAnchor({ top: rect.bottom, left: rect.left });
-    };
-
-    window.addEventListener('resize', updatePosition);
-    window.addEventListener('scroll', updatePosition, true);
-    return () => {
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
-    };
-  }, [errorAnchor]);
-
   const handleSubmit = useStableCallback(
     (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
@@ -163,10 +148,8 @@ export function DiffUrlForm({
       const normalizedURL = url.trim();
       const viewerHref = getPatchViewerHref(normalizedURL, githubHost);
       if (viewerHref == null) {
-        const rect = inputRef.current?.getBoundingClientRect();
-        if (rect != null) setErrorAnchor({ top: rect.bottom, left: rect.left });
-        lastErrorText.current = 'Please enter a valid URL';
         setValidationError('Please enter a valid URL');
+        setErrorVisible(true);
         return;
       }
       setValidationError(null);
@@ -223,14 +206,20 @@ export function DiffUrlForm({
         onKeyDown={(e) => {
           if (suggestionsOpen && e.key === 'ArrowDown') {
             e.preventDefault();
-            setActiveSuggestion((index) => (index + 1) % suggestions.length);
+            setActiveEntry({
+              index: (activeSuggestion + 1) % suggestions.length,
+              list: suggestions,
+            });
             return;
           }
           if (suggestionsOpen && e.key === 'ArrowUp') {
             e.preventDefault();
-            setActiveSuggestion(
-              (index) => (index - 1 + suggestions.length) % suggestions.length
-            );
+            setActiveEntry({
+              index:
+                (activeSuggestion - 1 + suggestions.length) %
+                suggestions.length,
+              list: suggestions,
+            });
             return;
           }
           if (suggestionsOpen && e.key === 'Enter' && activeSuggestion >= 0) {
@@ -268,14 +257,14 @@ export function DiffUrlForm({
       {/* Hidden submit ensures Enter triggers form submission in all browsers */}
       <button type="submit" hidden />
       {suggestionsOpen &&
-        suggestAnchor !== null &&
+        anchor !== null &&
         createPortal(
           <ul
             role="listbox"
             style={{
-              left: suggestAnchor.left,
-              minWidth: Math.max(suggestAnchor.width, 320),
-              top: suggestAnchor.top + 6,
+              left: anchor.left,
+              minWidth: Math.max(anchor.width, 320),
+              top: anchor.top + 6,
             }}
             className="bg-background border-border fixed z-50 max-h-80 max-w-[560px] overflow-y-auto rounded-md border py-1 shadow-lg"
           >
@@ -293,7 +282,9 @@ export function DiffUrlForm({
                   // handler doesn't close the list before click lands.
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => acceptSuggestion(suggestion)}
-                  onMouseEnter={() => setActiveSuggestion(index)}
+                  onMouseEnter={() =>
+                    setActiveEntry({ index, list: suggestions })
+                  }
                 >
                   {suggestion.label}
                 </button>
@@ -302,21 +293,22 @@ export function DiffUrlForm({
           </ul>,
           document.body
         )}
-      {errorAnchor !== null &&
+      {errorVisible &&
+        anchor !== null &&
         createPortal(
           <div
             aria-live="polite"
-            style={{ top: errorAnchor.top + 8, left: errorAnchor.left }}
+            style={{ top: anchor.top + 8, left: anchor.left }}
             className={cn(
               'bg-foreground text-background pointer-events-none fixed z-50 rounded-md px-3 py-1.5 text-xs transition-opacity duration-150',
               validationError !== null ? 'opacity-100' : 'opacity-0'
             )}
             onTransitionEnd={() => {
-              if (validationError === null) setErrorAnchor(null);
+              if (validationError === null) setErrorVisible(false);
             }}
           >
             <div className="bg-foreground absolute -top-1 left-3 size-2.5 rotate-45 rounded-[2px]" />
-            {lastErrorText.current}
+            Please enter a valid URL
           </div>,
           document.body
         )}

@@ -158,12 +158,19 @@ export async function loadGitHubDiffAssetResponse(
   if (source == null) {
     throw new Error('Unsupported GitHub diff path.');
   }
-  const useSharedCache = options.tokenSource !== 'request';
-  const refs = await resolveGitHubDiffRefsForRequest(
-    source,
-    fetch,
-    options,
-    useSharedCache
+  // A rendered doc can reference many images, and each arrives as its own
+  // request — cache the ref resolution so they don't each re-run the GitHub
+  // API calls. Refs are keyed by token so one viewer's resolution of a
+  // private diff is never served to a request that couldn't resolve it
+  // itself.
+  const refsCacheKey = `${getSourceCacheKey(source)}\0${
+    options.tokenSource === 'request' ? (options.token ?? '') : ''
+  }`;
+  const refs = await getCachedPromise(
+    refsCache,
+    refsCacheKey,
+    REF_CACHE_TTL_MS,
+    () => resolveGitHubDiffRefs(source, fetch, options)
   );
   const ref = request.side === 'old' ? refs.oldRef : refs.newRef;
   if (ref == null) {
@@ -500,7 +507,7 @@ async function fetchGitHubJSON(
   return response.json();
 }
 
-function createGitHubRawHeaders(token: string | undefined): HeadersInit {
+export function createGitHubRawHeaders(token: string | undefined): HeadersInit {
   const headers: Record<string, string> = {
     'User-Agent': GITHUB_USER_AGENT,
   };

@@ -12,20 +12,7 @@ import { ThemedCodeView } from '../../components/ThemedCodeView';
 import { ThemedSurface } from '../../components/ThemedSurface';
 import { ThemeSourceProvider } from '../../components/ThemeSourceProvider';
 import type { ChromeMapping } from '../theme/chromeThemeProps';
-
-const originalGlobals = {
-  document: Reflect.get(globalThis, 'document'),
-  HTMLDivElement: Reflect.get(globalThis, 'HTMLDivElement'),
-  HTMLElement: Reflect.get(globalThis, 'HTMLElement'),
-  IS_REACT_ACT_ENVIRONMENT: Reflect.get(
-    globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean },
-    'IS_REACT_ACT_ENVIRONMENT'
-  ),
-  cancelAnimationFrame: Reflect.get(globalThis, 'cancelAnimationFrame'),
-  requestAnimationFrame: Reflect.get(globalThis, 'requestAnimationFrame'),
-  ResizeObserver: Reflect.get(globalThis, 'ResizeObserver'),
-  window: Reflect.get(globalThis, 'window'),
-};
+import { installJsdomGlobals } from './jsdomGlobals';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
   pretendToBeVisual: true,
@@ -65,8 +52,10 @@ class MockResizeObserver {
   disconnect(): void {}
 }
 
+let restoreGlobals: () => void;
+
 beforeAll(() => {
-  Object.assign(globalThis, {
+  restoreGlobals = installJsdomGlobals({
     document: dom.window.document,
     HTMLDivElement: dom.window.HTMLDivElement,
     HTMLElement: dom.window.HTMLElement,
@@ -75,19 +64,10 @@ beforeAll(() => {
     requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
     window: dom.window,
   });
-  (
-    globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
-  ).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
 afterAll(() => {
-  for (const [key, value] of Object.entries(originalGlobals)) {
-    if (value === undefined) {
-      Reflect.deleteProperty(globalThis, key);
-    } else {
-      Object.assign(globalThis, { [key]: value });
-    }
-  }
+  restoreGlobals();
   dom.window.close();
 });
 

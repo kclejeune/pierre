@@ -7,6 +7,7 @@ import {
   type DiffIndicators,
   type DiffLineAnnotation,
   type FileDiffContentsLoader,
+  isDiffAnnotation,
   type LineAnnotation,
   type SelectedLineRange,
   type ThemeTypes,
@@ -27,7 +28,11 @@ import { cn } from '@/lib/cn';
 import { CODE_VIEW_CUSTOM_CSS, CODE_VIEW_LAYOUT } from '@/lib/constants';
 import { incrementItemVersion } from '@/lib/incrementItemVersion';
 import { isDiffItem } from '@/lib/isDiffItem';
-import { DOC_PREVIEW_KEY, isDocAnnotation } from '@/lib/isDocAnnotation';
+import {
+  DOC_PREVIEW_KEY,
+  getDocAnnotationSide,
+  isDocAnnotation,
+} from '@/lib/isDocAnnotation';
 import { isDraftAnnotation } from '@/lib/isDraftAnnotation';
 import { isDraftMetadata } from '@/lib/isDraftMetadata';
 import { isMarkdownFileName } from '@/lib/isMarkdownFileName';
@@ -57,6 +62,25 @@ import type {
   DiffsHubSavedCommentEvent,
   SavedCommentMetadata,
 } from '@/lib/types';
+
+const EMPTY_DOC_RAIL_COMMENTS: DiffLineAnnotation<CommentMetadata>[] = [];
+
+// The single predicate for both halves of the doc-rail partition: comments it
+// matches render in the rendered document's margin rail while the doc is
+// open, and are suppressed at their diff lines. Keeping one predicate ensures
+// no annotation is ever shown twice or silently dropped.
+function isDocRailComment(
+  annotation:
+    | DiffLineAnnotation<CommentMetadata>
+    | LineAnnotation<CommentMetadata>,
+  item: CodeViewDiffItem<CommentMetadata>
+): annotation is DiffLineAnnotation<CommentMetadata> {
+  return (
+    isDiffAnnotation<CommentMetadata>(annotation) &&
+    annotation.metadata.kind !== 'doc' &&
+    annotation.side === getDocAnnotationSide(item.fileDiff)
+  );
+}
 
 function updateViewerDiffItem(
   viewer: CodeViewHandle<CommentMetadata>,
@@ -622,10 +646,9 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
         return true;
       }
       item.annotations = [
-        // The doc renders above the diff via the file-level (line 0) slot;
-        // deleted files anchor it to the deletions side they render from.
+        // The doc renders above the diff via the file-level (line 0) slot.
         {
-          side: item.fileDiff.type === 'deleted' ? 'deletions' : 'additions',
+          side: getDocAnnotationSide(item.fileDiff),
           lineNumber: 0,
           metadata: { kind: 'doc', key: DOC_PREVIEW_KEY },
         },
@@ -681,47 +704,77 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
 
   // The comment card for a single draft/thread/saved annotation, rendered
   // either at its diff line or in the rendered document's margin rail.
-  const renderCommentCard = (
-    annotation: DiffLineAnnotation<CommentMetadata>,
-    itemId: string
-  ) => {
-    if (isDraftAnnotation(annotation)) {
+  // Identity-stable so it can be passed to the memoized doc component.
+  const renderCommentCard = useStableCallback(
+    (annotation: DiffLineAnnotation<CommentMetadata>, itemId: string) => {
+      if (isDraftAnnotation(annotation)) {
+        return (
+          <DraftAnnotation
+            annotation={annotation}
+            itemId={itemId}
+            onCancel={handleRemoveComment}
+            onSave={handleSaveDraftComment}
+          />
+        );
+      }
+
+      if (isThreadAnnotation(annotation)) {
+        return (
+          <ThreadAnnotation
+            annotation={annotation}
+            itemId={itemId}
+            canWrite={getWriteToken() != null}
+            onDeleteComment={handleThreadDeleteComment}
+            onEditComment={handleThreadEditComment}
+            onReply={handleThreadReply}
+          />
+        );
+      }
+
+      if (!isSavedAnnotation(annotation)) {
+        return null;
+      }
+
       return (
-        <DraftAnnotation
+        <ExampleAnnotation
           annotation={annotation}
           itemId={itemId}
-          onCancel={handleRemoveComment}
-          onSave={handleSaveDraftComment}
+          onDelete={handleRemoveComment}
+          onEdit={handleEditLocalComment}
+          onToggleSelection={handleToggleCommentSelection}
         />
       );
     }
+  );
 
-    if (isThreadAnnotation(annotation)) {
-      return (
-        <ThreadAnnotation
-          annotation={annotation}
-          itemId={itemId}
-          canWrite={getWriteToken() != null}
-          onDeleteComment={handleThreadDeleteComment}
-          onEditComment={handleThreadEditComment}
-          onReply={handleThreadReply}
-        />
-      );
+  // Returns the comments that belong in an item's doc margin rail, cached by
+  // the annotations array's identity so the memoized doc component sees the
+  // same array across unrelated re-renders. `canWrite` joins the cache key
+  // because the rendered cards depend on it (reply/edit affordances).
+  const docRailCommentsCacheRef = useRef(
+    new WeakMap<
+      DiffLineAnnotation<CommentMetadata>[],
+      { canWrite: boolean; comments: DiffLineAnnotation<CommentMetadata>[] }
+    >()
+  );
+  const getDocRailComments = (
+    item: CodeViewDiffItem<CommentMetadata>,
+    canWrite: boolean
+  ): DiffLineAnnotation<CommentMetadata>[] => {
+    const { annotations } = item;
+    if (annotations == null) {
+      return EMPTY_DOC_RAIL_COMMENTS;
     }
-
-    if (!isSavedAnnotation(annotation)) {
-      return null;
+    const cache = docRailCommentsCacheRef.current;
+    const cached = cache.get(annotations);
+    if (cached != null && cached.canWrite === canWrite) {
+      return cached.comments;
     }
-
-    return (
-      <ExampleAnnotation
-        annotation={annotation}
-        itemId={itemId}
-        onDelete={handleRemoveComment}
-        onEdit={handleEditLocalComment}
-        onToggleSelection={handleToggleCommentSelection}
-      />
+    const comments = annotations.filter((candidate) =>
+      isDocRailComment(candidate, item)
     );
+    cache.set(annotations, { canWrite, comments });
+    return comments;
   };
 
   const renderCommentAnnotation = useStableCallback(
@@ -731,22 +784,14 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
         | LineAnnotation<CommentMetadata>,
       item: CodeViewItem<CommentMetadata>
     ) => {
-      if (!('side' in annotation) || item.type !== 'diff') {
+      if (
+        !isDiffAnnotation<CommentMetadata>(annotation) ||
+        item.type !== 'diff'
+      ) {
         return null;
       }
 
-      // The rendered document is anchored to the deletions side only when the
-      // file was deleted (there is no additions side to render).
-      const docSide =
-        item.fileDiff.type === 'deleted' ? 'deletions' : 'additions';
-
       if (isDocAnnotation(annotation)) {
-        const commentAnnotations = (item.annotations ?? []).filter(
-          (candidate) =>
-            'side' in candidate &&
-            candidate.side === docSide &&
-            !isDocAnnotation(candidate)
-        );
         return (
           <MarkdownDocAnnotation
             fileDiff={item.fileDiff}
@@ -754,18 +799,19 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
             loadDiffFiles={loadDiffFiles}
             onCommentAtLine={handleCommentAtDocLine}
             sourcePath={sourcePath}
-            commentAnnotations={commentAnnotations}
-            renderComment={(commentAnnotation) =>
-              renderCommentCard(commentAnnotation, item.id)
-            }
+            commentAnnotations={getDocRailComments(
+              item,
+              getWriteToken() != null
+            )}
+            renderComment={renderCommentCard}
           />
         );
       }
 
-      // While the rendered document is open, its side's comments show in the
-      // document's margin rail instead of at their diff lines.
+      // While the rendered document is open, its rail's comments render there
+      // instead of at their diff lines.
       if (
-        annotation.side === docSide &&
+        isDocRailComment(annotation, item) &&
         item.annotations?.some(isDocAnnotation) === true
       ) {
         return null;

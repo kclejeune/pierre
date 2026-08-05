@@ -34,9 +34,14 @@ interface MarkdownDocAnnotationProps {
   sourcePath?: string;
   // Comment annotations on this document's side of the diff, shown in a
   // margin rail beside the block containing each comment's line while the
-  // rendered view is open. `renderComment` supplies the card for each one.
+  // rendered view is open. `renderComment` supplies the card for each one;
+  // both props should be identity-stable so the memo on this component can
+  // skip re-parsing the document when nothing changed.
   commentAnnotations?: DiffLineAnnotation<CommentMetadata>[];
-  renderComment?(annotation: DiffLineAnnotation<CommentMetadata>): ReactNode;
+  renderComment?(
+    annotation: DiffLineAnnotation<CommentMetadata>,
+    itemId: string
+  ): ReactNode;
 }
 
 // The rendered-markdown document view, shown as a file-level annotation above
@@ -61,11 +66,23 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
     () => (isDeletedDoc ? null : buildNewFileChangeMap(fileDiff)),
     [fileDiff, isDeletedDoc]
   );
-  // The rail only reserves layout space when there is something to show.
-  const hasRail =
-    renderComment != null &&
-    commentAnnotations != null &&
-    commentAnnotations.length > 0;
+  // The rail only exists (and reserves layout space) when there is something
+  // to show. Sorting once here keeps every per-block slice in line order.
+  const rail = useMemo(() => {
+    if (
+      renderComment == null ||
+      commentAnnotations == null ||
+      commentAnnotations.length === 0
+    ) {
+      return null;
+    }
+    return {
+      annotations: [...commentAnnotations].sort(
+        (a, b) => a.lineNumber - b.lineNumber
+      ),
+      renderComment,
+    };
+  }, [commentAnnotations, renderComment]);
 
   const rehypePlugins = useMemo(() => [rehypeWrapTopLevelBlocks], []);
   const components = useMemo<Components>(
@@ -114,15 +131,14 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
           parseSourceLine(node?.properties?.dataClaimStart) ?? sourceStart;
         const claimEnd =
           parseSourceLine(node?.properties?.dataClaimEnd) ?? sourceEnd;
-        const blockComments = hasRail
-          ? commentAnnotations
-              .filter(
+        const blockComments =
+          rail == null
+            ? []
+            : rail.annotations.filter(
                 (annotation) =>
                   annotation.lineNumber >= claimStart &&
                   annotation.lineNumber <= claimEnd
-              )
-              .sort((a, b) => a.lineNumber - b.lineNumber)
-          : [];
+              );
         return (
           <div
             className={cn(
@@ -131,12 +147,12 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
               // readable prose column; otherwise comments stack below their
               // block. Container query, since the card's width tracks the
               // viewer column rather than the viewport.
-              hasRail
+              rail != null
                 ? '@3xl:grid @3xl:grid-cols-[minmax(0,1fr)_minmax(260px,320px)] @3xl:gap-4'
                 : 'relative'
             )}
           >
-            <div className={cn(hasRail && 'relative min-w-0')}>
+            <div className={cn(rail != null && 'relative min-w-0')}>
               {changed && (
                 <span
                   aria-hidden="true"
@@ -156,13 +172,13 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
               )}
               {props.children}
             </div>
-            {blockComments.length > 0 && (
+            {rail != null && blockComments.length > 0 && (
               <div className="flex min-w-0 flex-col self-start">
-                {blockComments.map((annotation) => (
-                  <div key={annotation.metadata.key}>
-                    {renderComment?.(annotation)}
-                  </div>
-                ))}
+                <CommentCards
+                  annotations={blockComments}
+                  itemId={itemId}
+                  renderComment={rail.renderComment}
+                />
               </div>
             )}
           </div>
@@ -171,13 +187,11 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
     }),
     [
       changeMap,
-      commentAnnotations,
       fileDiff,
-      hasRail,
       isDeletedDoc,
       itemId,
       onCommentAtLine,
-      renderComment,
+      rail,
       sourcePath,
     ]
   );
@@ -186,7 +200,7 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
     <div
       className={cn(
         '@container m-2 rounded-xl border border-[var(--diffshub-annotation-border,var(--color-border))] bg-[var(--diffshub-annotation-bg,var(--color-card))] font-sans text-[var(--diffshub-annotation-fg,var(--color-card-foreground))] shadow-[var(--diffshub-annotation-shadow,0_2px_4px_rgb(0_0_0_/_0.025),0_4px_8px_rgb(0_0_0_/_0.025))]',
-        hasRail ? 'max-w-[1240px]' : 'max-w-[860px]'
+        rail != null ? 'max-w-[1240px]' : 'max-w-[860px]'
       )}
     >
       <div className="text-muted-foreground flex items-center gap-2 border-b border-[var(--diffshub-annotation-border,var(--color-border))] px-4 py-2 text-[12px] tracking-wide uppercase">
@@ -211,26 +225,51 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
         {contentsState.kind === 'ready' && (
           <MarkdownContent
             markdown={contentsState.contents}
-            rehypePlugins={rehypePlugins}
+            rehypePluginsBeforeRaw={rehypePlugins}
             components={components}
           />
         )}
         {contentsState.kind !== 'ready' &&
-          hasRail && (
+          rail != null && (
             // Without rendered blocks to attach to, keep the comments visible
             // as a flat list so they never silently disappear.
             <div className="mt-2 flex max-w-[620px] flex-col">
-              {commentAnnotations.map((annotation) => (
-                <div key={annotation.metadata.key}>
-                  {renderComment(annotation)}
-                </div>
-              ))}
+              <CommentCards
+                annotations={rail.annotations}
+                itemId={itemId}
+                renderComment={rail.renderComment}
+              />
             </div>
           )}
       </div>
     </div>
   );
 });
+
+// The keyed comment-card list shared by the margin rail and the not-ready
+// fallback list.
+function CommentCards({
+  annotations,
+  itemId,
+  renderComment,
+}: {
+  annotations: DiffLineAnnotation<CommentMetadata>[];
+  itemId: string;
+  renderComment(
+    annotation: DiffLineAnnotation<CommentMetadata>,
+    itemId: string
+  ): ReactNode;
+}) {
+  return (
+    <>
+      {annotations.map((annotation) => (
+        <div key={annotation.metadata.key}>
+          {renderComment(annotation, itemId)}
+        </div>
+      ))}
+    </>
+  );
+}
 
 type MarkdownDocContentsState =
   | { kind: 'loading' }
@@ -334,42 +373,47 @@ function parseSourceLine(value: unknown): number | null {
 // range; the re-parse merely nests the wrappers inside the malformed element,
 // which is why the div override above matches wrappers at any depth rather
 // than only at the top level.
+type PositionedBlock = HastElement & {
+  position: NonNullable<HastElement['position']>;
+};
+
+function isPositionedBlock(
+  child: HastRoot['children'][number]
+): child is PositionedBlock {
+  return child.type === 'element' && child.position != null;
+}
+
 function rehypeWrapTopLevelBlocks() {
   return (tree: HastRoot) => {
     // Beyond its own source range, each block also claims the lines between
-    // it and the next block (blank lines, mostly), and the first block claims
-    // everything above it. That partitions every document line to exactly one
-    // block, so a comment on any line has a home in the margin rail.
-    const positioned = tree.children.filter(
-      (child) => child.type === 'element' && child.position != null
-    );
-    const claimStarts = new Map<HastRoot['children'][number], number>();
-    const claimEnds = new Map<HastRoot['children'][number], number>();
-    for (const [index, child] of positioned.entries()) {
-      if (child.type !== 'element' || child.position == null) {
-        continue;
-      }
-      claimStarts.set(child, index === 0 ? 1 : child.position.start.line);
-      const next = positioned[index + 1];
-      claimEnds.set(
-        child,
-        next?.type === 'element' && next.position != null
-          ? next.position.start.line - 1
-          : Number.MAX_SAFE_INTEGER
-      );
+    // it and the next block (blank lines, mostly), the first block claims
+    // everything above it, and the last everything below. That partitions
+    // every document line to exactly one block, so a comment on any line has
+    // a home in the margin rail.
+    const blocks = tree.children.filter(isPositionedBlock);
+    const claims = new Map<PositionedBlock, { start: number; end: number }>();
+    for (const [index, block] of blocks.entries()) {
+      claims.set(block, {
+        start: index === 0 ? 1 : block.position.start.line,
+        end:
+          blocks[index + 1] != null
+            ? blocks[index + 1].position.start.line - 1
+            : Number.MAX_SAFE_INTEGER,
+      });
     }
     tree.children = tree.children.map((child) => {
-      if (child.type !== 'element' || child.position == null) {
+      if (!isPositionedBlock(child)) {
         return child;
       }
+      const claim = claims.get(child);
       const wrapper: HastElement = {
         type: 'element',
         tagName: 'div',
         properties: {
           dataSourceStart: child.position.start.line,
           dataSourceEnd: child.position.end.line,
-          dataClaimStart: claimStarts.get(child) ?? child.position.start.line,
-          dataClaimEnd: claimEnds.get(child) ?? child.position.end.line,
+          dataClaimStart: claim?.start ?? child.position.start.line,
+          dataClaimEnd: claim?.end ?? child.position.end.line,
         },
         children: [child],
       };

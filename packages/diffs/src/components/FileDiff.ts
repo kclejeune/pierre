@@ -126,7 +126,7 @@ import {
   getTrailingExpandedRegion,
   isAdditionLineRenderable,
 } from '../utils/virtualDiffLayout';
-import { WorkerPoolCanceledError, type WorkerPoolManager } from '../worker';
+import { logUnlessCanceled, type WorkerPoolManager } from '../worker';
 import { DiffsContainerLoaded } from './web-components';
 
 type LoadedPartialDiffContents = Awaited<
@@ -2413,13 +2413,7 @@ export class FileDiff<
 
     await workerManager
       .primeDiffHighlightCache(fileDiff)
-      .catch((error: unknown) => {
-        // Cancellations mean the prime became unnecessary (unmount, scroll
-        // away, theme change) — only real failures are worth logging.
-        if (!(error instanceof WorkerPoolCanceledError)) {
-          console.error(error);
-        }
-      });
+      .catch(logUnlessCanceled);
   }
 
   private cleanChildNodes() {

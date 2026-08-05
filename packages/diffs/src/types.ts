@@ -338,6 +338,9 @@ export interface FileDiffMetadata {
    * old version of the file.  Otherwise `deletionLines` will just be an array
    * of all the content processed from the `context` and `deletion` lines of
    * the patch.
+   *
+   * Each entry retains its original trailing newline (the file's last line may
+   * lack one), so concatenating the array reconstructs the exact contents.
    */
   deletionLines: string[];
   /**
@@ -346,6 +349,9 @@ export interface FileDiffMetadata {
    * new version of the file.  Otherwise `additionLines` will just be an array
    * of all the content processed from the `context` and `addition` lines of
    * the patch.
+   *
+   * Each entry retains its original trailing newline (the file's last line may
+   * lack one), so concatenating the array reconstructs the exact contents.
    */
   additionLines: string[];
   /**

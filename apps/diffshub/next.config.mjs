@@ -18,8 +18,22 @@ if (
   process.env.NEXT_PUBLIC_WORKTREE_SLUG = process.env.PIERRE_WORKTREE_SLUG;
 }
 
+// Opt-in standalone output for container builds (see Dockerfile): bundles the
+// server plus traced node_modules under .next/standalone so the runtime image
+// needs no pnpm install. Gated behind an env flag so the Vercel deployment
+// keeps Next's default output. outputFileTracingRoot points at the monorepo
+// root so workspace packages are traced into the bundle correctly.
+const standaloneOutput =
+  process.env.NEXT_OUTPUT === 'standalone'
+    ? {
+        output: 'standalone',
+        outputFileTracingRoot: new URL('../..', import.meta.url).pathname,
+      }
+    : {};
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  ...standaloneOutput,
   // Strict mode is disabled here to avoid GitHub request thrash in dev: the
   // viewer fires upstream patch fetches on mount, and double-invoked effects
   // would double those requests.

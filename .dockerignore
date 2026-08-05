@@ -1,0 +1,13 @@
+# Keep the Docker build context lean: dependency trees and build outputs are
+# recreated inside the image, and the git history is replaced by a throwaway
+# index (the diffshub Dockerfile runs `git init` for moon's input hashing).
+.git
+node_modules
+**/node_modules
+**/.next
+.moon/cache
+.agents/ignore
+**/test-results
+**/playwright-report
+.env*
+**/.env*

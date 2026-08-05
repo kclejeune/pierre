@@ -11,8 +11,12 @@ const BARE_GITHUB_PATH_PATTERN = /^([^/\s.]+)\/([^/\s.]+)(\/[^\s]*)?$/;
 // Resolves a user-supplied string into a viewer href, or undefined if the
 // input can't be mapped to a supported diff URL. Accepts full URLs, URLs
 // without a protocol (e.g. "github.com/..."), bare "owner/repo/..." paths, and
-// GitHub shorthand ("owner/repo#123").
-export function getPatchViewerHref(input: string): string | undefined {
+// GitHub shorthand ("owner/repo#123"). `githubHost` selects which hostname
+// counts as "the" GitHub instance for self-hosted deployments.
+export function getPatchViewerHref(
+  input: string,
+  githubHost?: string
+): string | undefined {
   const trimmed = input.trim();
   if (trimmed === '') return undefined;
 
@@ -25,7 +29,7 @@ export function getPatchViewerHref(input: string): string | undefined {
   // Full URL with protocol (most common case).
   try {
     const parsedURL = new URL(trimmed);
-    const githubPath = getGitHubPathFromURL(parsedURL);
+    const githubPath = getGitHubPathFromURL(parsedURL, githubHost);
     if (githubPath != null) return githubPath;
     if (parsedURL.pathname !== '/') {
       return `${parsedURL.pathname}?domain=${encodeURIComponent(parsedURL.hostname)}`;
@@ -43,7 +47,7 @@ export function getPatchViewerHref(input: string): string | undefined {
   if (firstSegment.includes('.')) {
     try {
       const parsedURL = new URL(`https://${trimmed}`);
-      const githubPath = getGitHubPathFromURL(parsedURL);
+      const githubPath = getGitHubPathFromURL(parsedURL, githubHost);
       if (githubPath != null) return githubPath;
       if (parsedURL.pathname !== '/') {
         return `${parsedURL.pathname}?domain=${encodeURIComponent(parsedURL.hostname)}`;

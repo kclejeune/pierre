@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 import { saveGitHubTokenToStorage } from '@/components/useGitHubToken';
+import { sanitizeReturnTo } from '@/lib/githubOAuth';
 
 // Landing page for the OAuth callback redirect. The token arrives in the URL
 // fragment (so it never hits server logs); this page moves it into the same
@@ -56,17 +57,4 @@ function parseTokenFromHash(hash: string): string | undefined {
   }
   const token = new URLSearchParams(hash.slice(1)).get('token')?.trim();
   return token == null || token === '' ? undefined : token;
-}
-
-// Mirrors the server-side rule in lib/githubOAuth.ts: same-origin paths only.
-function sanitizeReturnTo(value: string | null): string {
-  if (
-    value == null ||
-    !value.startsWith('/') ||
-    value.startsWith('//') ||
-    value.startsWith('/\\')
-  ) {
-    return '/';
-  }
-  return value;
 }

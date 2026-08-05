@@ -112,10 +112,15 @@ export function getGitHubOAuthConfig(): GitHubOAuthConfig | undefined {
 
 export function getGitHubClientEnvironment(): GitHubClientEnvironment {
   const environment = getGitHubEnvironment();
+  // The UI flag keys off the public client id alone (not the full OAuth
+  // config): statically prerendered pages bake this value at build time, and
+  // requiring the secret there would force it into build environments and
+  // image layers. A missing secret surfaces at the login route instead.
+  const clientId = process.env.DIFFSHUB_GITHUB_CLIENT_ID?.trim();
   return {
     host: environment.host,
     isGitHubDotCom: environment.isGitHubDotCom,
-    oauthEnabled: getGitHubOAuthConfig() != null,
+    oauthEnabled: clientId != null && clientId !== '',
     webURL: environment.webURL,
   };
 }

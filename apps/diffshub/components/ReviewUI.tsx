@@ -357,6 +357,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
             initialItems={initialItems}
             loadDiffFiles={loadDiffFiles}
             pullRequest={pullRequest}
+            sourcePath={domain == null ? path : undefined}
             getGitHubToken={getGitHubToken}
             onCommentDeleted={handleCommentDeleted}
             onCommentSaved={handleCommentSaved}

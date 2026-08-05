@@ -59,10 +59,14 @@ export function getPatchViewerHref(
 
   // Bare GitHub path: "owner/repo/pull/123" or "owner/repo/compare/a...b".
   // The dot-free first segment check above ensures we don't land here for
-  // domain-style inputs.
+  // domain-style inputs. "owner/repo/123" is pull-number shorthand.
   const bareMatch = BARE_GITHUB_PATH_PATTERN.exec(trimmed);
   if (bareMatch != null) {
     const [, owner, repo, rest = ''] = bareMatch;
+    const pullNumberMatch = /^\/(\d+)$/.exec(rest);
+    if (pullNumberMatch != null) {
+      return `/${owner}/${repo}/pull/${pullNumberMatch[1]}`;
+    }
     return normalizeGitHubPath(`/${owner}/${repo}${rest}`);
   }
 

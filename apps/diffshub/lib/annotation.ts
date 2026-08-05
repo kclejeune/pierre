@@ -1,3 +1,5 @@
+import type { CommentAuthor } from '@/lib/types';
+
 export const annotationCardBase =
   'm-2 flex max-w-[600px] gap-2.5 rounded-xl border border-[var(--diffshub-annotation-border,var(--color-border))] bg-[var(--diffshub-annotation-bg,var(--color-card))] bg-clip-padding p-3 font-sans text-[var(--diffshub-annotation-fg,var(--color-card-foreground))] shadow-[var(--diffshub-annotation-shadow,0_2px_4px_rgb(0_0_0_/_0.025),0_4px_8px_rgb(0_0_0_/_0.025))]';
 
@@ -24,13 +26,6 @@ const AVATAR_NAMES = [
   'zac',
 ] as const;
 
-export type AvatarName = (typeof AVATAR_NAMES)[number];
-
-export interface Persona {
-  name: AvatarName;
-  avatarSrc: string;
-}
-
 // Triggers browser fetches for all avatar images so they are in the cache
 // before the comment form opens. Call once on mount of the top-level UI component.
 export function preloadAvatars(): void {
@@ -40,28 +35,11 @@ export function preloadAvatars(): void {
   }
 }
 
-function buildPersona(name: AvatarName): Persona {
-  return { name, avatarSrc: `/diffshub-avatars/${name}.png` };
-}
-
-// Picks a random persona from the avatar list. Intended for use as a useState
-// lazy initializer so each new draft form gets a fresh identity on mount.
-export function getRandomPersona(): Persona {
+// Picks a random demo persona as the comment author. Used as the fallback
+// identity when no GitHub token is saved (or the token cannot resolve /user);
+// intended as a useState lazy initializer so each new draft form gets a fresh
+// identity on mount.
+export function getRandomPersonaAuthor(): CommentAuthor {
   const name = AVATAR_NAMES[Math.floor(Math.random() * AVATAR_NAMES.length)];
-  return buildPersona(name);
-}
-
-// Returns a persona for the given name or seed. If the seed is an exact avatar
-// name (i.e. it was stored directly from getRandomPersona), returns that persona
-// directly so draft and saved annotations stay in sync. Otherwise falls back to
-// a djb2 hash to spread arbitrary comment keys across the avatar list.
-export function getCommentPersona(seed: string): Persona {
-  if (AVATAR_NAMES.includes(seed as AvatarName)) {
-    return buildPersona(seed as AvatarName);
-  }
-  let hash = 5381;
-  for (let i = 0; i < seed.length; i++) {
-    hash = ((hash << 5) + hash + seed.charCodeAt(i)) >>> 0;
-  }
-  return buildPersona(AVATAR_NAMES[hash % AVATAR_NAMES.length]);
+  return { avatarUrl: `/diffshub-avatars/${name}.png`, login: name };
 }

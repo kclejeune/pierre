@@ -3,13 +3,17 @@
 import { IconBrandGithub } from '@pierre/icons';
 import { type FormEvent, memo, useState } from 'react';
 
+import { CommentAuthorAvatar } from './CommentAuthorAvatar';
+import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
 import { useGitHubEnvironment } from '@/components/GitHubEnvironmentProvider';
 import { Input } from '@/components/Input';
 import { cn } from '@/lib/cn';
 
+// pull_requests=write (not read) so review comments and replies can be
+// posted from the viewer; contents stays read-only.
 const CREATE_TOKEN_PATH =
-  '/settings/personal-access-tokens/new?name=DiffsHub%20Private%20Repo%20Read%20Access&description=Read+private+PRs+and+expand+collapsed+hunks&expires_in=90&contents=read&pull_requests=read&issues=read';
+  '/settings/personal-access-tokens/new?name=DiffsHub%20Repo%20Access&description=Read+private+PRs%2C+expand+hunks%2C+and+post+review+comments&expires_in=90&contents=read&pull_requests=write&issues=read';
 
 const CLASSIC_TOKEN_PATH =
   '/settings/tokens/new?description=DiffsHub%20Private%20Repo%20Read%20Access&scopes=repo&default_expires_at=90';
@@ -43,6 +47,7 @@ export const GitHubTokenControl = memo(function GitHubTokenControl({
   title = 'GitHub Token',
 }: GitHubTokenControlProps) {
   const { isGitHubDotCom, oauthEnabled, webURL } = useGitHubEnvironment();
+  const githubUser = useGitHubUser();
   const [draftToken, setDraftToken] = useState('');
   const canSave = draftToken.trim() !== '';
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -81,6 +86,20 @@ export const GitHubTokenControl = memo(function GitHubTokenControl({
       </div>
       {active ? (
         <>
+          {githubUser != null && (
+            <div className="mt-2 flex items-center gap-2 text-[13px]">
+              <CommentAuthorAvatar
+                author={{
+                  avatarUrl: githubUser.avatarUrl,
+                  login: githubUser.login,
+                }}
+                className="size-5"
+              />
+              <span className="min-w-0 truncate font-medium">
+                {githubUser.login}
+              </span>
+            </div>
+          )}
           <p className="text-muted-foreground mt-1 max-w-124 text-[13px] text-pretty">
             Using your saved token from localStorage. Clear it to sign in again
             or use a different token.

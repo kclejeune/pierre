@@ -93,7 +93,7 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
             <span className="light:text-white light:bg-[rgb(0,159,255)] inline-flex h-[20px] w-[20px] items-center justify-center rounded-[4px] align-top dark:bg-[rgb(0,159,255)] dark:text-black">
               <IconPlus />
             </span>{' '}
-            button to add fake code comments.
+            button to add code comments.
           </p>
         </div>
       </div>
@@ -146,10 +146,13 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
                   handleRowClick(event, () => onSelectComment?.(comment))
                 }
               >
-                <CommentAuthorAvatar seed={comment.author} className="size-5" />
+                <CommentAuthorAvatar
+                  author={comment.author}
+                  className="size-5"
+                />
                 <div className="flex flex-col items-start gap-0.5 select-text">
                   <div className="text-muted-foreground flex gap-1">
-                    {comment.author} commented on{' '}
+                    {comment.author.login} commented on{' '}
                     <span
                       className={cn(
                         getCommentLineClassName(comment.side, comment.lineType),

@@ -7,9 +7,12 @@ import {
   type GitHubRepo,
   parseGitHubDiffSource,
 } from './githubDiffSource';
+import {
+  createGitHubAPIURL as createEnvironmentAPIURL,
+  getGitHubEnvironment,
+  type GitHubEnvironment,
+} from './githubEnvironment';
 
-const GITHUB_API_ROOT = 'https://api.github.com';
-const GITHUB_RAW_ROOT = 'https://raw.githubusercontent.com';
 const GITHUB_API_VERSION = '2022-11-28';
 const GITHUB_RAW_MEDIA_TYPE = 'application/vnd.github.raw';
 const REF_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -37,9 +40,16 @@ export interface GitHubDiffFileRequest {
 }
 
 interface GitHubDiffFileServerOptions {
+  environment?: GitHubEnvironment;
   fetch?: GitHubServerFetch;
   token?: string;
   tokenSource?: 'request';
+}
+
+// Internal shape after the entry point fills in the deployment environment,
+// so downstream helpers can rely on it without re-reading process.env.
+interface ResolvedServerOptions extends GitHubDiffFileServerOptions {
+  environment: GitHubEnvironment;
 }
 
 interface CacheEntry<T> {
@@ -60,6 +70,10 @@ export async function loadGitHubDiffFiles(
   }
 
   const fetcher = options.fetch ?? fetch;
+  const resolvedOptions: ResolvedServerOptions = {
+    ...options,
+    environment: options.environment ?? getGitHubEnvironment(),
+  };
   const useSharedCache = options.tokenSource !== 'request';
   switch (request.type) {
     case 'new':
@@ -77,7 +91,7 @@ export async function loadGitHubDiffFiles(
       const refs = await resolveGitHubDiffRefsForRequest(
         source,
         fetcher,
-        options,
+        resolvedOptions,
         useSharedCache
       );
       const oldRef = requireOldRef(request.name, refs);
@@ -87,14 +101,14 @@ export async function loadGitHubDiffFiles(
           oldRef,
           oldPath,
           fetcher,
-          options,
+          resolvedOptions,
           useSharedCache
         ),
         loadGitHubFileForRequest(
           refs.newRef,
           request.name,
           fetcher,
-          options,
+          resolvedOptions,
           useSharedCache
         ),
       ]);
@@ -104,14 +118,14 @@ export async function loadGitHubDiffFiles(
       const refs = await resolveGitHubDiffRefsForRequest(
         source,
         fetcher,
-        options,
+        resolvedOptions,
         useSharedCache
       );
       const newFile = await loadGitHubFileForRequest(
         refs.newRef,
         request.name,
         fetcher,
-        options,
+        resolvedOptions,
         useSharedCache
       );
       return { oldFile: null, newFile };
@@ -122,7 +136,7 @@ export async function loadGitHubDiffFiles(
 function resolveGitHubDiffRefsForRequest(
   source: GitHubDiffSource,
   fetcher: GitHubServerFetch,
-  options: GitHubDiffFileServerOptions,
+  options: ResolvedServerOptions,
   useSharedCache: boolean
 ): Promise<GitHubDiffRefs> {
   if (!useSharedCache) {
@@ -139,7 +153,7 @@ export function clearGitHubDiffFileServerCache(): void {
 function resolveCachedGitHubDiffRefs(
   source: GitHubDiffSource,
   fetcher: GitHubServerFetch,
-  options: GitHubDiffFileServerOptions
+  options: ResolvedServerOptions
 ): Promise<GitHubDiffRefs> {
   const cacheKey = getSourceCacheKey(source);
   return getCachedPromise(refsCache, cacheKey, REF_CACHE_TTL_MS, () =>
@@ -151,7 +165,7 @@ function loadCachedGitHubFile(
   repoRef: GitHubRepoRef,
   path: string,
   fetcher: GitHubServerFetch,
-  options: GitHubDiffFileServerOptions
+  options: ResolvedServerOptions
 ): Promise<FileContents> {
   const normalizedPath = path.replace(/^\/+/, '');
   const cacheKey = `${repoRef.owner}/${repoRef.repo}\0${repoRef.ref}\0${normalizedPath}`;
@@ -164,7 +178,7 @@ function loadGitHubFileForRequest(
   repoRef: GitHubRepoRef,
   path: string,
   fetcher: GitHubServerFetch,
-  options: GitHubDiffFileServerOptions,
+  options: ResolvedServerOptions,
   useSharedCache: boolean
 ): Promise<FileContents> {
   const normalizedPath = path.replace(/^\/+/, '');
@@ -200,7 +214,7 @@ function getCachedPromise<T>(
 async function resolveGitHubDiffRefs(
   source: GitHubDiffSource,
   fetcher: GitHubServerFetch,
-  options: GitHubDiffFileServerOptions
+  options: ResolvedServerOptions
 ): Promise<GitHubDiffRefs> {
   switch (source.kind) {
     case 'pull':
@@ -226,10 +240,11 @@ async function resolveGitHubPullRefs(
   repo: GitHubRepo,
   number: string,
   fetcher: GitHubServerFetch,
-  options: GitHubDiffFileServerOptions
+  options: ResolvedServerOptions
 ): Promise<GitHubDiffRefs> {
   const data = await fetchGitHubJSON(
-    createGitHubAPIURL(
+    createEnvironmentAPIURL(
+      options.environment,
       `/repos/${encodeURLSegment(repo.owner)}/${encodeURLSegment(repo.repo)}/pulls/${encodeURLSegment(number)}`
     ),
     fetcher,
@@ -269,7 +284,7 @@ async function resolveGitHubPullMergeBaseSha(
   baseSha: string,
   headSha: string,
   fetcher: GitHubServerFetch,
-  options: GitHubDiffFileServerOptions
+  options: ResolvedServerOptions
 ): Promise<string> {
   const compareRange = createGitHubCompareRange(
     baseRepo,
@@ -278,7 +293,8 @@ async function resolveGitHubPullMergeBaseSha(
     headSha
   );
   const data = await fetchGitHubJSON(
-    createGitHubAPIURL(
+    createEnvironmentAPIURL(
+      options.environment,
       `/repos/${encodeURLSegment(baseRepo.owner)}/${encodeURLSegment(baseRepo.repo)}/compare/${encodeURLSegment(compareRange)}`
     ),
     fetcher,
@@ -309,10 +325,11 @@ async function resolveGitHubCommitRefs(
   repo: GitHubRepo,
   sha: string,
   fetcher: GitHubServerFetch,
-  options: GitHubDiffFileServerOptions
+  options: ResolvedServerOptions
 ): Promise<GitHubDiffRefs> {
   const data = await fetchGitHubJSON(
-    createGitHubAPIURL(
+    createEnvironmentAPIURL(
+      options.environment,
       `/repos/${encodeURLSegment(repo.owner)}/${encodeURLSegment(repo.repo)}/commits/${encodeURLSegment(sha)}`
     ),
     fetcher,
@@ -336,10 +353,11 @@ async function resolveGitHubCompareRefs(
   repo: GitHubRepo,
   range: string,
   fetcher: GitHubServerFetch,
-  options: GitHubDiffFileServerOptions
+  options: ResolvedServerOptions
 ): Promise<GitHubDiffRefs> {
   const data = await fetchGitHubJSON(
-    createGitHubAPIURL(
+    createEnvironmentAPIURL(
+      options.environment,
       `/repos/${encodeURLSegment(repo.owner)}/${encodeURLSegment(repo.repo)}/compare/${encodeURLSegment(range)}`
     ),
     fetcher,
@@ -365,7 +383,7 @@ async function readCompareHeadSha(
   range: string,
   data: unknown,
   fetcher: GitHubServerFetch,
-  options: GitHubDiffFileServerOptions
+  options: ResolvedServerOptions
 ): Promise<string | undefined> {
   const commits = readArrayPath(data, ['commits']);
   const totalCommits = readNumberPath(data, ['total_commits']);
@@ -378,7 +396,8 @@ async function readCompareHeadSha(
   }
 
   const lastPageData = await fetchGitHubJSON(
-    createGitHubAPIURL(
+    createEnvironmentAPIURL(
+      options.environment,
       `/repos/${encodeURLSegment(repo.owner)}/${encodeURLSegment(repo.repo)}/compare/${encodeURLSegment(range)}`,
       { page: String(totalCommits), per_page: '1' }
     ),
@@ -394,7 +413,7 @@ async function fetchGitHubFile(
   repoRef: GitHubRepoRef,
   path: string,
   fetcher: GitHubServerFetch,
-  options: GitHubDiffFileServerOptions
+  options: ResolvedServerOptions
 ): Promise<FileContents> {
   const response = await fetchGitHubFileContents(
     repoRef,
@@ -413,10 +432,11 @@ async function fetchGitHubFileContents(
   repoRef: GitHubRepoRef,
   path: string,
   fetcher: GitHubServerFetch,
-  options: GitHubDiffFileServerOptions
+  options: ResolvedServerOptions
 ): Promise<Response> {
   if (options.tokenSource === 'request' && options.token != null) {
-    const url = createGitHubAPIURL(
+    const url = createEnvironmentAPIURL(
+      options.environment,
       `/repos/${encodeURLSegment(repoRef.owner)}/${encodeURLSegment(repoRef.repo)}/contents/${encodePath(path)}`,
       { ref: repoRef.ref }
     );
@@ -430,7 +450,7 @@ async function fetchGitHubFileContents(
     return response;
   }
 
-  const url = `${GITHUB_RAW_ROOT}/${encodeURLSegment(repoRef.owner)}/${encodeURLSegment(repoRef.repo)}/${encodeURLSegment(repoRef.ref)}/${encodePath(path)}`;
+  const url = `${options.environment.rawURL}/${encodeURLSegment(repoRef.owner)}/${encodeURLSegment(repoRef.repo)}/${encodeURLSegment(repoRef.ref)}/${encodePath(path)}`;
   const response = await fetcher(url, {
     headers: createGitHubRawHeaders(options.token ?? getGitHubToken()),
   });
@@ -444,7 +464,7 @@ async function fetchGitHubFileContents(
 async function fetchGitHubJSON(
   url: string,
   fetcher: GitHubServerFetch,
-  options: GitHubDiffFileServerOptions
+  options: ResolvedServerOptions
 ): Promise<unknown> {
   const response = await fetcher(url, {
     headers: createGitHubJSONHeaders(options.token ?? getGitHubToken()),
@@ -535,19 +555,6 @@ function createEmptyFallbackFile(
     contents: '',
     cacheKey: `github-empty:${side}:${name}`,
   };
-}
-
-function createGitHubAPIURL(
-  path: string,
-  searchParams?: Record<string, string>
-): string {
-  const url = new URL(path, GITHUB_API_ROOT);
-  if (searchParams != null) {
-    for (const [key, value] of Object.entries(searchParams)) {
-      url.searchParams.set(key, value);
-    }
-  }
-  return url.href;
 }
 
 function getSourceCacheKey(source: GitHubDiffSource): string {

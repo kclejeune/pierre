@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 
 import { GitHubEnvironmentProvider } from '@/components/GitHubEnvironmentProvider';
 import { PreloadHighlighter } from '@/components/PreloadHighlighter';
+import { RequireLoginGate } from '@/components/RequireLoginGate';
 import { ScrollbarGutterVariables } from '@/components/ScrollbarGutterVariables';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { Toaster } from '@/components/Toaster';
@@ -94,7 +95,7 @@ export async function RootLayout({
         <GitHubEnvironmentProvider environment={getGitHubClientEnvironment()}>
           <WorkerPoolContext>
             <ThemeProvider attribute="class">
-              {children}
+              <RequireLoginGate>{children}</RequireLoginGate>
               <Toaster />
               <div
                 id="dark-mode-portal-container"

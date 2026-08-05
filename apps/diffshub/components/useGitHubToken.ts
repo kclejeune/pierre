@@ -20,7 +20,7 @@ export function useGitHubToken(): GitHubTokenState {
   const [tokenVersion, setTokenVersion] = useState(0);
 
   useEffect(() => {
-    const storedToken = readStoredToken();
+    const storedToken = readStoredGitHubToken();
     if (storedToken !== '') {
       setTokenState(storedToken);
       setTokenVersion((version) => version + 1);
@@ -54,7 +54,9 @@ export function saveGitHubTokenToStorage(token: string): void {
   writeStoredToken(token.trim());
 }
 
-function readStoredToken(): string {
+// Synchronous read of the stored token, for callers that need the answer
+// before the hook's hydration effect runs (e.g. the require-login gate).
+export function readStoredGitHubToken(): string {
   try {
     return globalThis.localStorage?.getItem(GITHUB_TOKEN_STORAGE_KEY) ?? '';
   } catch {

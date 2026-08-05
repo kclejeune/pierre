@@ -13,6 +13,7 @@ const DEFAULT_CLIENT_ENVIRONMENT: GitHubClientEnvironment = {
   host: new URL(GITHUB_DOTCOM_WEB_URL).hostname,
   isGitHubDotCom: true,
   oauthEnabled: false,
+  requireLogin: false,
   webURL: GITHUB_DOTCOM_WEB_URL,
 };
 

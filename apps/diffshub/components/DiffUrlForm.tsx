@@ -14,6 +14,7 @@ import {
 import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/Button';
+import { useGitHubEnvironment } from '@/components/GitHubEnvironmentProvider';
 import { cn } from '@/lib/cn';
 import { getPatchViewerHref } from '@/lib/getPatchViewerHref';
 
@@ -48,6 +49,7 @@ export function DiffUrlForm({
   children,
 }: DiffUrlFormProps) {
   const router = useRouter();
+  const { host: githubHost } = useGitHubEnvironment();
   const [isPending, startTransition] = useTransition();
   const [url, setURL] = useState(initialUrl);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -95,7 +97,7 @@ export function DiffUrlForm({
       event.preventDefault();
       isSubmittingRef.current = false;
       const normalizedURL = url.trim();
-      const viewerHref = getPatchViewerHref(normalizedURL);
+      const viewerHref = getPatchViewerHref(normalizedURL, githubHost);
       if (viewerHref == null) {
         const rect = inputRef.current?.getBoundingClientRect();
         if (rect != null) setErrorAnchor({ top: rect.bottom, left: rect.left });

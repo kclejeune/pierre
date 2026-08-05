@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation';
 
 import { ReviewUI } from '@/components/ReviewUI';
 import { describeDiffTarget } from '@/lib/describeDiffTarget';
+import { getGitHubEnvironment } from '@/lib/githubEnvironment';
 import { resolveDiffshubViewerRoute } from '@/lib/resolveDiffshubViewerRoute';
 import { SITE_DESCRIPTION, SITE_NAME, SITE_ORIGIN } from '@/lib/site';
 
@@ -68,7 +69,11 @@ export async function DiffsHubViewByPathPage({
 }: ViewByPathProps) {
   const { path } = await params;
   const { domain } = await searchParams;
-  const route = resolveDiffshubViewerRoute(path, readRequestedDomain(domain));
+  const route = resolveDiffshubViewerRoute(
+    path,
+    readRequestedDomain(domain),
+    getGitHubEnvironment().webURL
+  );
 
   if (route.kind === 'redirect') {
     redirect(route.target);

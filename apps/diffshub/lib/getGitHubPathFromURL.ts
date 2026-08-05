@@ -5,15 +5,25 @@ const GITHUB_RAW_DIFF_HOST = 'patch-diff.githubusercontent.com';
 const RAW_GITHUB_DIFF_PATH_PATTERN =
   /^\/raw\/([^/]+)\/([^/]+)\/pull\/([^/]+\.(?:diff|patch))$/;
 
-export function getGitHubPathFromURL(parsedURL: URL): string | undefined {
-  if (parsedURL.hostname === GITHUB_HOST) {
+// Maps a parsed URL to a GitHub-relative viewer path when it belongs to the
+// configured GitHub instance. `githubHost` defaults to public github.com;
+// self-hosted deployments pass their GHES hostname. The patch-diff raw host
+// only exists for github.com, so it is skipped for other hosts.
+export function getGitHubPathFromURL(
+  parsedURL: URL,
+  githubHost: string = GITHUB_HOST
+): string | undefined {
+  if (parsedURL.hostname === githubHost) {
     if (parsedURL.pathname === '/') {
       return undefined;
     }
     return normalizeGitHubPath(parsedURL.pathname);
   }
 
-  if (parsedURL.hostname !== GITHUB_RAW_DIFF_HOST) {
+  if (
+    githubHost !== GITHUB_HOST ||
+    parsedURL.hostname !== GITHUB_RAW_DIFF_HOST
+  ) {
     return undefined;
   }
 

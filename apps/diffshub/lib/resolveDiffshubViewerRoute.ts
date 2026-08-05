@@ -1,6 +1,6 @@
 import { normalizeGitHubPath } from './normalizeGitHubPath';
 
-const GITHUB_HOST = 'github.com';
+const GITHUB_WEB_URL = 'https://github.com';
 
 export type DiffshubViewerRoute =
   | { kind: 'redirect'; target: string }
@@ -27,9 +27,13 @@ const MIN_VIEWER_PATH_SEGMENTS = 2;
 // that, the catch-all answered HTTP 200 for every URL on the domain — including
 // /robots.txt and /sitemap.xml, which it shadowed with HTML — so search engines
 // saw an unbounded space of identical soft-404 pages.
+//
+// `githubWebURL` is the configured GitHub instance origin (github.com or a
+// GHES base URL) used to build the header's editable source URL.
 export function resolveDiffshubViewerRoute(
   pathSegments: readonly string[],
-  requestedDomainInput: string | undefined
+  requestedDomainInput: string | undefined,
+  githubWebURL: string = GITHUB_WEB_URL
 ): DiffshubViewerRoute {
   if (pathSegments.length === 0) {
     return { kind: 'redirect', target: '/' };
@@ -52,11 +56,13 @@ export function resolveDiffshubViewerRoute(
     return { kind: 'redirect', target: `${upstreamPath}${query}` };
   }
 
-  const host = domain ?? GITHUB_HOST;
   return {
     domain,
     kind: 'render',
     upstreamPath,
-    url: `https://${host}${upstreamPath}`,
+    url:
+      domain == null
+        ? `${githubWebURL}${upstreamPath}`
+        : `https://${domain}${upstreamPath}`,
   };
 }

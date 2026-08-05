@@ -24,6 +24,38 @@ export const CODE_VIEW_CUSTOM_CSS = `
     background-color: var(--diffshub-annotation-border);
   }
 }
+
+/* While a rendered markdown document is showing, hide the source diff so only
+   the document (and its annotations) remains. MarkdownDocAnnotation stamps
+   data-diffshub-doc-open on the container host with the diff side hosting the
+   doc as its value, so the opposite split column collapses too. The width
+   overrides beat the inline per-column sizing the library computes for split
+   view, letting the surviving column span the full container. */
+:host([data-diffshub-doc-open])
+  [data-code]
+  :is(
+    [data-line-index],
+    [data-separator],
+    [data-content-buffer],
+    [data-gutter-buffer]
+  ) {
+  display: none !important;
+}
+
+:host([data-diffshub-doc-open='additions']) code[data-code][data-deletions],
+:host([data-diffshub-doc-open='deletions']) code[data-code][data-additions] {
+  display: none !important;
+}
+
+:host([data-diffshub-doc-open]) pre[data-diff] {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+:host([data-diffshub-doc-open]) code[data-code] {
+  width: 100% !important;
+  --diffs-column-width: 100% !important;
+  --diffs-column-content-width: 100% !important;
+}
 `;
 
 export const CODE_VIEW_FILE_TREE_ITEM_HEIGHT = 24;

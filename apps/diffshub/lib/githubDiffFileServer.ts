@@ -146,16 +146,25 @@ export function clearGitHubDiffFileServerCache(): void {
 // requests, which cannot carry the user's bearer token, so authentication is
 // limited to the server fallback token — private-repo assets need
 // DIFFSHUB_GITHUB_TOKEN configured.
-export async function loadGitHubDiffAssetResponse(request: {
-  file: string;
-  path: string;
-  side: 'old' | 'new';
-}): Promise<Response> {
+export async function loadGitHubDiffAssetResponse(
+  request: {
+    file: string;
+    path: string;
+    side: 'old' | 'new';
+  },
+  options: GitHubDiffFileServerOptions = {}
+): Promise<Response> {
   const source = parseGitHubDiffSource(request.path);
   if (source == null) {
     throw new Error('Unsupported GitHub diff path.');
   }
-  const refs = await resolveCachedGitHubDiffRefs(source, fetch, {});
+  const useSharedCache = options.tokenSource !== 'request';
+  const refs = await resolveGitHubDiffRefsForRequest(
+    source,
+    fetch,
+    options,
+    useSharedCache
+  );
   const ref = request.side === 'old' ? refs.oldRef : refs.newRef;
   if (ref == null) {
     throw new Error('The diff has no old side to load assets from.');
@@ -164,7 +173,7 @@ export async function loadGitHubDiffAssetResponse(request: {
     ref,
     request.file.replace(/^\/+/, ''),
     fetch,
-    {}
+    options
   );
 }
 

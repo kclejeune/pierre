@@ -87,6 +87,10 @@ interface DiffsHubViewerProps {
   // Set when the viewer shows a pull request on the configured GitHub
   // instance; enables publishing comments/replies to the real PR.
   pullRequest?: PullRequestRef;
+  // The diff-source path (e.g. owner/repo/pull/123) on the configured GitHub
+  // instance; lets the rendered-document view proxy relative image
+  // references. Unset for arbitrary-domain patch URLs.
+  sourcePath?: string;
   getGitHubToken?(): string | undefined;
   onCommentDeleted(comment: DiffsHubDeletedCommentEvent): void;
   onCommentSaved(comment: DiffsHubSavedCommentEvent): void;
@@ -107,6 +111,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
   className,
   diffStyle,
   pullRequest,
+  sourcePath,
   getGitHubToken,
   onCommentDeleted,
   onCommentSaved,
@@ -699,6 +704,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
             itemId={item.id}
             loadDiffFiles={loadDiffFiles}
             onCommentAtLine={handleCommentAtDocLine}
+            sourcePath={sourcePath}
           />
         );
       }

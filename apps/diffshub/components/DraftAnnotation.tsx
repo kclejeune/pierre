@@ -3,25 +3,24 @@ import { IconArrowRight } from '@pierre/icons';
 import { useEffect, useRef, useState } from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
+import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
-import {
-  annotationCardBase,
-  type AvatarName,
-  getRandomPersona,
-} from '@/lib/annotation';
+import { annotationCardBase, getRandomPersonaAuthor } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
-import type { DraftCommentMetadata } from '@/lib/types';
+import type { CommentAuthor, DraftCommentMetadata } from '@/lib/types';
 
 interface DraftAnnotationProps {
   annotation: DiffLineAnnotation<DraftCommentMetadata>;
   itemId: string;
   onCancel(itemId: string, key: string): void;
+  // May reject when publishing to GitHub fails (already surfaced to the
+  // user); the draft stays open with its text intact in that case.
   onSave(
     itemId: string,
     key: string,
     message: string,
-    author: AvatarName
-  ): void;
+    author: CommentAuthor
+  ): Promise<void>;
 }
 
 export function DraftAnnotation({
@@ -31,18 +30,36 @@ export function DraftAnnotation({
   onSave,
 }: DraftAnnotationProps) {
   const [message, setMessage] = useState(annotation.metadata.message);
-  const [persona] = useState(getRandomPersona);
+  // Comments are authored as the signed-in GitHub user when a token resolves
+  // an identity; otherwise fall back to a random demo persona.
+  const githubUser = useGitHubUser();
+  const [personaAuthor] = useState(getRandomPersonaAuthor);
+  const author: CommentAuthor =
+    githubUser != null
+      ? { avatarUrl: githubUser.avatarUrl, login: githubUser.login }
+      : personaAuthor;
+  const [isSaving, setIsSaving] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const trimmedMessage = message.trim();
 
-  function handleSave() {
-    if (trimmedMessage.length === 0) {
+  async function handleSave() {
+    if (trimmedMessage.length === 0 || isSaving) {
       return;
     }
-    onSave(itemId, annotation.metadata.key, trimmedMessage, persona.name);
+    setIsSaving(true);
+    try {
+      await onSave(itemId, annotation.metadata.key, trimmedMessage, author);
+    } catch {
+      // Publish failure was surfaced already; keep the draft editable.
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   function tryCancel() {
+    if (isSaving) {
+      return;
+    }
     if (trimmedMessage.length > 0 && !window.confirm('Discard this comment?')) {
       return;
     }
@@ -65,11 +82,11 @@ export function DraftAnnotation({
       className={cn(annotationCardBase, 'flex-col md:flex-row')}
       onSubmit={(event) => {
         event.preventDefault();
-        handleSave();
+        void handleSave();
       }}
     >
       <div className="flex w-full gap-2.5">
-        <CommentAuthorAvatar seed={persona.name} />
+        <CommentAuthorAvatar author={author} />
         <textarea
           ref={textareaRef}
           value={message}
@@ -86,10 +103,11 @@ export function DraftAnnotation({
             }
 
             event.preventDefault();
-            handleSave();
+            void handleSave();
           }}
           placeholder="Add a comment…"
           rows={2}
+          disabled={isSaving}
           className="field-sizing-content w-full resize-none rounded-sm bg-transparent py-1.5 text-[14px] text-inherit placeholder:text-[var(--diffshub-popover-muted-fg,var(--color-muted-foreground))] focus:outline-none"
         />
       </div>
@@ -106,7 +124,7 @@ export function DraftAnnotation({
           type="submit"
           variant="default"
           size="icon-md"
-          disabled={trimmedMessage.length === 0}
+          disabled={trimmedMessage.length === 0 || isSaving}
           className="hidden rounded-full bg-blue-500 hover:bg-blue-600 md:flex"
         >
           <IconArrowRight className="size-4 rotate-[-90deg]" />
@@ -114,7 +132,7 @@ export function DraftAnnotation({
         <Button
           type="submit"
           variant="default"
-          disabled={trimmedMessage.length === 0}
+          disabled={trimmedMessage.length === 0 || isSaving}
           className="gap-1.5 bg-blue-500 hover:bg-blue-600 md:hidden"
         >
           Submit

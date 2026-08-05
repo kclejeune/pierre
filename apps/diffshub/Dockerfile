@@ -22,7 +22,18 @@ RUN apt-get update \
 # pnpm pin mirrors .prototools.
 RUN npm install -g pnpm@11.9.0
 
+# Keep pnpm's content-addressable store on a BuildKit cache mount so package
+# tarballs survive rebuilds even after the layers below are invalidated.
+ENV npm_config_store_dir=/pnpm/store
+
 WORKDIR /repo
+
+# Populate the store from the lockfile alone (pnpm fetch exists for exactly
+# this), before the source tree enters the image: source-only changes reuse
+# this layer, and the install below just links offline from the store.
+COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm fetch
+
 COPY . .
 # moon resolves the workspace's default branch (main) and, in CI mode, HEAD~1.
 # Give the throwaway repo two commits so both revisions always exist.
@@ -31,14 +42,21 @@ RUN git init -q -b main \
   && git add -A \
   && git -c user.email=docker@build -c user.name=docker commit -qm build-context
 
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --offline
 
 # No DIFFSHUB_* configuration enters the build: NEXT_OUTPUT=standalone both
 # selects standalone output and defers all page rendering to request time
 # (see RootLayout), so every setting is read from the runtime environment and
 # the image is deployment-agnostic.
-ENV NEXT_OUTPUT=standalone
-RUN pnpm exec moon run diffshub:build
+ENV NEXT_OUTPUT=standalone \
+    NEXT_TELEMETRY_DISABLED=1
+# This layer can never cache (it sits below COPY . .), so mount what it
+# re-derives: moon bootstraps the pinned bun toolchain into ~/.proto, and
+# Next.js keeps its compiler cache in .next/cache. Neither enters the image.
+RUN --mount=type=cache,id=proto-tools,target=/root/.proto \
+    --mount=type=cache,id=next-cache,target=/repo/apps/diffshub/.next/cache \
+    pnpm exec moon run diffshub:build
 
 FROM node:24.11.0-slim AS runner
 

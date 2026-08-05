@@ -12,12 +12,20 @@ import {
   findCommentableNewLine,
   rangeHasChanges,
 } from '@/lib/markdownChangeMap';
+import {
+  createDocAssetURL,
+  resolveDocAssetPath,
+} from '@/lib/markdownDocAssets';
 
 interface MarkdownDocAnnotationProps {
   fileDiff: FileDiffMetadata;
   itemId: string;
   loadDiffFiles?: FileDiffContentsLoader;
   onCommentAtLine(itemId: string, line: number): void;
+  // The diff-source path (e.g. owner/repo/pull/123) on the configured GitHub
+  // instance; enables serving the doc's relative image references through the
+  // asset proxy. Unset for arbitrary-domain patch URLs.
+  sourcePath?: string;
 }
 
 // The rendered-markdown document view, shown as a file-level annotation above
@@ -30,6 +38,7 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
   itemId,
   loadDiffFiles,
   onCommentAtLine,
+  sourcePath,
 }: MarkdownDocAnnotationProps) {
   const contentsState = useMarkdownDocContents(fileDiff, loadDiffFiles);
   // Deleted files render the removed document; its lines no longer exist on
@@ -43,8 +52,33 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
   const rehypePlugins = useMemo(() => [rehypeWrapTopLevelBlocks], []);
   const components = useMemo<Components>(
     () => ({
+      // Relative image references point at repository paths; route them
+      // through the asset proxy so they load from the raw host at this
+      // diff's ref instead of 404ing against the DiffsHub origin.
+      img: ({ node: _node, src, alt, ...rest }) => {
+        const assetPath =
+          typeof src === 'string' && sourcePath != null
+            ? resolveDocAssetPath(src, fileDiff.name)
+            : null;
+        return (
+          <img
+            {...rest}
+            alt={alt ?? ''}
+            loading="lazy"
+            src={
+              assetPath != null && sourcePath != null
+                ? createDocAssetURL(
+                    sourcePath,
+                    assetPath,
+                    isDeletedDoc ? 'old' : 'new'
+                  )
+                : src
+            }
+          />
+        );
+      },
       div: (props) => {
-        const node = props.node as HastElement | undefined;
+        const { node } = props;
         const sourceStart = node?.properties?.dataSourceStart;
         const sourceEnd = node?.properties?.dataSourceEnd;
         if (typeof sourceStart !== 'number' || typeof sourceEnd !== 'number') {
@@ -80,7 +114,7 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
         );
       },
     }),
-    [changeMap, fileDiff, isDeletedDoc, itemId, onCommentAtLine]
+    [changeMap, fileDiff, isDeletedDoc, itemId, onCommentAtLine, sourcePath]
   );
 
   return (

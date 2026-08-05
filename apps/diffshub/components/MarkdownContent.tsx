@@ -1,12 +1,59 @@
 'use client';
 
+import type { Element as HastElement } from 'hast';
 import { memo } from 'react';
 import Markdown, { type Components } from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
 
+import { MermaidDiagram } from './MermaidDiagram';
 import { cn } from '@/lib/cn';
 
 const REMARK_PLUGINS = [remarkGfm];
+
+// GitHub-flavored sanitization, extended to keep the sizing attributes HTML
+// <img> tags commonly carry in READMEs (avatar grids, logos, badges).
+const SANITIZE_SCHEMA: typeof defaultSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    img: [...(defaultSchema.attributes?.img ?? []), 'width', 'height', 'align'],
+  },
+};
+
+// Raw HTML embedded in the markdown (image tags, <details>, <sup>, …) is
+// parsed and then sanitized against the GitHub schema, so it renders the way
+// GitHub renders it without opening the page to script injection. Caller
+// plugins run after sanitization, so the attributes they attach survive.
+const BASE_REHYPE_PLUGINS: NonNullable<
+  React.ComponentProps<typeof Markdown>['rehypePlugins']
+> = [rehypeRaw, [rehypeSanitize, SANITIZE_SCHEMA]];
+
+// ```mermaid fences render as diagrams (as GitHub does); every other code
+// block keeps the default <pre> rendering.
+const DEFAULT_COMPONENTS: Components = {
+  pre: ({ node, ...rest }) => {
+    const mermaidSource = getMermaidSource(node);
+    if (mermaidSource != null) {
+      return <MermaidDiagram code={mermaidSource} />;
+    }
+    return <pre {...rest} />;
+  },
+};
+
+function getMermaidSource(node: HastElement | undefined): string | null {
+  const code = node?.children.find(
+    (child): child is HastElement =>
+      child.type === 'element' && child.tagName === 'code'
+  );
+  const className = code?.properties?.className;
+  if (!Array.isArray(className) || !className.includes('language-mermaid')) {
+    return null;
+  }
+  const text = code?.children[0];
+  return text?.type === 'text' ? text.value : null;
+}
 
 // Element styling for rendered markdown, scoped through arbitrary variants so
 // no global stylesheet changes are needed. Sized to sit inside annotation
@@ -51,8 +98,8 @@ export const MarkdownContent = memo(function MarkdownContent({
     <div className={cn(MARKDOWN_PROSE_CLASS, className)}>
       <Markdown
         remarkPlugins={REMARK_PLUGINS}
-        rehypePlugins={rehypePlugins}
-        components={components}
+        rehypePlugins={[...BASE_REHYPE_PLUGINS, ...(rehypePlugins ?? [])]}
+        components={{ ...DEFAULT_COMPONENTS, ...components }}
       >
         {markdown}
       </Markdown>

@@ -141,6 +141,33 @@ export function clearGitHubDiffFileServerCache(): void {
   fileCache.clear();
 }
 
+// Streams a repository file (e.g. an image referenced by a rendered markdown
+// document) at the diff's resolved ref for the given side. Serves <img>
+// requests, which cannot carry the user's bearer token, so authentication is
+// limited to the server fallback token — private-repo assets need
+// DIFFSHUB_GITHUB_TOKEN configured.
+export async function loadGitHubDiffAssetResponse(request: {
+  file: string;
+  path: string;
+  side: 'old' | 'new';
+}): Promise<Response> {
+  const source = parseGitHubDiffSource(request.path);
+  if (source == null) {
+    throw new Error('Unsupported GitHub diff path.');
+  }
+  const refs = await resolveCachedGitHubDiffRefs(source, fetch, {});
+  const ref = request.side === 'old' ? refs.oldRef : refs.newRef;
+  if (ref == null) {
+    throw new Error('The diff has no old side to load assets from.');
+  }
+  return fetchGitHubFileContents(
+    ref,
+    request.file.replace(/^\/+/, ''),
+    fetch,
+    {}
+  );
+}
+
 function resolveCachedGitHubDiffRefs(
   source: GitHubDiffSource,
   fetcher: GitHubServerFetch,

@@ -67,4 +67,9 @@ session.
 Markdown files in a diff get a book icon in their file header that toggles a
 rendered view of the document above the diff, with changed sections marked in
 the margin; hovering a section reveals a `+` that opens a draft comment on the
-matching source line.
+matching source line. The rendered view matches GitHub's markdown rendering:
+` ```mermaid ` fences render as diagrams, embedded HTML (image tags,
+`<details>`, …) is sanitized against the GitHub schema, and relative image
+references are served from the repository at the diff's revision through a
+server-side proxy (private-repo images need the server fallback token, since
+image requests cannot carry the viewer's own).

@@ -25,6 +25,8 @@ const SANITIZE_SCHEMA: typeof defaultSchema = {
       ...(defaultSchema.attributes?.div ?? []),
       'dataSourceStart',
       'dataSourceEnd',
+      'dataClaimStart',
+      'dataClaimEnd',
     ],
   },
 };

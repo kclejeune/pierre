@@ -48,5 +48,22 @@ environment variables for both `next build` and `next start` in that case.
 The flow requests the classic `repo` scope (OAuth apps have no read-only repo
 scope). The resulting user token is stored only in the browser's localStorage —
 the same slot used when pasting a PAT — and is sent to the DiffsHub server
-solely as a bearer header on diff-loading requests, which forward it to the
-configured GitHub instance.
+solely as a bearer header on GitHub-bound requests (diff loading, review
+comments), which forward it to the configured GitHub instance.
+
+## Review comments
+
+On pull-request views, DiffsHub shows the PR's existing review threads inline
+(author, avatar, age) and in the sidebar comment list. With a saved token you
+can reply to a thread, post new line comments from the gutter `+` (they are
+created as real GitHub review comments against the PR head), and edit or delete
+your own comments. Posting requires a token with write access to pull requests —
+the OAuth flow's `repo` scope and classic-PAT `repo` scope both qualify;
+fine-grained PATs need the Pull requests permission set to Read and write.
+Without a token (or outside PR views), comments stay local to the browser
+session.
+
+Markdown files in a diff get a book icon in their file header that toggles a
+rendered view of the document above the diff, with changed sections marked in
+the margin; hovering a section reveals a `+` that opens a draft comment on the
+matching source line.

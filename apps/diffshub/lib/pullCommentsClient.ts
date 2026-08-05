@@ -1,7 +1,11 @@
 import type { SelectedLineRange } from '@pierre/diffs';
 
 import { toGitHubDiffSide } from './pullReviewThreads';
-import type { GitHubDiffSide, PullReviewComment } from './types';
+import type {
+  GitHubDiffSide,
+  PullDiscussionComment,
+  PullReviewComment,
+} from './types';
 
 // Identifies the pull request a viewer route displays, for review-comment
 // API calls.
@@ -19,14 +23,21 @@ interface NewCommentAnchor {
   startSide?: GitHubDiffSide;
 }
 
+export interface PullCommentsPayload {
+  comments: PullReviewComment[];
+  // PR-level conversation: issue comments and review summaries, in creation
+  // order. Empty when the server's best-effort discussion fetch failed.
+  discussion: PullDiscussionComment[];
+}
+
 // Browser-side wrappers over /api/pull-comments. All failures throw an Error
 // whose message is already user-presentable (the route forwards GitHub's
 // explanation).
-export async function fetchPullReviewComments(
+export async function fetchPullComments(
   pull: PullRequestRef,
   token: string | undefined,
   signal?: AbortSignal
-): Promise<PullReviewComment[]> {
+): Promise<PullCommentsPayload> {
   const params = new URLSearchParams({
     owner: pull.owner,
     pull: pull.number,
@@ -37,7 +48,13 @@ export async function fetchPullReviewComments(
     signal,
   });
   const comments = (payload as { comments?: unknown }).comments;
-  return Array.isArray(comments) ? (comments as PullReviewComment[]) : [];
+  const discussion = (payload as { discussion?: unknown }).discussion;
+  return {
+    comments: Array.isArray(comments) ? (comments as PullReviewComment[]) : [],
+    discussion: Array.isArray(discussion)
+      ? (discussion as PullDiscussionComment[])
+      : [],
+  };
 }
 
 export async function postPullReviewReply(

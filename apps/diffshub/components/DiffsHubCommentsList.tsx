@@ -6,16 +6,54 @@ import { memo, type MouseEvent } from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { cn } from '@/lib/cn';
+import { createCommentSidebarPreview } from '@/lib/commentSidebarPreview';
+import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import type {
   CommentLineType,
   DiffsHubSavedCommentEntry,
   DiffsHubSavedCommentItem,
+  PullDiscussionComment,
 } from '@/lib/types';
 
 interface DiffsHubCommentsListProps {
   commentSections: readonly DiffsHubSavedCommentItem[];
+  // PR-level conversation (issue comments, review summaries) shown in its own
+  // section above the per-file threads.
+  discussion?: readonly PullDiscussionComment[];
   onSelectComment?(comment: DiffsHubSavedCommentEntry): void;
   onSelectItem?(itemId: string): void;
+}
+
+// The action phrase after a discussion row's @handle. Review verdicts get
+// their own wording (and, below, the add/del accent colors) so approvals and
+// change requests read at a glance.
+function getDiscussionVerb(comment: PullDiscussionComment): string {
+  if (comment.kind === 'comment') {
+    return 'commented';
+  }
+  switch (comment.reviewState) {
+    case 'APPROVED':
+      return 'approved';
+    case 'CHANGES_REQUESTED':
+      return 'requested changes';
+    case 'DISMISSED':
+      return 'reviewed (dismissed)';
+    default:
+      return 'reviewed';
+  }
+}
+
+function getDiscussionVerbClassName(
+  comment: PullDiscussionComment
+): string | null {
+  switch (comment.reviewState) {
+    case 'APPROVED':
+      return 'text-[var(--diffshub-comment-add-fg,#047857)] dark:text-[var(--diffshub-comment-add-fg,#34d399)] font-medium';
+    case 'CHANGES_REQUESTED':
+      return 'text-[var(--diffshub-comment-del-fg,#be123c)] dark:text-[var(--diffshub-comment-del-fg,#fb7185)] font-medium';
+    default:
+      return null;
+  }
 }
 
 function getCommentLineLabel(
@@ -79,10 +117,11 @@ function handleRowClick(
 
 export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
   commentSections,
+  discussion = [],
   onSelectComment,
   onSelectItem,
 }: DiffsHubCommentsListProps) {
-  if (commentSections.length === 0) {
+  if (commentSections.length === 0 && discussion.length === 0) {
     return (
       <div className="text-muted-foreground flex h-full min-h-0 flex-col items-center justify-center gap-2 px-7 text-center text-sm">
         <IconConvoFill size={24} className="mb-2" />
@@ -107,6 +146,68 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
         'h-full min-h-0 overflow-auto overscroll-contain pl-3 pb-3 pr-[max(0px,calc(12px-var(--cv-mini-gutter-vertical)))]'
       )}
     >
+      {discussion.length > 0 && (
+        <section>
+          <div className="text-muted-foreground p-3 pb-2 text-sm font-medium">
+            Conversation
+          </div>
+          <div className="rounded-lg border border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]">
+            {discussion.map((comment) => {
+              const preview = createCommentSidebarPreview(comment.body);
+              const content = (
+                <>
+                  <CommentAuthorAvatar
+                    author={comment.author}
+                    className="size-5"
+                  />
+                  <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 select-text">
+                    <div className="text-muted-foreground flex flex-wrap gap-x-1">
+                      <span className="text-foreground font-medium">
+                        @{comment.author.login}
+                      </span>
+                      <span className={cn(getDiscussionVerbClassName(comment))}>
+                        {getDiscussionVerb(comment)}
+                      </span>
+                      <span>· {formatRelativeTime(comment.createdAt)}</span>
+                    </div>
+                    {preview !== '' && (
+                      <p className="text-foreground line-clamp-6 w-full break-words whitespace-pre-wrap">
+                        {preview}
+                      </p>
+                    )}
+                  </div>
+                </>
+              );
+              // These comments have no diff anchor to scroll to, so the row
+              // links to the comment on GitHub instead.
+              const rowClassName =
+                'focus-visible:ring-ring flex w-full items-start gap-2 border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] p-3 text-left text-sm outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 focus-visible:ring-2 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]';
+              return comment.htmlUrl != null ? (
+                <a
+                  key={`${comment.kind}-${comment.id}`}
+                  className={cn(
+                    rowClassName,
+                    'cursor-pointer hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))]'
+                  )}
+                  href={comment.htmlUrl}
+                  rel="noreferrer noopener"
+                  target="_blank"
+                  title="Open on GitHub"
+                >
+                  {content}
+                </a>
+              ) : (
+                <div
+                  key={`${comment.kind}-${comment.id}`}
+                  className={rowClassName}
+                >
+                  {content}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
       {commentSections.map((section) => (
         <section key={section.itemId}>
           {onSelectItem != null ? (

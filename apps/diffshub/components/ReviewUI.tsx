@@ -37,6 +37,7 @@ import type {
   DiffsHubDeletedCommentEvent,
   DiffsHubSavedCommentEntry,
   DiffsHubSavedCommentEvent,
+  PullDiscussionComment,
 } from '@/lib/types';
 import { upsertSavedCommentSidebarEntry } from '@/lib/upsertSavedCommentSidebarEntry';
 
@@ -244,8 +245,10 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     onViewerReady();
     setViewerReadyTick((tick) => tick + 1);
   }, [onViewerReady]);
+  const [discussion, setDiscussion] = useState<PullDiscussionComment[]>([]);
   usePullReviewThreads({
     loadState,
+    onDiscussionLoaded: setDiscussion,
     onThreadApplied: handleCommentSaved,
     pathToItemId: treeSource?.pathToItemId ?? null,
     pullRequest,
@@ -356,6 +359,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
             className="[grid-area:viewer] md:[grid-area:tree]"
             commentSections={commentSections}
             diffStats={diffStats}
+            discussion={discussion}
             mobileOverlayOpen={fileTreeOverlayOpen}
             onMobileClose={handleCloseFileTreeOverlay}
             onSelectComment={handleSelectComment}

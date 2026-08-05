@@ -64,7 +64,7 @@ import { isSafari } from '../utils/platform';
 import { prerenderHTMLIfNecessary } from '../utils/prerenderHTMLIfNecessary';
 import { getMeasuredScrollbarGutter } from '../utils/scrollbarGutter';
 import { setPreNodeProperties } from '../utils/setWrapperNodeProps';
-import { WorkerPoolCanceledError, type WorkerPoolManager } from '../worker';
+import { logUnlessCanceled, type WorkerPoolManager } from '../worker';
 import { DiffsContainerLoaded } from './web-components';
 
 const EMPTY_STRINGS: string[] = [''];
@@ -890,15 +890,7 @@ export class File<
       return;
     }
 
-    await workerManager
-      .primeFileHighlightCache(file)
-      .catch((error: unknown) => {
-        // Cancellations mean the prime became unnecessary (unmount, scroll
-        // away, theme change) — only real failures are worth logging.
-        if (!(error instanceof WorkerPoolCanceledError)) {
-          console.error(error);
-        }
-      });
+    await workerManager.primeFileHighlightCache(file).catch(logUnlessCanceled);
   }
 
   private cleanChildNodes() {

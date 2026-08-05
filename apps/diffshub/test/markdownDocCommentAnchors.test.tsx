@@ -7,44 +7,27 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 import { MarkdownDocAnnotation } from '../components/MarkdownDocAnnotation';
+import { installJsdomGlobals } from '../lib/test/jsdomGlobals';
 import type { CommentMetadata } from '../lib/types';
-
-const originalGlobals = {
-  document: Reflect.get(globalThis, 'document'),
-  HTMLElement: Reflect.get(globalThis, 'HTMLElement'),
-  IS_REACT_ACT_ENVIRONMENT: Reflect.get(
-    globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean },
-    'IS_REACT_ACT_ENVIRONMENT'
-  ),
-  MutationObserver: Reflect.get(globalThis, 'MutationObserver'),
-  window: Reflect.get(globalThis, 'window'),
-};
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
   pretendToBeVisual: true,
   url: 'http://localhost',
 });
 
+let restoreGlobals: () => void;
+
 beforeAll(() => {
-  Object.assign(globalThis, {
+  restoreGlobals = installJsdomGlobals({
     document: dom.window.document,
     HTMLElement: dom.window.HTMLElement,
     MutationObserver: dom.window.MutationObserver,
     window: dom.window,
   });
-  (
-    globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
-  ).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
 afterAll(() => {
-  for (const [key, value] of Object.entries(originalGlobals)) {
-    if (value === undefined) {
-      Reflect.deleteProperty(globalThis, key);
-    } else {
-      Object.assign(globalThis, { [key]: value });
-    }
-  }
+  restoreGlobals();
   dom.window.close();
 });
 
@@ -127,7 +110,7 @@ async function renderDoc(
         fileDiff={fileDiff}
         itemId="item"
         commentAnnotations={commentAnnotations}
-        renderComment={(annotation) => (
+        renderComment={(annotation, _itemId) => (
           <span data-comment-key={annotation.metadata.key}>
             card:{annotation.metadata.key}
           </span>

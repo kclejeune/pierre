@@ -88,7 +88,7 @@ import {
   updateDiffHunks,
 } from '../utils/updateDiffHunks';
 import { getTrailingContextRangeSize } from '../utils/virtualDiffLayout';
-import { WorkerPoolCanceledError, type WorkerPoolManager } from '../worker';
+import { logUnlessCanceled, type WorkerPoolManager } from '../worker';
 
 interface PushLineWithAnnotation {
   diffStyle: 'unified' | 'split';
@@ -1184,12 +1184,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
   }
 
   public onHighlightError(error: unknown): void {
-    // Cancellations mean the highlight became unnecessary (unmount, scroll
-    // away, theme change) — only real failures are worth logging.
-    if (error instanceof WorkerPoolCanceledError) {
-      return;
-    }
-    console.error(error);
+    logUnlessCanceled(error);
   }
 
   private getTokenizeMaxLength(): number {

@@ -81,6 +81,14 @@ class WorkerPoolTaskCanceledError extends WorkerPoolCanceledError {
   }
 }
 
+// The standard disposition for errors from awaited pool work: cancellations
+// are silent, everything else logs.
+export function logUnlessCanceled(error: unknown): void {
+  if (!(error instanceof WorkerPoolCanceledError)) {
+    console.error(error);
+  }
+}
+
 interface GetCachesResult {
   fileCache: LRUMapPkg.LRUMap<string, RenderFileResult>;
   diffCache: LRUMapPkg.LRUMap<string, RenderDiffResult>;

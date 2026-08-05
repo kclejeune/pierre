@@ -2,10 +2,10 @@ import { type NextRequest } from 'next/server';
 
 import {
   createGitHubAPIURL,
+  createGitHubJSONHeaders,
   getGitHubEnvironment,
-  GITHUB_API_VERSION,
-  GITHUB_USER_AGENT,
 } from '@/lib/githubEnvironment';
+import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
 
 // Proxies GET /user on the configured GitHub instance so the browser can
@@ -24,12 +24,7 @@ export async function GET(request: NextRequest) {
   let response: Response;
   try {
     response = await fetch(createGitHubAPIURL(environment, '/user'), {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'User-Agent': GITHUB_USER_AGENT,
-        'X-GitHub-Api-Version': GITHUB_API_VERSION,
-      },
+      headers: createGitHubJSONHeaders(token),
       cache: 'no-store',
     });
   } catch {
@@ -49,7 +44,6 @@ export async function GET(request: NextRequest) {
   const user = (await response.json()) as {
     avatar_url?: unknown;
     login?: unknown;
-    name?: unknown;
   };
   if (typeof user.login !== 'string' || typeof user.avatar_url !== 'string') {
     return createJSONResponse(
@@ -61,19 +55,5 @@ export async function GET(request: NextRequest) {
   return createJSONResponse({
     avatarUrl: user.avatar_url,
     login: user.login,
-    name: typeof user.name === 'string' ? user.name : null,
-  });
-}
-
-function createJSONResponse(
-  body: unknown,
-  options: { status?: number } = {}
-): Response {
-  return Response.json(body, {
-    status: options.status ?? 200,
-    headers: {
-      'Cache-Control': 'no-store',
-      Vary: 'Authorization',
-    },
   });
 }

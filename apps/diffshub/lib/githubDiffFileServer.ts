@@ -9,6 +9,8 @@ import {
 } from './githubDiffSource';
 import {
   createGitHubAPIURL as createEnvironmentAPIURL,
+  createGitHubJSONHeaders,
+  getFallbackGitHubToken,
   getGitHubEnvironment,
   GITHUB_API_VERSION,
   GITHUB_USER_AGENT,
@@ -441,7 +443,7 @@ async function fetchGitHubFileContents(
 
   const url = `${getGitHubEnvironment().rawURL}/${encodeURLSegment(repoRef.owner)}/${encodeURLSegment(repoRef.repo)}/${encodeURLSegment(repoRef.ref)}/${encodePath(path)}`;
   const response = await fetcher(url, {
-    headers: createGitHubRawHeaders(options.token ?? getGitHubToken()),
+    headers: createGitHubRawHeaders(options.token ?? getFallbackGitHubToken()),
   });
   await assertGitHubResponseOK(
     response,
@@ -456,22 +458,10 @@ async function fetchGitHubJSON(
   options: GitHubDiffFileServerOptions
 ): Promise<unknown> {
   const response = await fetcher(url, {
-    headers: createGitHubJSONHeaders(options.token ?? getGitHubToken()),
+    headers: createGitHubJSONHeaders(options.token ?? getFallbackGitHubToken()),
   });
   await assertGitHubResponseOK(response, `GitHub API ${url}`);
   return response.json();
-}
-
-function createGitHubJSONHeaders(token: string | undefined): HeadersInit {
-  const headers: Record<string, string> = {
-    Accept: 'application/vnd.github+json',
-    'User-Agent': GITHUB_USER_AGENT,
-    'X-GitHub-Api-Version': GITHUB_API_VERSION,
-  };
-  if (token != null && token !== '') {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  return headers;
 }
 
 function createGitHubRawHeaders(token: string | undefined): HeadersInit {
@@ -626,12 +616,4 @@ function readUnknownPath(data: unknown, path: readonly string[]): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
-}
-
-function getGitHubToken(): string | undefined {
-  return (
-    process.env.DIFFSHUB_GITHUB_TOKEN ??
-    process.env.GITHUB_TOKEN ??
-    process.env.GH_TOKEN
-  );
 }

@@ -44,7 +44,6 @@ export interface PullReviewComment {
   author: CommentAuthor;
   body: string;
   createdAt: string;
-  htmlUrl: string;
   id: number;
   inReplyToId: number | null;
   line: number | null;
@@ -67,10 +66,10 @@ export interface PullReviewThread {
 }
 
 // Annotation payload for a GitHub-backed review thread rendered in the diff.
+// The anchor range lives on the thread itself.
 export interface ThreadCommentMetadata {
   kind: 'thread';
   key: string;
-  range: SelectedLineRange;
   thread: PullReviewThread;
 }
 

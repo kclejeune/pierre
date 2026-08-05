@@ -1,5 +1,6 @@
 import type { SelectedLineRange } from '@pierre/diffs';
 
+import { toGitHubDiffSide } from './pullReviewThreads';
 import type { GitHubDiffSide, PullReviewComment } from './types';
 
 // Identifies the pull request a viewer route displays, for review-comment
@@ -23,7 +24,8 @@ interface NewCommentAnchor {
 // explanation).
 export async function fetchPullReviewComments(
   pull: PullRequestRef,
-  token: string | undefined
+  token: string | undefined,
+  signal?: AbortSignal
 ): Promise<PullReviewComment[]> {
   const params = new URLSearchParams({
     owner: pull.owner,
@@ -32,6 +34,7 @@ export async function fetchPullReviewComments(
   });
   const payload = await requestJSON(`/api/pull-comments?${params}`, {
     headers: buildHeaders(token),
+    signal,
   });
   const comments = (payload as { comments?: unknown }).comments;
   return Array.isArray(comments) ? (comments as PullReviewComment[]) : [];
@@ -127,12 +130,11 @@ export function createCommentAnchor(
   const anchor: NewCommentAnchor = {
     line: range.end,
     path,
-    side: endSide === 'deletions' ? 'LEFT' : 'RIGHT',
+    side: toGitHubDiffSide(endSide),
   };
   if (range.start !== range.end) {
     anchor.startLine = range.start;
-    anchor.startSide =
-      (range.side ?? endSide) === 'deletions' ? 'LEFT' : 'RIGHT';
+    anchor.startSide = toGitHubDiffSide(range.side ?? endSide);
   }
   return anchor;
 }

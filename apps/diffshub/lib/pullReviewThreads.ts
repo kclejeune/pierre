@@ -1,9 +1,14 @@
-import type { AnnotationSide, SelectedLineRange } from '@pierre/diffs';
+import type {
+  AnnotationSide,
+  DiffLineAnnotation,
+  SelectedLineRange,
+} from '@pierre/diffs';
 
 import type {
   GitHubDiffSide,
   PullReviewComment,
   PullReviewThread,
+  ThreadCommentMetadata,
 } from './types';
 
 export function toAnnotationSide(side: GitHubDiffSide): AnnotationSide {
@@ -14,8 +19,20 @@ export function toGitHubDiffSide(side: AnnotationSide): GitHubDiffSide {
   return side === 'deletions' ? 'LEFT' : 'RIGHT';
 }
 
-export function getThreadKey(rootId: number): string {
+function getThreadKey(rootId: number): string {
   return `thread-${rootId}`;
+}
+
+// The diff annotation carrying a review thread — shared by initial thread
+// application and the just-posted-comment path so both render identically.
+export function createThreadAnnotation(
+  thread: PullReviewThread
+): DiffLineAnnotation<ThreadCommentMetadata> {
+  return {
+    side: thread.side,
+    lineNumber: thread.lineNumber,
+    metadata: { kind: 'thread', key: thread.key, thread },
+  };
 }
 
 // Derives the selected-line range a thread anchors to. GitHub review comments

@@ -141,9 +141,9 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
   const viewerRef = useRef<CodeViewHandle<CommentMetadata> | null>(null);
   // Review threads and comment publishing only exist for pull requests on
   // the configured GitHub instance (never for arbitrary-domain patch URLs).
-  const pullRequest = useMemo<PullRequestRef | null>(() => {
+  const pullRequest = useMemo<PullRequestRef | undefined>(() => {
     if (domain != null && domain !== '') {
-      return null;
+      return undefined;
     }
     const source = parseGitHubDiffSource(path);
     return source?.kind === 'pull'
@@ -152,7 +152,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
           owner: source.repo.owner,
           repo: source.repo.repo,
         }
-      : null;
+      : undefined;
   }, [domain, path]);
   const loadDiffFiles = useMemo(
     () =>
@@ -245,12 +245,11 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     setViewerReadyTick((tick) => tick + 1);
   }, [onViewerReady]);
   usePullReviewThreads({
-    getToken: getGitHubToken,
     loadState,
     onThreadApplied: handleCommentSaved,
     pathToItemId: treeSource?.pathToItemId ?? null,
     pullRequest,
-    tokenVersion: githubTokenVersion,
+    token: githubToken,
     viewerKey,
     viewerReadyTick,
     viewerRef,
@@ -357,7 +356,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
             viewerRef={viewerRef}
             initialItems={initialItems}
             loadDiffFiles={loadDiffFiles}
-            pullRequest={pullRequest ?? undefined}
+            pullRequest={pullRequest}
             getGitHubToken={getGitHubToken}
             onCommentDeleted={handleCommentDeleted}
             onCommentSaved={handleCommentSaved}

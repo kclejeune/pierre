@@ -2,9 +2,9 @@ import type { ChangeTypes } from '@pierre/diffs';
 import { type NextRequest } from 'next/server';
 
 import { loadGitHubDiffFiles } from '@/lib/githubDiffFileServer';
+import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
 
-const CACHE_CONTROL = 'no-store';
 const CHANGE_TYPES = new Set<ChangeTypes>([
   'change',
   'deleted',
@@ -57,17 +57,4 @@ function parseChangeType(value: string | null): ChangeTypes | undefined {
   return CHANGE_TYPES.has(value as ChangeTypes)
     ? (value as ChangeTypes)
     : undefined;
-}
-
-function createJSONResponse(
-  body: unknown,
-  options: { status?: number } = {}
-): Response {
-  return Response.json(body, {
-    status: options.status ?? 200,
-    headers: {
-      'Cache-Control': CACHE_CONTROL,
-      Vary: 'Authorization',
-    },
-  });
 }

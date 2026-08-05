@@ -62,13 +62,20 @@ import type {
 
 const IGNORE_RESPONSE = Symbol('IGNORE_RESPONSE');
 
-class WorkerPoolTerminatedError extends Error {
+// Base class for expected cancellations (pool terminated, task superseded or
+// abandoned before completion). These signal that pending work became
+// unnecessary — an unmount, a scroll away, a theme change — not that anything
+// failed, so callers awaiting pool work should swallow them rather than
+// logging or surfacing an error state.
+export class WorkerPoolCanceledError extends Error {}
+
+class WorkerPoolTerminatedError extends WorkerPoolCanceledError {
   constructor() {
     super('WorkerPoolManager: operation canceled because the pool terminated');
   }
 }
 
-class WorkerPoolTaskCanceledError extends Error {
+class WorkerPoolTaskCanceledError extends WorkerPoolCanceledError {
   constructor() {
     super('WorkerPoolManager: operation canceled before the task completed');
   }

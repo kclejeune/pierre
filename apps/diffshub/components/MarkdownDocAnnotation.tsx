@@ -7,9 +7,17 @@ import type {
 } from '@pierre/diffs';
 import { IconPlus } from '@pierre/icons';
 import type { Element as HastElement, Root as HastRoot } from 'hast';
-import { memo, type ReactNode, useEffect, useMemo, useState } from 'react';
+import {
+  memo,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type { Components } from 'react-markdown';
 
+import { DocAssetImage } from './DocAssetImage';
 import { MarkdownContent } from './MarkdownContent';
 import { cn } from '@/lib/cn';
 import {
@@ -84,6 +92,30 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
     };
   }, [commentAnnotations, renderComment]);
 
+  // While the document renders, hide the source diff underneath: stamp the
+  // doc's side onto the CodeView container host so the doc-only rules in
+  // CODE_VIEW_CUSTOM_CSS (injected into the container's shadow root) apply.
+  // Skipped while loading or errored so the diff stays visible whenever the
+  // document itself cannot render.
+  const containerRef = useRef<HTMLDivElement>(null);
+  const docReady = contentsState.kind === 'ready';
+  useEffect(() => {
+    if (!docReady) {
+      return;
+    }
+    const host = containerRef.current?.closest('diffs-container');
+    if (host == null) {
+      return;
+    }
+    host.setAttribute(
+      'data-diffshub-doc-open',
+      isDeletedDoc ? 'deletions' : 'additions'
+    );
+    return () => {
+      host.removeAttribute('data-diffshub-doc-open');
+    };
+  }, [docReady, isDeletedDoc]);
+
   const rehypePlugins = useMemo(() => [rehypeWrapTopLevelBlocks], []);
   const components = useMemo<Components>(
     () => ({
@@ -95,22 +127,20 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
           typeof src === 'string' && sourcePath != null
             ? resolveDocAssetPath(src, fileDiff.name)
             : null;
-        return (
-          <img
-            {...rest}
-            alt={alt ?? ''}
-            loading="lazy"
-            src={
-              assetPath != null && sourcePath != null
-                ? createDocAssetURL(
-                    sourcePath,
-                    assetPath,
-                    isDeletedDoc ? 'old' : 'new'
-                  )
-                : src
-            }
-          />
-        );
+        if (assetPath != null && sourcePath != null) {
+          return (
+            <DocAssetImage
+              {...rest}
+              alt={alt ?? ''}
+              src={createDocAssetURL(
+                sourcePath,
+                assetPath,
+                isDeletedDoc ? 'old' : 'new'
+              )}
+            />
+          );
+        }
+        return <img {...rest} alt={alt ?? ''} loading="lazy" src={src} />;
       },
       div: (props) => {
         const { node } = props;
@@ -198,6 +228,7 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
 
   return (
     <div
+      ref={containerRef}
       className={cn(
         '@container m-2 rounded-xl border border-[var(--diffshub-annotation-border,var(--color-border))] bg-[var(--diffshub-annotation-bg,var(--color-card))] font-sans text-[var(--diffshub-annotation-fg,var(--color-card-foreground))] shadow-[var(--diffshub-annotation-shadow,0_2px_4px_rgb(0_0_0_/_0.025),0_4px_8px_rgb(0_0_0_/_0.025))]',
         rail != null ? 'max-w-[1240px]' : 'max-w-[860px]'

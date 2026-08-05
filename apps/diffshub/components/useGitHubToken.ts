@@ -47,6 +47,13 @@ export function useGitHubToken(): GitHubTokenState {
   };
 }
 
+// Lets the OAuth completion page persist a token into the same storage slot
+// the hook reads, so tokens from "Sign in with GitHub" and pasted PATs are
+// indistinguishable to the rest of the app.
+export function saveGitHubTokenToStorage(token: string): void {
+  writeStoredToken(token.trim());
+}
+
 function readStoredToken(): string {
   try {
     return globalThis.localStorage?.getItem(GITHUB_TOKEN_STORAGE_KEY) ?? '';

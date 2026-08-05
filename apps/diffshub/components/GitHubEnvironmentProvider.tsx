@@ -2,15 +2,18 @@
 
 import { createContext, type ReactNode, useContext } from 'react';
 
-import type { GitHubClientEnvironment } from '@/lib/githubEnvironment';
+import {
+  GITHUB_DOTCOM_WEB_URL,
+  type GitHubClientEnvironment,
+} from '@/lib/githubEnvironment';
 
 // Default matches a plain github.com deployment so components render sensibly
 // even if a caller forgets to mount the provider (e.g. isolated tests).
 const DEFAULT_CLIENT_ENVIRONMENT: GitHubClientEnvironment = {
-  host: 'github.com',
+  host: new URL(GITHUB_DOTCOM_WEB_URL).hostname,
   isGitHubDotCom: true,
   oauthEnabled: false,
-  webURL: 'https://github.com',
+  webURL: GITHUB_DOTCOM_WEB_URL,
 };
 
 const GitHubEnvironmentContext = createContext<GitHubClientEnvironment>(

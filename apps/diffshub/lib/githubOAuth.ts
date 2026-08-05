@@ -7,13 +7,15 @@
 // stores it in the same localStorage slot the manual PAT flow uses — so every
 // existing loader keeps working identically for both auth methods.
 
-// Cookie carrying `${state} ${returnTo}` between the login redirect and the
-// OAuth callback. Scoped to the auth routes so it rides along with nothing
-// else.
+import { GITHUB_USER_AGENT } from './githubEnvironment';
+
+// Cookie carrying the JSON-encoded state payload between the login redirect
+// and the OAuth callback. Scoped to the auth routes so it rides along with
+// nothing else.
 export const OAUTH_STATE_COOKIE = 'diffshub-github-oauth-state';
 export const OAUTH_STATE_COOKIE_MAX_AGE_SECONDS = 10 * 60;
 export const OAUTH_CALLBACK_PATH = '/api/auth/github/callback';
-export const OAUTH_COMPLETION_PATH = '/auth/github';
+const OAUTH_COMPLETION_PATH = '/auth/github';
 
 // Read requests can see private repository diffs, so ask for classic `repo`
 // scope — OAuth apps (unlike fine-grained PATs) have no read-only repo scope.
@@ -49,7 +51,7 @@ export function sanitizeReturnTo(value: string | null | undefined): string {
 }
 
 export function serializeOAuthState(payload: OAuthStatePayload): string {
-  return `${payload.state} ${payload.returnTo}`;
+  return JSON.stringify(payload);
 }
 
 export function parseOAuthState(
@@ -58,13 +60,27 @@ export function parseOAuthState(
   if (cookieValue == null || cookieValue === '') {
     return undefined;
   }
-  const separatorIndex = cookieValue.indexOf(' ');
-  if (separatorIndex <= 0) {
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cookieValue);
+  } catch {
     return undefined;
   }
+
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    typeof (parsed as OAuthStatePayload).state !== 'string' ||
+    typeof (parsed as OAuthStatePayload).returnTo !== 'string'
+  ) {
+    return undefined;
+  }
+
+  const payload = parsed as OAuthStatePayload;
   return {
-    state: cookieValue.slice(0, separatorIndex),
-    returnTo: sanitizeReturnTo(cookieValue.slice(separatorIndex + 1)),
+    state: payload.state,
+    returnTo: sanitizeReturnTo(payload.returnTo),
   };
 }
 
@@ -132,7 +148,7 @@ export async function exchangeOAuthCode(options: {
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/json',
-      'User-Agent': 'pierre-diffshub',
+      'User-Agent': GITHUB_USER_AGENT,
     },
     body: JSON.stringify({
       client_id: options.clientId,

@@ -56,6 +56,21 @@ export interface PullReviewComment {
   startSide: GitHubDiffSide | null;
 }
 
+// A pull-request-level comment with no diff anchor: an issue comment on the
+// PR conversation, or a submitted review's summary body. Normalized by the
+// /api/pull-comments route.
+export interface PullDiscussionComment {
+  author: CommentAuthor;
+  body: string;
+  createdAt: string;
+  htmlUrl: string | null;
+  id: number;
+  kind: 'comment' | 'review';
+  // GitHub review verdict (APPROVED, CHANGES_REQUESTED, COMMENTED, …) when
+  // kind is 'review'; null for conversation comments.
+  reviewState: string | null;
+}
+
 // A review conversation: the root comment plus its replies in creation order,
 // anchored to a line range in one file of the pull-request diff.
 export interface PullReviewThread {

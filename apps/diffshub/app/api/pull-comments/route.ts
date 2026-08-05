@@ -9,10 +9,16 @@ import {
 } from '@/lib/githubEnvironment';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
-import type { GitHubDiffSide, PullReviewComment } from '@/lib/types';
+import type {
+  GitHubDiffSide,
+  PullDiscussionComment,
+  PullReviewComment,
+} from '@/lib/types';
 
 // Proxies GitHub pull-request review comments for the configured instance:
-//   GET    ?owner&repo&pull            → all review comments, normalized
+//   GET    ?owner&repo&pull            → all review comments plus PR-level
+//                                        discussion (issue comments and
+//                                        review summaries), normalized
 //   POST   {owner, repo, pull, body, inReplyToId}          → reply to a thread
 //   POST   {owner, repo, pull, body, path, line, side, …}  → new comment
 //   PATCH  {owner, repo, commentId, body}                  → edit a comment
@@ -40,60 +46,108 @@ export async function GET(request: NextRequest) {
 
   const token = resolveRequestGitHubToken(request);
   const environment = getGitHubEnvironment();
-  // request.signal aborts the GitHub calls when the browser abandons this
-  // request (e.g. a superseded thread fetch), instead of paginating to
-  // completion against a dead client.
-  const fetchPage = (page: number) =>
-    fetch(
-      createGitHubAPIURL(
-        environment,
-        `/repos/${owner}/${repo}/pulls/${pull}/comments`,
-        { page: String(page), per_page: String(PER_PAGE) }
-      ),
-      {
-        cache: 'no-store',
-        headers: buildGitHubHeaders(token),
-        signal: request.signal,
-      }
-    );
 
-  const comments: PullReviewComment[] = [];
-  try {
-    // GitHub reports the total page count on page 1 via the Link header, so
-    // the remaining pages can be fetched in parallel.
-    const firstResponse = await fetchPage(1);
-    if (!firstResponse.ok) {
-      return createGitHubFailureResponse(firstResponse);
-    }
-    const pages = [(await firstResponse.json()) as unknown[]];
-    const lastPage = Math.min(
-      parseLastPage(firstResponse.headers.get('link')),
-      MAX_COMMENT_PAGES
-    );
-    if (lastPage > 1) {
-      const restResponses = await Promise.all(
-        Array.from({ length: lastPage - 1 }, (_, index) => fetchPage(index + 2))
-      );
-      for (const response of restResponses) {
-        if (!response.ok) {
-          return createGitHubFailureResponse(response);
-        }
-        pages.push((await response.json()) as unknown[]);
-      }
-    }
-    for (const pageComments of pages) {
-      for (const comment of pageComments) {
-        const normalized = normalizeReviewComment(comment);
-        if (normalized != null) {
-          comments.push(normalized);
-        }
-      }
-    }
-  } catch {
+  // Review comments are the core payload — their failures fail the request.
+  // The PR-level discussion (issue comments, review summaries) is best-effort
+  // extra context: any failure there degrades to an empty list rather than
+  // blocking the inline threads.
+  const [reviewResult, issueResult, reviewsResult] = await Promise.all([
+    fetchAllPages(
+      environment,
+      `/repos/${owner}/${repo}/pulls/${pull}/comments`,
+      token,
+      request.signal
+    ).catch(() => 'unreachable' as const),
+    fetchAllPages(
+      environment,
+      `/repos/${owner}/${repo}/issues/${pull}/comments`,
+      token,
+      request.signal
+    ).catch(() => null),
+    fetchAllPages(
+      environment,
+      `/repos/${owner}/${repo}/pulls/${pull}/reviews`,
+      token,
+      request.signal
+    ).catch(() => null),
+  ]);
+  if (reviewResult === 'unreachable') {
     return createUnreachableResponse(environment);
   }
+  if ('failure' in reviewResult) {
+    return reviewResult.failure;
+  }
 
-  return createJSONResponse({ comments });
+  const comments: PullReviewComment[] = [];
+  for (const record of reviewResult.records) {
+    const normalized = normalizeReviewComment(record);
+    if (normalized != null) {
+      comments.push(normalized);
+    }
+  }
+
+  const discussion: PullDiscussionComment[] = [];
+  if (issueResult != null && 'records' in issueResult) {
+    for (const record of issueResult.records) {
+      const normalized = normalizeDiscussionComment(record);
+      if (normalized != null) {
+        discussion.push(normalized);
+      }
+    }
+  }
+  if (reviewsResult != null && 'records' in reviewsResult) {
+    for (const record of reviewsResult.records) {
+      const normalized = normalizeReviewSummary(record);
+      if (normalized != null) {
+        discussion.push(normalized);
+      }
+    }
+  }
+  discussion.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+  return createJSONResponse({ comments, discussion });
+}
+
+// Fetches every page of a GitHub list endpoint (capped at MAX_COMMENT_PAGES).
+// Page 1's Link header reports the total page count, so the remaining pages
+// fan out in parallel. The signal aborts the calls when the browser abandons
+// the request instead of paginating to completion against a dead client.
+async function fetchAllPages(
+  environment: GitHubEnvironment,
+  pathname: string,
+  token: string | undefined,
+  signal: AbortSignal
+): Promise<{ records: unknown[] } | { failure: Response }> {
+  const fetchPage = (page: number) =>
+    fetch(
+      createGitHubAPIURL(environment, pathname, {
+        page: String(page),
+        per_page: String(PER_PAGE),
+      }),
+      { cache: 'no-store', headers: buildGitHubHeaders(token), signal }
+    );
+
+  const firstResponse = await fetchPage(1);
+  if (!firstResponse.ok) {
+    return { failure: await createGitHubFailureResponse(firstResponse) };
+  }
+  const records = [...((await firstResponse.json()) as unknown[])];
+  const lastPage = Math.min(
+    parseLastPage(firstResponse.headers.get('link')),
+    MAX_COMMENT_PAGES
+  );
+  if (lastPage > 1) {
+    const restResponses = await Promise.all(
+      Array.from({ length: lastPage - 1 }, (_, index) => fetchPage(index + 2))
+    );
+    for (const response of restResponses) {
+      if (!response.ok) {
+        return { failure: await createGitHubFailureResponse(response) };
+      }
+      records.push(...((await response.json()) as unknown[]));
+    }
+  }
+  return { records };
 }
 
 export async function POST(request: NextRequest) {
@@ -334,6 +388,75 @@ function normalizeReviewComment(comment: unknown): PullReviewComment | null {
     side: isGitHubDiffSide(record.side) ? record.side : null,
     startLine: typeof record.start_line === 'number' ? record.start_line : null,
     startSide: isGitHubDiffSide(record.start_side) ? record.start_side : null,
+  };
+}
+
+// An issue comment on the PR's conversation tab.
+function normalizeDiscussionComment(
+  comment: unknown
+): PullDiscussionComment | null {
+  if (typeof comment !== 'object' || comment == null) {
+    return null;
+  }
+  const record = comment as Record<string, unknown>;
+  const user = record.user as Record<string, unknown> | null | undefined;
+  if (
+    typeof record.id !== 'number' ||
+    typeof record.body !== 'string' ||
+    typeof record.created_at !== 'string' ||
+    typeof user?.login !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    author: {
+      avatarUrl: typeof user.avatar_url === 'string' ? user.avatar_url : '',
+      login: user.login,
+    },
+    body: record.body,
+    createdAt: record.created_at,
+    htmlUrl: typeof record.html_url === 'string' ? record.html_url : null,
+    id: record.id,
+    kind: 'comment',
+    reviewState: null,
+  };
+}
+
+// A submitted review's summary. PENDING reviews are private to their author
+// and dropped; bodiless COMMENTED reviews are containers for inline comments
+// already shown as threads, so only verdicts (approve / request changes)
+// survive without a body.
+function normalizeReviewSummary(review: unknown): PullDiscussionComment | null {
+  if (typeof review !== 'object' || review == null) {
+    return null;
+  }
+  const record = review as Record<string, unknown>;
+  const user = record.user as Record<string, unknown> | null | undefined;
+  const state = typeof record.state === 'string' ? record.state : '';
+  const body = typeof record.body === 'string' ? record.body : '';
+  if (
+    typeof record.id !== 'number' ||
+    typeof record.submitted_at !== 'string' ||
+    typeof user?.login !== 'string' ||
+    state === '' ||
+    state === 'PENDING' ||
+    (body.trim() === '' &&
+      state !== 'APPROVED' &&
+      state !== 'CHANGES_REQUESTED')
+  ) {
+    return null;
+  }
+  return {
+    author: {
+      avatarUrl: typeof user.avatar_url === 'string' ? user.avatar_url : '',
+      login: user.login,
+    },
+    body,
+    createdAt: record.submitted_at,
+    htmlUrl: typeof record.html_url === 'string' ? record.html_url : null,
+    id: record.id,
+    kind: 'review',
+    reviewState: state,
   };
 }
 

@@ -52,6 +52,7 @@ import type {
   DiffsHubFileTreeSource,
   DiffsHubSavedCommentEntry,
   DiffsHubSavedCommentItem,
+  PullDiscussionComment,
 } from '@/lib/types';
 
 type SidebarTab = 'files' | 'comments';
@@ -63,6 +64,7 @@ interface DiffsHubSidebarProps {
   className?: string;
   commentSections: readonly DiffsHubSavedCommentItem[];
   diffStats: DiffsHubDiffStatsData | null;
+  discussion?: readonly PullDiscussionComment[];
   mobileOverlayOpen?: boolean;
   onMobileClose(): void;
   onSelectComment(comment: DiffsHubSavedCommentEntry): void;
@@ -78,6 +80,7 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
   className,
   commentSections,
   diffStats,
+  discussion = [],
   mobileOverlayOpen = false,
   onMobileClose,
   onSelectComment,
@@ -89,7 +92,7 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
   viewerRef,
 }: DiffsHubSidebarProps) {
   const [activeTab, setActiveTab] = useState<SidebarTab>('files');
-  let totalCommentCount = 0;
+  let totalCommentCount = discussion.length;
   for (const section of commentSections) {
     totalCommentCount += section.comments.length;
   }
@@ -304,6 +307,7 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
           >
             <DiffsHubCommentsList
               commentSections={commentSections}
+              discussion={discussion}
               onSelectComment={onSelectComment}
               onSelectItem={onSelectItem}
             />

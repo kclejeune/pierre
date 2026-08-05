@@ -2,6 +2,7 @@ import { Analytics } from '@vercel/analytics/next';
 import { SpeedInsights } from '@vercel/speed-insights/next';
 import { Geist } from 'next/font/google';
 import localFont from 'next/font/local';
+import { connection } from 'next/server';
 import type { ReactNode } from 'react';
 
 import { GitHubEnvironmentProvider } from '@/components/GitHubEnvironmentProvider';
@@ -115,11 +116,19 @@ function applyInitialTheme(
 
 const themeBootstrapScript = `(${String(applyInitialTheme)})(${JSON.stringify(THEME_BOOTSTRAP_STORAGE_KEY)},${THEME_BOOTSTRAP_VERSION},${JSON.stringify(THEME_BOOTSTRAP_RULE_ID)},${JSON.stringify(THEME_BOOTSTRAP_SELECTOR)})`;
 
-export function RootLayout({
+export async function RootLayout({
   children,
 }: Readonly<{
   children: ReactNode;
 }>) {
+  // Standalone (container) builds defer all rendering to request time so the
+  // DIFFSHUB_* settings are read from the runtime environment instead of
+  // being baked into prerendered pages — the image needs no build-time
+  // configuration. Hosted builds keep static prerendering: the flag is only
+  // set during `next build`, and at runtime the pages are already dynamic.
+  if (process.env.NEXT_OUTPUT === 'standalone') {
+    await connection();
+  }
   return (
     <html
       lang="en"

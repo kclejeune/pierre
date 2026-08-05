@@ -2,6 +2,7 @@ import type { ChangeTypes } from '@pierre/diffs';
 import { type NextRequest } from 'next/server';
 
 import { loadGitHubDiffFiles } from '@/lib/githubDiffFileServer';
+import { parseBearerToken } from '@/lib/parseBearerToken';
 
 const CACHE_CONTROL = 'no-store';
 const CHANGE_TYPES = new Set<ChangeTypes>([
@@ -47,16 +48,6 @@ export async function GET(request: NextRequest) {
       { status: 502 }
     );
   }
-}
-
-function parseBearerToken(value: string | null): string | undefined {
-  if (value == null) {
-    return undefined;
-  }
-
-  const match = /^Bearer\s+(.+)$/i.exec(value.trim());
-  const token = match?.[1]?.trim();
-  return token == null || token === '' ? undefined : token;
 }
 
 function parseChangeType(value: string | null): ChangeTypes | undefined {

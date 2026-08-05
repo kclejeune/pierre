@@ -1,12 +1,17 @@
 'use client';
 
-import type { FileDiffContentsLoader, FileDiffMetadata } from '@pierre/diffs';
+import type {
+  DiffLineAnnotation,
+  FileDiffContentsLoader,
+  FileDiffMetadata,
+} from '@pierre/diffs';
 import { IconPlus } from '@pierre/icons';
 import type { Element as HastElement, Root as HastRoot } from 'hast';
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, type ReactNode, useEffect, useMemo, useState } from 'react';
 import type { Components } from 'react-markdown';
 
 import { MarkdownContent } from './MarkdownContent';
+import { cn } from '@/lib/cn';
 import {
   buildNewFileChangeMap,
   findCommentableNewLine,
@@ -16,6 +21,7 @@ import {
   createDocAssetURL,
   resolveDocAssetPath,
 } from '@/lib/markdownDocAssets';
+import type { CommentMetadata } from '@/lib/types';
 
 interface MarkdownDocAnnotationProps {
   fileDiff: FileDiffMetadata;
@@ -26,6 +32,11 @@ interface MarkdownDocAnnotationProps {
   // instance; enables serving the doc's relative image references through the
   // asset proxy. Unset for arbitrary-domain patch URLs.
   sourcePath?: string;
+  // Comment annotations on this document's side of the diff, shown in a
+  // margin rail beside the block containing each comment's line while the
+  // rendered view is open. `renderComment` supplies the card for each one.
+  commentAnnotations?: DiffLineAnnotation<CommentMetadata>[];
+  renderComment?(annotation: DiffLineAnnotation<CommentMetadata>): ReactNode;
 }
 
 // The rendered-markdown document view, shown as a file-level annotation above
@@ -39,6 +50,8 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
   loadDiffFiles,
   onCommentAtLine,
   sourcePath,
+  commentAnnotations,
+  renderComment,
 }: MarkdownDocAnnotationProps) {
   const contentsState = useMarkdownDocContents(fileDiff, loadDiffFiles);
   // Deleted files render the removed document; its lines no longer exist on
@@ -48,6 +61,11 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
     () => (isDeletedDoc ? null : buildNewFileChangeMap(fileDiff)),
     [fileDiff, isDeletedDoc]
   );
+  // The rail only reserves layout space when there is something to show.
+  const hasRail =
+    renderComment != null &&
+    commentAnnotations != null &&
+    commentAnnotations.length > 0;
 
   const rehypePlugins = useMemo(() => [rehypeWrapTopLevelBlocks], []);
   const components = useMemo<Components>(
@@ -90,35 +108,87 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
         const commentLine = isDeletedDoc
           ? null
           : findCommentableNewLine(fileDiff, sourceStart, sourceEnd);
+        // The claim range extends the block's own lines over the blank lines
+        // that follow it, so every comment line maps to exactly one block.
+        const claimStart =
+          parseSourceLine(node?.properties?.dataClaimStart) ?? sourceStart;
+        const claimEnd =
+          parseSourceLine(node?.properties?.dataClaimEnd) ?? sourceEnd;
+        const blockComments = hasRail
+          ? commentAnnotations
+              .filter(
+                (annotation) =>
+                  annotation.lineNumber >= claimStart &&
+                  annotation.lineNumber <= claimEnd
+              )
+              .sort((a, b) => a.lineNumber - b.lineNumber)
+          : [];
         return (
-          <div className="group/mdblock relative">
-            {changed && (
-              <span
-                aria-hidden="true"
-                className="absolute top-1 bottom-1 -left-3 w-[3px] rounded-full bg-[#07c480]"
-              />
+          <div
+            className={cn(
+              'group/mdblock',
+              // Side-by-side only when the card itself is wide enough for a
+              // readable prose column; otherwise comments stack below their
+              // block. Container query, since the card's width tracks the
+              // viewer column rather than the viewport.
+              hasRail
+                ? '@3xl:grid @3xl:grid-cols-[minmax(0,1fr)_minmax(260px,320px)] @3xl:gap-4'
+                : 'relative'
             )}
-            {commentLine != null && (
-              <button
-                type="button"
-                title="Comment on this section"
-                aria-label="Comment on this section"
-                className="absolute top-0.5 -right-1 z-1 hidden size-5 cursor-pointer items-center justify-center rounded-[4px] bg-[rgb(0,159,255)] text-white opacity-90 group-hover/mdblock:inline-flex dark:text-black"
-                onClick={() => onCommentAtLine(itemId, commentLine)}
-              >
-                <IconPlus size={14} />
-              </button>
+          >
+            <div className={cn(hasRail && 'relative min-w-0')}>
+              {changed && (
+                <span
+                  aria-hidden="true"
+                  className="absolute top-1 bottom-1 -left-3 w-[3px] rounded-full bg-[#07c480]"
+                />
+              )}
+              {commentLine != null && (
+                <button
+                  type="button"
+                  title="Comment on this section"
+                  aria-label="Comment on this section"
+                  className="absolute top-0.5 -right-1 z-1 hidden size-5 cursor-pointer items-center justify-center rounded-[4px] bg-[rgb(0,159,255)] text-white opacity-90 group-hover/mdblock:inline-flex dark:text-black"
+                  onClick={() => onCommentAtLine(itemId, commentLine)}
+                >
+                  <IconPlus size={14} />
+                </button>
+              )}
+              {props.children}
+            </div>
+            {blockComments.length > 0 && (
+              <div className="flex min-w-0 flex-col self-start">
+                {blockComments.map((annotation) => (
+                  <div key={annotation.metadata.key}>
+                    {renderComment?.(annotation)}
+                  </div>
+                ))}
+              </div>
             )}
-            {props.children}
           </div>
         );
       },
     }),
-    [changeMap, fileDiff, isDeletedDoc, itemId, onCommentAtLine, sourcePath]
+    [
+      changeMap,
+      commentAnnotations,
+      fileDiff,
+      hasRail,
+      isDeletedDoc,
+      itemId,
+      onCommentAtLine,
+      renderComment,
+      sourcePath,
+    ]
   );
 
   return (
-    <div className="m-2 max-w-[860px] rounded-xl border border-[var(--diffshub-annotation-border,var(--color-border))] bg-[var(--diffshub-annotation-bg,var(--color-card))] font-sans text-[var(--diffshub-annotation-fg,var(--color-card-foreground))] shadow-[var(--diffshub-annotation-shadow,0_2px_4px_rgb(0_0_0_/_0.025),0_4px_8px_rgb(0_0_0_/_0.025))]">
+    <div
+      className={cn(
+        '@container m-2 rounded-xl border border-[var(--diffshub-annotation-border,var(--color-border))] bg-[var(--diffshub-annotation-bg,var(--color-card))] font-sans text-[var(--diffshub-annotation-fg,var(--color-card-foreground))] shadow-[var(--diffshub-annotation-shadow,0_2px_4px_rgb(0_0_0_/_0.025),0_4px_8px_rgb(0_0_0_/_0.025))]',
+        hasRail ? 'max-w-[1240px]' : 'max-w-[860px]'
+      )}
+    >
       <div className="text-muted-foreground flex items-center gap-2 border-b border-[var(--diffshub-annotation-border,var(--color-border))] px-4 py-2 text-[12px] tracking-wide uppercase">
         {isDeletedDoc ? 'Rendered document (removed)' : 'Rendered document'}
         {changeMap != null && (
@@ -145,6 +215,18 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
             components={components}
           />
         )}
+        {contentsState.kind !== 'ready' &&
+          hasRail && (
+            // Without rendered blocks to attach to, keep the comments visible
+            // as a flat list so they never silently disappear.
+            <div className="mt-2 flex max-w-[620px] flex-col">
+              {commentAnnotations.map((annotation) => (
+                <div key={annotation.metadata.key}>
+                  {renderComment(annotation)}
+                </div>
+              ))}
+            </div>
+          )}
       </div>
     </div>
   );
@@ -164,11 +246,15 @@ function useMarkdownDocContents(
   loadDiffFiles: FileDiffContentsLoader | undefined
 ): MarkdownDocContentsState {
   const localContents = useMemo(() => {
+    // Parsed lines keep their trailing newlines, so concatenate rather than
+    // join — a '\n' separator would double every line break, silently shifting
+    // all source positions (and therefore comment anchors) in the rendered
+    // document.
     if (fileDiff.type === 'deleted') {
-      return fileDiff.deletionLines.join('\n');
+      return fileDiff.deletionLines.join('');
     }
     if (fileDiff.type === 'new' || !fileDiff.isPartial) {
-      return fileDiff.additionLines.join('\n');
+      return fileDiff.additionLines.join('');
     }
     return null;
   }, [fileDiff]);
@@ -250,6 +336,28 @@ function parseSourceLine(value: unknown): number | null {
 // than only at the top level.
 function rehypeWrapTopLevelBlocks() {
   return (tree: HastRoot) => {
+    // Beyond its own source range, each block also claims the lines between
+    // it and the next block (blank lines, mostly), and the first block claims
+    // everything above it. That partitions every document line to exactly one
+    // block, so a comment on any line has a home in the margin rail.
+    const positioned = tree.children.filter(
+      (child) => child.type === 'element' && child.position != null
+    );
+    const claimStarts = new Map<HastRoot['children'][number], number>();
+    const claimEnds = new Map<HastRoot['children'][number], number>();
+    for (const [index, child] of positioned.entries()) {
+      if (child.type !== 'element' || child.position == null) {
+        continue;
+      }
+      claimStarts.set(child, index === 0 ? 1 : child.position.start.line);
+      const next = positioned[index + 1];
+      claimEnds.set(
+        child,
+        next?.type === 'element' && next.position != null
+          ? next.position.start.line - 1
+          : Number.MAX_SAFE_INTEGER
+      );
+    }
     tree.children = tree.children.map((child) => {
       if (child.type !== 'element' || child.position == null) {
         return child;
@@ -260,6 +368,8 @@ function rehypeWrapTopLevelBlocks() {
         properties: {
           dataSourceStart: child.position.start.line,
           dataSourceEnd: child.position.end.line,
+          dataClaimStart: claimStarts.get(child) ?? child.position.start.line,
+          dataClaimEnd: claimEnds.get(child) ?? child.position.end.line,
         },
         children: [child],
       };

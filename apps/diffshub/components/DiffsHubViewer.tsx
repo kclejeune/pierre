@@ -636,7 +636,8 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
   });
 
   // A comment affordance in the rendered document maps back to a source line;
-  // open a draft there and bring the line into view.
+  // the draft it opens renders in the document's margin rail, so no scrolling
+  // is needed to reach it.
   const handleCommentAtDocLine = useStableCallback(
     (itemId: string, lineNumber: number) => {
       handleCreateDraftComment(
@@ -648,14 +649,6 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
         },
         itemId
       );
-      viewerRef.current?.scrollTo({
-        type: 'line',
-        id: itemId,
-        lineNumber,
-        side: 'additions',
-        align: 'center',
-        behavior: 'smooth-auto',
-      });
     }
   );
 
@@ -686,6 +679,51 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
     }
   });
 
+  // The comment card for a single draft/thread/saved annotation, rendered
+  // either at its diff line or in the rendered document's margin rail.
+  const renderCommentCard = (
+    annotation: DiffLineAnnotation<CommentMetadata>,
+    itemId: string
+  ) => {
+    if (isDraftAnnotation(annotation)) {
+      return (
+        <DraftAnnotation
+          annotation={annotation}
+          itemId={itemId}
+          onCancel={handleRemoveComment}
+          onSave={handleSaveDraftComment}
+        />
+      );
+    }
+
+    if (isThreadAnnotation(annotation)) {
+      return (
+        <ThreadAnnotation
+          annotation={annotation}
+          itemId={itemId}
+          canWrite={getWriteToken() != null}
+          onDeleteComment={handleThreadDeleteComment}
+          onEditComment={handleThreadEditComment}
+          onReply={handleThreadReply}
+        />
+      );
+    }
+
+    if (!isSavedAnnotation(annotation)) {
+      return null;
+    }
+
+    return (
+      <ExampleAnnotation
+        annotation={annotation}
+        itemId={itemId}
+        onDelete={handleRemoveComment}
+        onEdit={handleEditLocalComment}
+        onToggleSelection={handleToggleCommentSelection}
+      />
+    );
+  };
+
   const renderCommentAnnotation = useStableCallback(
     (
       annotation:
@@ -697,7 +735,18 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
         return null;
       }
 
+      // The rendered document is anchored to the deletions side only when the
+      // file was deleted (there is no additions side to render).
+      const docSide =
+        item.fileDiff.type === 'deleted' ? 'deletions' : 'additions';
+
       if (isDocAnnotation(annotation)) {
+        const commentAnnotations = (item.annotations ?? []).filter(
+          (candidate) =>
+            'side' in candidate &&
+            candidate.side === docSide &&
+            !isDocAnnotation(candidate)
+        );
         return (
           <MarkdownDocAnnotation
             fileDiff={item.fileDiff}
@@ -705,47 +754,24 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
             loadDiffFiles={loadDiffFiles}
             onCommentAtLine={handleCommentAtDocLine}
             sourcePath={sourcePath}
+            commentAnnotations={commentAnnotations}
+            renderComment={(commentAnnotation) =>
+              renderCommentCard(commentAnnotation, item.id)
+            }
           />
         );
       }
 
-      if (isDraftAnnotation(annotation)) {
-        return (
-          <DraftAnnotation
-            annotation={annotation}
-            itemId={item.id}
-            onCancel={handleRemoveComment}
-            onSave={handleSaveDraftComment}
-          />
-        );
-      }
-
-      if (isThreadAnnotation(annotation)) {
-        return (
-          <ThreadAnnotation
-            annotation={annotation}
-            itemId={item.id}
-            canWrite={getWriteToken() != null}
-            onDeleteComment={handleThreadDeleteComment}
-            onEditComment={handleThreadEditComment}
-            onReply={handleThreadReply}
-          />
-        );
-      }
-
-      if (!isSavedAnnotation(annotation)) {
+      // While the rendered document is open, its side's comments show in the
+      // document's margin rail instead of at their diff lines.
+      if (
+        annotation.side === docSide &&
+        item.annotations?.some(isDocAnnotation) === true
+      ) {
         return null;
       }
 
-      return (
-        <ExampleAnnotation
-          annotation={annotation}
-          itemId={item.id}
-          onDelete={handleRemoveComment}
-          onEdit={handleEditLocalComment}
-          onToggleSelection={handleToggleCommentSelection}
-        />
-      );
+      return renderCommentCard(annotation, item.id);
     }
   );
 

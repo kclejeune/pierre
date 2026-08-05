@@ -6,7 +6,7 @@ import { type RefObject, useEffect, useRef, useState } from 'react';
 import { incrementItemVersion } from '@/lib/incrementItemVersion';
 import { isDiffItem } from '@/lib/isDiffItem';
 import {
-  fetchPullReviewComments,
+  fetchPullComments,
   type PullRequestRef,
 } from '@/lib/pullCommentsClient';
 import {
@@ -17,12 +17,16 @@ import { createThreadSavedCommentEvent } from '@/lib/savedCommentEvent';
 import type {
   CommentMetadata,
   DiffsHubSavedCommentEvent,
+  PullDiscussionComment,
   PullReviewThread,
   ViewerLoadState,
 } from '@/lib/types';
 
 interface UsePullReviewThreadsOptions {
   loadState: ViewerLoadState;
+  // Receives the PR-level conversation (issue comments, review summaries)
+  // whenever the comment fetch resolves, for the sidebar's discussion section.
+  onDiscussionLoaded(discussion: PullDiscussionComment[]): void;
   onThreadApplied(event: DiffsHubSavedCommentEvent): void;
   pathToItemId: ReadonlyMap<string, string> | null;
   pullRequest: PullRequestRef | undefined;
@@ -40,6 +44,7 @@ interface UsePullReviewThreadsOptions {
 // generation (viewerKey); a reload rebuilds the items and re-applies.
 export function usePullReviewThreads({
   loadState,
+  onDiscussionLoaded,
   onThreadApplied,
   pathToItemId,
   pullRequest,
@@ -52,6 +57,8 @@ export function usePullReviewThreads({
   const appliedViewerKeyRef = useRef<number | null>(null);
   const onThreadAppliedRef = useRef(onThreadApplied);
   onThreadAppliedRef.current = onThreadApplied;
+  const onDiscussionLoadedRef = useRef(onDiscussionLoaded);
+  onDiscussionLoadedRef.current = onDiscussionLoaded;
 
   useEffect(() => {
     setThreads(null);
@@ -61,10 +68,11 @@ export function usePullReviewThreads({
     }
 
     const controller = new AbortController();
-    void fetchPullReviewComments(pullRequest, token, controller.signal).then(
-      (comments) => {
+    void fetchPullComments(pullRequest, token, controller.signal).then(
+      ({ comments, discussion }) => {
         if (!controller.signal.aborted) {
           setThreads(groupPullReviewThreads(comments));
+          onDiscussionLoadedRef.current(discussion);
         }
       },
       () => {

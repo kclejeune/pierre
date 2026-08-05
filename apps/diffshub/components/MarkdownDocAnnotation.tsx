@@ -123,22 +123,21 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
       // URLs fall back to the shared default, which proxies same-instance
       // assets (pasted user-attachment images) and passes the rest through.
       img: ({ node: _node, src, alt, ...rest }) => {
-        const assetPath =
-          typeof src === 'string' && sourcePath != null
-            ? resolveDocAssetPath(src, fileDiff.name)
-            : null;
-        if (assetPath != null && sourcePath != null) {
-          return (
-            <GitHubAssetImage
-              {...rest}
-              alt={alt ?? ''}
-              src={createDocAssetURL(
-                sourcePath,
-                assetPath,
-                isDeletedDoc ? 'old' : 'new'
-              )}
-            />
-          );
+        if (typeof src === 'string' && sourcePath != null) {
+          const assetPath = resolveDocAssetPath(src, fileDiff.name);
+          if (assetPath != null) {
+            return (
+              <GitHubAssetImage
+                {...rest}
+                alt={alt ?? ''}
+                src={createDocAssetURL(
+                  sourcePath,
+                  assetPath,
+                  isDeletedDoc ? 'old' : 'new'
+                )}
+              />
+            );
+          }
         }
         return <MarkdownImage {...rest} alt={alt} src={src} />;
       },
@@ -298,7 +297,12 @@ function CommentCards({
   return (
     <>
       {annotations.map((annotation) => (
-        <div key={annotation.metadata.key}>
+        // The data attribute lets comment-list selection scroll to a card
+        // while the rendered doc hides the diff lines the comment anchors to.
+        <div
+          key={annotation.metadata.key}
+          data-diffshub-doc-comment={annotation.metadata.key}
+        >
           {renderComment(annotation, itemId)}
         </div>
       ))}

@@ -19,7 +19,10 @@ interface CommentAuthorAvatarProps {
 // letter is the best available.
 function initialsFor(name: string | null, login: string): string {
   const words = name?.trim().split(/\s+/) ?? [];
-  const first = words[0]?.slice(0, 1) ?? login.slice(0, 1);
+  if (words.length === 0 || words[0] === '') {
+    return login.slice(0, 1).toUpperCase();
+  }
+  const first = words[0].slice(0, 1);
   const last = words.length > 1 ? (words.at(-1)?.slice(0, 1) ?? '') : '';
   return `${first}${last}`.toUpperCase();
 }

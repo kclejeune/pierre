@@ -20,8 +20,7 @@ export function deriveSuggestQuery(input: string): SuggestQuery | null {
     return null;
   }
 
-  const ownerMatch = OWNER_PATTERN.exec(trimmed);
-  if (ownerMatch != null && !trimmed.includes('.')) {
+  if (OWNER_PATTERN.test(trimmed)) {
     return { kind: 'repos', owner: null, query: trimmed };
   }
 

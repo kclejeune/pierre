@@ -3,8 +3,8 @@ import { type NextRequest } from 'next/server';
 import {
   createGitHubAPIURL,
   createGitHubJSONHeaders,
-  getFallbackGitHubToken,
   getGitHubEnvironment,
+  resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
@@ -28,15 +28,22 @@ export async function GET(request: NextRequest) {
   const environment = getGitHubEnvironment();
   let response: Response;
   try {
+    // The identity lookup is token-scoped and never cached; public profiles
+    // are near-static, so cache those briefly to spare one upstream call per
+    // comment author per viewer.
     response = await fetch(
       createGitHubAPIURL(
         environment,
         login == null ? '/user' : `/users/${encodeURIComponent(login)}`
       ),
-      {
-        headers: createGitHubJSONHeaders(token ?? getFallbackGitHubToken()),
-        cache: 'no-store',
-      }
+      login == null
+        ? { headers: createGitHubJSONHeaders(token), cache: 'no-store' }
+        : {
+            headers: createGitHubJSONHeaders(
+              resolveRequestGitHubToken(request)
+            ),
+            next: { revalidate: 300 },
+          }
     );
   } catch {
     return createJSONResponse(

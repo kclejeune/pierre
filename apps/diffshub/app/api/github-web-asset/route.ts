@@ -1,13 +1,13 @@
 import { type NextRequest } from 'next/server';
 
+import { createGitHubRawHeaders } from '@/lib/githubDiffFileServer';
 import {
-  getFallbackGitHubToken,
   getGitHubEnvironment,
-  GITHUB_USER_AGENT,
+  resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import { matchGitHubWebAsset } from '@/lib/githubWebAssets';
+import { createInertAssetResponse } from '@/lib/inertAssetResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
 
 // Same-origin proxy for assets the GitHub instance serves outside the repo
 // tree: comment-author avatars and pasted user-attachment images. On a
@@ -15,8 +15,7 @@ import { parseBearerToken } from '@/lib/parseBearerToken';
 // requests cannot carry, so the browser fetches them through here with the
 // viewer's Bearer token (falling back to the server token for anonymous
 // visitors). Only allow-listed paths on the configured instance are fetched —
-// this must not become an open proxy. The response headers mirror the
-// doc-asset route so a crafted file stays inert on this origin.
+// this must not become an open proxy.
 
 export async function GET(request: NextRequest) {
   const url = request.nextUrl.searchParams.get('url');
@@ -31,17 +30,12 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const token =
-    parseBearerToken(request.headers.get('authorization')) ??
-    getFallbackGitHubToken();
-  const headers: Record<string, string> = { 'User-Agent': GITHUB_USER_AGENT };
-  if (token != null && token !== '') {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
   let upstream: Response;
   try {
-    upstream = await fetch(assetURL, { headers, redirect: 'follow' });
+    upstream = await fetch(assetURL, {
+      headers: createGitHubRawHeaders(resolveRequestGitHubToken(request)),
+      redirect: 'follow',
+    });
   } catch (error) {
     return createJSONResponse(
       { error: error instanceof Error ? error.message : 'Unknown error' },
@@ -55,14 +49,5 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  return new Response(upstream.body, {
-    headers: {
-      'Content-Type':
-        upstream.headers.get('content-type') ?? 'application/octet-stream',
-      'Cache-Control': 'private, max-age=300',
-      'Content-Security-Policy':
-        "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-      'X-Content-Type-Options': 'nosniff',
-    },
-  });
+  return createInertAssetResponse(upstream);
 }

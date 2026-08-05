@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-import { readStoredGitHubToken } from './useGitHubToken';
+import { storedGitHubTokenHeaders } from './useGitHubToken';
 
 // Display names keyed by login so every avatar fallback shares one
 // /api/github-user?login= request per author instead of refetching on each
@@ -15,9 +15,8 @@ const resolvedNameByLogin = new Map<string, string | null>();
 function fetchUserName(login: string): Promise<string | null> {
   let pending = pendingNameByLogin.get(login);
   if (pending == null) {
-    const token = readStoredGitHubToken();
     pending = fetch(`/api/github-user?login=${encodeURIComponent(login)}`, {
-      headers: token === '' ? {} : { Authorization: `Bearer ${token}` },
+      headers: storedGitHubTokenHeaders(),
     })
       .then(async (response) => {
         if (!response.ok) {

@@ -3,6 +3,7 @@ import { IconArrowRight } from '@pierre/icons';
 import { useEffect, useRef, useState } from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
+import { InlineConfirm } from './InlineConfirm';
 import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
 import { annotationCardBase, getRandomPersonaAuthor } from '@/lib/annotation';
@@ -36,6 +37,7 @@ export function DraftAnnotation({
   const [personaAuthor] = useState(getRandomPersonaAuthor);
   const author: CommentAuthor = githubUser ?? personaAuthor;
   const [isSaving, setIsSaving] = useState(false);
+  const [isConfirmingDiscard, setIsConfirmingDiscard] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const trimmedMessage = message.trim();
 
@@ -57,7 +59,8 @@ export function DraftAnnotation({
     if (isSaving) {
       return;
     }
-    if (trimmedMessage.length > 0 && !window.confirm('Discard this comment?')) {
+    if (trimmedMessage.length > 0) {
+      setIsConfirmingDiscard(true);
       return;
     }
     onCancel(itemId, annotation.metadata.key);
@@ -76,7 +79,7 @@ export function DraftAnnotation({
 
   return (
     <form
-      className={cn(annotationCardBase, 'flex-col md:flex-row')}
+      className={cn(annotationCardBase, 'flex-col md:flex-row md:flex-wrap')}
       onSubmit={(event) => {
         event.preventDefault();
         void handleSave();
@@ -136,6 +139,19 @@ export function DraftAnnotation({
           <IconArrowRight className="-mr-0.5 size-3" />
         </Button>
       </div>
+      {isConfirmingDiscard && (
+        <div className="w-full md:basis-full">
+          <InlineConfirm
+            confirmLabel="Discard"
+            message="Discard this comment?"
+            onCancel={() => {
+              setIsConfirmingDiscard(false);
+              textareaRef.current?.focus({ preventScroll: true });
+            }}
+            onConfirm={() => onCancel(itemId, annotation.metadata.key)}
+          />
+        </div>
+      )}
     </form>
   );
 }

@@ -44,6 +44,9 @@ export interface PullReviewComment {
   author: CommentAuthor;
   body: string;
   createdAt: string;
+  // Permalink to the comment on the GitHub instance, straight from the API
+  // payload so the app never reconstructs upstream URL shapes.
+  htmlUrl: string | null;
   id: number;
   inReplyToId: number | null;
   line: number | null;

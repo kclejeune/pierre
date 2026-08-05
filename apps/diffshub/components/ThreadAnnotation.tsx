@@ -1,19 +1,18 @@
 'use client';
 
 import type { DiffLineAnnotation } from '@pierre/diffs';
-import { IconPencil, IconX } from '@pierre/icons';
+import { IconArrowUpRight, IconPencil, IconTrash } from '@pierre/icons';
 import { memo, useState } from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { CommentComposer } from './CommentComposer';
-import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
+import { InlineConfirm } from './InlineConfirm';
 import { MarkdownContent } from './MarkdownContent';
 import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
 import { annotationCardBase } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
-import type { PullRequestRef } from '@/lib/pullCommentsClient';
 import type { PullReviewComment, ThreadCommentMetadata } from '@/lib/types';
 
 interface ThreadAnnotationProps {
@@ -21,8 +20,6 @@ interface ThreadAnnotationProps {
   itemId: string;
   // Whether a token is saved, i.e. replies/edits can be attempted at all.
   canWrite: boolean;
-  // When set, each comment's timestamp links to the comment on GitHub.
-  pullRequest?: PullRequestRef;
   onDeleteComment(
     itemId: string,
     key: string,
@@ -44,14 +41,12 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
   annotation,
   itemId,
   canWrite,
-  pullRequest,
   onDeleteComment,
   onEditComment,
   onReply,
 }: ThreadAnnotationProps) {
   const { key, thread } = annotation.metadata;
   const githubUser = useGitHubUser();
-  const { webURL } = useGitHubEnvironment();
 
   return (
     <div className={cn(annotationCardBase, 'flex-col gap-3')}>
@@ -60,11 +55,6 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
           key={comment.id}
           comment={comment}
           canModify={canWrite && githubUser?.login === comment.author.login}
-          githubUrl={
-            pullRequest != null
-              ? `${webURL}/${pullRequest.owner}/${pullRequest.repo}/pull/${pullRequest.number}#discussion_r${comment.id}`
-              : undefined
-          }
           onDelete={() => onDeleteComment(itemId, key, comment.id)}
           onEdit={(body) => onEditComment(itemId, key, comment.id, body)}
         />
@@ -83,9 +73,6 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
 interface ThreadCommentProps {
   canModify: boolean;
   comment: PullReviewComment;
-  // Link to this comment on GitHub; rendered as the timestamp's permalink,
-  // matching GitHub's own comment headers.
-  githubUrl?: string;
   onDelete(): Promise<void>;
   onEdit(body: string): Promise<void>;
 }
@@ -93,12 +80,13 @@ interface ThreadCommentProps {
 function ThreadComment({
   canModify,
   comment,
-  githubUrl,
   onDelete,
   onEdit,
 }: ThreadCommentProps) {
   const [isEditing, setIsEditing] = useState(false);
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const showActions = comment.htmlUrl != null || (canModify && !isEditing);
 
   return (
     <div className="group/comment flex gap-2.5">
@@ -106,52 +94,54 @@ function ThreadComment({
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex items-baseline gap-2">
           <strong className="text-[13px]">{comment.author.login}</strong>
-          {githubUrl != null ? (
-            <a
-              className="text-muted-foreground hover:text-foreground text-[12px] hover:underline"
-              href={githubUrl}
-              rel="noreferrer noopener"
-              target="_blank"
-              title="View this comment on GitHub"
-            >
-              {formatRelativeTime(comment.createdAt)}
-            </a>
-          ) : (
-            <span className="text-muted-foreground text-[12px]">
-              {formatRelativeTime(comment.createdAt)}
-            </span>
-          )}
-          {canModify && !isEditing && (
-            <span className="ml-auto flex gap-1 opacity-0 transition-opacity duration-100 group-hover/comment:opacity-100">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Edit comment"
-                disabled={isDeleting}
-                onClick={() => setIsEditing(true)}
-              >
-                <IconPencil size={12} />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Delete comment"
-                disabled={isDeleting}
-                onClick={() => {
-                  if (!window.confirm('Delete this comment on GitHub?')) {
-                    return;
-                  }
-                  setIsDeleting(true);
-                  onDelete().catch(() => {
-                    // Failure already surfaced; re-enable the controls.
-                    setIsDeleting(false);
-                  });
-                }}
-              >
-                <IconX size={12} />
-              </Button>
+          <span className="text-muted-foreground text-[12px]">
+            {formatRelativeTime(comment.createdAt)}
+          </span>
+          {showActions && (
+            <span className="ml-auto flex gap-1 opacity-0 transition-opacity duration-100 group-focus-within/comment:opacity-100 group-hover/comment:opacity-100">
+              {comment.htmlUrl != null && (
+                <Button
+                  asChild
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Open comment on GitHub"
+                >
+                  <a
+                    href={comment.htmlUrl}
+                    rel="noreferrer noopener"
+                    target="_blank"
+                    title="Open comment on GitHub"
+                  >
+                    <IconArrowUpRight size={12} />
+                  </a>
+                </Button>
+              )}
+              {canModify && !isEditing && (
+                <>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Edit comment"
+                    title="Edit comment"
+                    disabled={isDeleting}
+                    onClick={() => setIsEditing(true)}
+                  >
+                    <IconPencil size={12} />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Delete comment"
+                    title="Delete comment"
+                    disabled={isDeleting}
+                    onClick={() => setIsConfirmingDelete(true)}
+                  >
+                    <IconTrash size={12} />
+                  </Button>
+                </>
+              )}
             </span>
           )}
         </div>
@@ -168,6 +158,21 @@ function ThreadComment({
           />
         ) : (
           <MarkdownContent markdown={comment.body} />
+        )}
+        {isConfirmingDelete && (
+          <InlineConfirm
+            confirmLabel="Delete"
+            disabled={isDeleting}
+            message="Delete this comment on GitHub?"
+            onCancel={() => setIsConfirmingDelete(false)}
+            onConfirm={() => {
+              setIsDeleting(true);
+              onDelete().catch(() => {
+                // Failure already surfaced; re-enable the controls.
+                setIsDeleting(false);
+              });
+            }}
+          />
         )}
       </div>
     </div>

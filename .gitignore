@@ -43,3 +43,4 @@ tsconfig.tsbuildinfo
 #tmp
 packages/trees/PLAN.md
 CONTEXT.md
+.env

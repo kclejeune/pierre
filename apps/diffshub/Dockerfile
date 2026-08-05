@@ -33,22 +33,10 @@ RUN git init -q -b main \
 
 RUN pnpm install --frozen-lockfile
 
-# Build-time configuration. The home page is statically prerendered during
-# `next build`, so the GitHub instance settings (and the public OAuth client
-# id) must be present now — runtime-only values would leave stale defaults
-# baked into static pages. The client SECRET is deliberately not a build arg:
-# it is runtime-only and never enters image layers.
-ARG DIFFSHUB_GITHUB_URL
-ARG DIFFSHUB_GITHUB_API_URL
-ARG DIFFSHUB_GITHUB_RAW_URL
-ARG DIFFSHUB_GITHUB_CLIENT_ID
-ARG DIFFSHUB_PUBLIC_ORIGIN
-ENV DIFFSHUB_GITHUB_URL=$DIFFSHUB_GITHUB_URL \
-    DIFFSHUB_GITHUB_API_URL=$DIFFSHUB_GITHUB_API_URL \
-    DIFFSHUB_GITHUB_RAW_URL=$DIFFSHUB_GITHUB_RAW_URL \
-    DIFFSHUB_GITHUB_CLIENT_ID=$DIFFSHUB_GITHUB_CLIENT_ID \
-    DIFFSHUB_PUBLIC_ORIGIN=$DIFFSHUB_PUBLIC_ORIGIN
-
+# No DIFFSHUB_* configuration enters the build: NEXT_OUTPUT=standalone both
+# selects standalone output and defers all page rendering to request time
+# (see RootLayout), so every setting is read from the runtime environment and
+# the image is deployment-agnostic.
 ENV NEXT_OUTPUT=standalone
 RUN pnpm exec moon run diffshub:build
 

@@ -99,14 +99,36 @@ export function buildAuthorizeURL(options: {
 }
 
 // The deployment's externally visible origin, used to build the OAuth
-// redirect_uri. Behind a reverse proxy the request origin Next sees may be an
-// internal address, so DIFFSHUB_PUBLIC_ORIGIN wins when set.
-export function getPublicOrigin(requestOrigin: string): string {
+// redirect_uri and browser-facing redirects. Next's standalone server reports
+// its bind address (e.g. http://0.0.0.0:3000) as the request origin, so that
+// is only a last resort: an explicit DIFFSHUB_PUBLIC_ORIGIN wins, then the
+// proxy-forwarded host and protocol. Trusting these headers is safe here
+// because GitHub validates redirect_uri against the registered callback URL,
+// so a forged Host can only produce a sign-in that GitHub rejects.
+export function getPublicOrigin(
+  headers: Headers,
+  requestOrigin: string
+): string {
   const configured = process.env.DIFFSHUB_PUBLIC_ORIGIN?.trim();
-  if (configured == null || configured === '') {
-    return requestOrigin;
+  if (configured != null && configured !== '') {
+    return new URL(configured).origin;
   }
-  return new URL(configured).origin;
+
+  const host = headers.get('x-forwarded-host') ?? headers.get('host');
+  if (host != null && host !== '') {
+    // Proxies may append to an existing header, so only the first value
+    // counts. Absent a forwarded protocol (direct access), keep the request's.
+    const protocol =
+      headers.get('x-forwarded-proto')?.split(',')[0]?.trim() ??
+      new URL(requestOrigin).protocol.replace(':', '');
+    try {
+      return new URL(`${protocol}://${host}`).origin;
+    } catch {
+      // Fall through to the request origin on a malformed header.
+    }
+  }
+
+  return requestOrigin;
 }
 
 // Redirect target for the completion page: returnTo travels as a query param

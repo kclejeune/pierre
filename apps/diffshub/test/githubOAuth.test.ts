@@ -4,6 +4,7 @@ import {
   buildAuthorizeURL,
   buildCompletionURL,
   exchangeOAuthCode,
+  getPublicOrigin,
   parseOAuthState,
   sanitizeReturnTo,
   serializeOAuthState,
@@ -54,6 +55,59 @@ describe('OAuth state round trip', () => {
     expect(parseOAuthState('')).toBeUndefined();
     expect(parseOAuthState('not json')).toBeUndefined();
     expect(parseOAuthState('{"state":"abc"}')).toBeUndefined();
+  });
+});
+
+describe('getPublicOrigin', () => {
+  const BIND_ORIGIN = 'http://0.0.0.0:3000';
+
+  test('DIFFSHUB_PUBLIC_ORIGIN wins over headers', () => {
+    process.env.DIFFSHUB_PUBLIC_ORIGIN = 'https://diffs.corp.dev/';
+    try {
+      expect(
+        getPublicOrigin(
+          new Headers({ host: 'other.example', 'x-forwarded-proto': 'http' }),
+          BIND_ORIGIN
+        )
+      ).toBe('https://diffs.corp.dev');
+    } finally {
+      delete process.env.DIFFSHUB_PUBLIC_ORIGIN;
+    }
+  });
+
+  test('derives origin from proxy-forwarded headers', () => {
+    expect(
+      getPublicOrigin(
+        new Headers({
+          host: 'diffs.corp.dev',
+          'x-forwarded-host': 'diffs.corp.dev',
+          'x-forwarded-proto': 'https',
+        }),
+        BIND_ORIGIN
+      )
+    ).toBe('https://diffs.corp.dev');
+  });
+
+  test('uses the first forwarded protocol when proxies chain', () => {
+    expect(
+      getPublicOrigin(
+        new Headers({
+          host: 'diffs.corp.dev',
+          'x-forwarded-proto': 'https, http',
+        }),
+        BIND_ORIGIN
+      )
+    ).toBe('https://diffs.corp.dev');
+  });
+
+  test('keeps the request protocol for direct host access', () => {
+    expect(
+      getPublicOrigin(new Headers({ host: 'localhost:3692' }), BIND_ORIGIN)
+    ).toBe('http://localhost:3692');
+  });
+
+  test('falls back to the request origin without a host header', () => {
+    expect(getPublicOrigin(new Headers(), BIND_ORIGIN)).toBe(BIND_ORIGIN);
   });
 });
 

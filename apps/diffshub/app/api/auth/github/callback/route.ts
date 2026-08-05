@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
   }
 
   const environment = getGitHubEnvironment();
-  const origin = getPublicOrigin(request.nextUrl.origin);
+  const origin = getPublicOrigin(request.headers, request.nextUrl.origin);
   try {
     const token = await exchangeOAuthCode({
       clientId: oauthConfig.clientId,
@@ -77,8 +77,13 @@ function redirectToCompletion(
   request: NextRequest,
   options: { error?: string; returnTo?: string; token?: string }
 ): NextResponse {
+  // The browser-facing redirect must use the public origin too — the request
+  // origin behind a proxy is the container bind address.
   const response = NextResponse.redirect(
-    new URL(buildCompletionURL(options), request.nextUrl.origin)
+    new URL(
+      buildCompletionURL(options),
+      getPublicOrigin(request.headers, request.nextUrl.origin)
+    )
   );
   // One-shot cookie: always cleared once the callback has run.
   response.cookies.set(OAUTH_STATE_COOKIE, '', {

@@ -27,7 +27,7 @@ export function GET(request: NextRequest) {
   }
 
   const environment = getGitHubEnvironment();
-  const origin = getPublicOrigin(request.nextUrl.origin);
+  const origin = getPublicOrigin(request.headers, request.nextUrl.origin);
   const returnTo = sanitizeReturnTo(
     request.nextUrl.searchParams.get('returnTo')
   );

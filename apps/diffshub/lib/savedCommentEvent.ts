@@ -1,6 +1,7 @@
 import type { DiffLineAnnotation, FileDiffMetadata } from '@pierre/diffs';
 
 import { classifyCommentLineType } from './classifyCommentLineType';
+import { createCommentSidebarPreview } from './commentSidebarPreview';
 import type {
   DiffsHubSavedCommentEvent,
   PullReviewThread,
@@ -34,7 +35,7 @@ export function createThreadSavedCommentEvent(
     key: thread.key,
     lineNumber: thread.lineNumber,
     lineType: classifyCommentLineType(fileDiff, thread.side, thread.lineNumber),
-    message: root.body,
+    message: createCommentSidebarPreview(root.body),
     participants,
     range: thread.range,
     replyCount: thread.comments.length - 1,
@@ -58,7 +59,7 @@ export function createLocalSavedCommentEvent(
       annotation.side,
       annotation.lineNumber
     ),
-    message,
+    message: createCommentSidebarPreview(message),
     participants: [author],
     range,
     replyCount: 0,

@@ -1,23 +1,17 @@
-# Self-hosted DiffsHub. From this directory, after exporting the DIFFSHUB_*
-# variables you need (all optional — defaults target public github.com):
+# Self-hosted DiffsHub. From this directory, after setting the DIFFSHUB_*
+# variables you need in the environment or a .env file (all optional —
+# defaults target public github.com):
 #
 #   docker compose up --build
 #
-# The GitHub instance settings and the public OAuth client id are needed at
-# BUILD time (static pages bake them in), so they are passed as build args as
-# well as runtime environment. The OAuth client secret and any server fallback
-# token are runtime-only and never enter the image.
+# All configuration is runtime-only: the image is built without any DIFFSHUB_*
+# values (standalone builds render every page at request time), so changing
+# .env only needs a container restart, not a rebuild.
 services:
   diffshub:
     build:
       context: .
       dockerfile: apps/diffshub/Dockerfile
-      args:
-        DIFFSHUB_GITHUB_URL: ${DIFFSHUB_GITHUB_URL:-}
-        DIFFSHUB_GITHUB_API_URL: ${DIFFSHUB_GITHUB_API_URL:-}
-        DIFFSHUB_GITHUB_RAW_URL: ${DIFFSHUB_GITHUB_RAW_URL:-}
-        DIFFSHUB_GITHUB_CLIENT_ID: ${DIFFSHUB_GITHUB_CLIENT_ID:-}
-        DIFFSHUB_PUBLIC_ORIGIN: ${DIFFSHUB_PUBLIC_ORIGIN:-}
     environment:
       DIFFSHUB_GITHUB_URL: ${DIFFSHUB_GITHUB_URL:-}
       DIFFSHUB_GITHUB_API_URL: ${DIFFSHUB_GITHUB_API_URL:-}
@@ -27,5 +21,5 @@ services:
       DIFFSHUB_PUBLIC_ORIGIN: ${DIFFSHUB_PUBLIC_ORIGIN:-}
       DIFFSHUB_GITHUB_TOKEN: ${DIFFSHUB_GITHUB_TOKEN:-}
     ports:
-      - ${DIFFSHUB_PORT:-3692}:3000
+      - 127.0.0.1:${DIFFSHUB_PORT:-3692}:3000
     restart: unless-stopped

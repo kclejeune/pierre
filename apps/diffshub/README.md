@@ -18,14 +18,14 @@ variables you need (all optional; defaults target public github.com) and run:
 docker compose up --build
 ```
 
-The app listens on `localhost:3692` (override with `DIFFSHUB_PORT`). The compose
-file passes the GitHub instance settings and the public OAuth client id as build
-args — static pages bake those in during `next build` — while the OAuth client
-secret and server fallback token stay runtime-only and never enter image layers.
+The app listens on `localhost:3692` (override with `DIFFSHUB_PORT`). All
+configuration is runtime-only: container builds (`NEXT_OUTPUT=standalone`)
+render every page at request time, so no `DIFFSHUB_*` value is baked into the
+image and changing `.env` only needs a container restart, not a rebuild.
 
-All configuration is via environment variables read by the Next.js server; if
-building manually instead of through compose, set them for both `next build` and
-`next start` (the home page is statically rendered at build time).
+If instead you build manually with Next's default output (no
+`NEXT_OUTPUT=standalone`), the home page is statically prerendered — set the
+environment variables for both `next build` and `next start` in that case.
 
 | Variable                                                      | Default                                                    | Purpose                                                                                                                                 |
 | ------------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |

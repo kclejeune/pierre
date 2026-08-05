@@ -9,12 +9,12 @@ import {
 import {
   createGitHubAPIURL,
   getGitHubEnvironment,
-  type GitHubEnvironment,
+  GITHUB_API_VERSION,
+  GITHUB_USER_AGENT,
 } from '@/lib/githubEnvironment';
 
 const CACHE_CONTROL = 'no-store';
 const EMPTY_PATCH_MESSAGE = 'GitHub returned an empty diff.';
-const GITHUB_API_VERSION = '2022-11-28';
 const GITHUB_DIFF_MEDIA_TYPE = 'application/vnd.github.diff';
 const GITHUB_JSON_MEDIA_TYPE = 'application/vnd.github+json';
 const GITHUB_RAW_DIFF_HOST = 'patch-diff.githubusercontent.com';
@@ -100,29 +100,18 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const environment = getGitHubEnvironment();
     // The client normally sends only the GitHub-relative path, but GitHub also
     // exposes raw PR diffs through patch-diff.githubusercontent.com. Tangled
     // paths use an explicit domain query parameter and are normalized to their
     // patch endpoint.
-    const patchRequest = resolvePatchRequest(
-      environment,
-      path,
-      domain,
-      url,
-      token
-    );
+    const patchRequest = resolvePatchRequest(path, domain, url, token);
     if (patchRequest == null) {
       return createTextResponse('Invalid GitHub patch URL format', {
         status: 400,
       });
     }
 
-    return await createPatchStreamResponse(
-      environment,
-      patchRequest,
-      request.signal
-    );
+    return await createPatchStreamResponse(patchRequest, request.signal);
   } catch (error) {
     return createTextResponse(
       error instanceof Error ? error.message : 'Unknown error',
@@ -135,14 +124,13 @@ export async function GET(request: NextRequest) {
 // callers send a GitHub-relative path, but this also permits GitHub's raw PR
 // diff host and Tangled patch URLs without becoming a general URL fetcher.
 function resolvePatchRequest(
-  environment: GitHubEnvironment,
   path: string | null,
   domain: string | null,
   url: string | null,
   token: string | undefined
 ): ResolvedPatchRequest | undefined {
   if (url != null) {
-    return resolvePatchURLInput(environment, url, token);
+    return resolvePatchURLInput(url, token);
   }
 
   if (path == null) {
@@ -154,16 +142,15 @@ function resolvePatchRequest(
     return patchURL == null ? undefined : { patchURL };
   }
 
-  return resolvePatchURLInput(environment, path, token);
+  return resolvePatchURLInput(path, token);
 }
 
 function resolvePatchURLInput(
-  environment: GitHubEnvironment,
   input: string,
   token: string | undefined
 ): ResolvedPatchRequest | undefined {
   if (input.startsWith('/')) {
-    return resolveGitHubPatchRequest(environment, input, token);
+    return resolveGitHubPatchRequest(input, token);
   }
 
   let parsedURL: URL;
@@ -176,8 +163,9 @@ function resolvePatchURLInput(
   // Absolute URLs on the configured GitHub instance are treated as GitHub
   // paths. Origin comparison (not hostname) keeps custom GHES ports working
   // while still rejecting lookalike origins.
+  const environment = getGitHubEnvironment();
   if (parsedURL.origin === environment.webURL) {
-    return resolveGitHubPatchRequest(environment, parsedURL.pathname, token);
+    return resolveGitHubPatchRequest(parsedURL.pathname, token);
   }
 
   if (!isAllowedHTTPSURL(parsedURL)) {
@@ -195,13 +183,11 @@ function resolvePatchURLInput(
     };
     if (token != null) {
       const gitHubPath = parsedURL.pathname.slice('/raw'.length);
-      const authenticatedWebRequest = resolveAuthenticatedGitHubWebPatchRequest(
-        environment,
-        gitHubPath,
+      const authenticatedWebRequest = createAuthenticatedGitHubWebTarget(
+        resolveGitHubPath(gitHubPath),
         token
       );
       const authenticatedAPIRequest = resolveAuthenticatedGitHubPatchRequest(
-        environment,
         gitHubPath,
         token
       );
@@ -223,11 +209,10 @@ function resolvePatchURLInput(
 }
 
 function resolveGitHubPatchRequest(
-  environment: GitHubEnvironment,
   path: string,
   token: string | undefined
 ): ResolvedPatchRequest | undefined {
-  const patchURL = resolveGitHubPath(environment, path);
+  const patchURL = resolveGitHubPath(path);
   const publicRequest =
     patchURL == null
       ? undefined
@@ -236,13 +221,11 @@ function resolveGitHubPatchRequest(
           patchURL,
         } satisfies ResolvedPatchRequest);
   if (token != null) {
-    const authenticatedWebRequest = resolveAuthenticatedGitHubWebPatchRequest(
-      environment,
-      path,
+    const authenticatedWebRequest = createAuthenticatedGitHubWebTarget(
+      patchURL,
       token
     );
     const authenticatedAPIRequest = resolveAuthenticatedGitHubPatchRequest(
-      environment,
       path,
       token
     );
@@ -262,12 +245,10 @@ function resolveGitHubPatchRequest(
   return publicRequest;
 }
 
-function resolveAuthenticatedGitHubWebPatchRequest(
-  environment: GitHubEnvironment,
-  path: string,
+function createAuthenticatedGitHubWebTarget(
+  patchURL: string | undefined,
   token: string
 ): DirectPatchFetchTarget | undefined {
-  const patchURL = resolveGitHubPath(environment, path);
   if (patchURL == null) {
     return undefined;
   }
@@ -279,7 +260,6 @@ function resolveAuthenticatedGitHubWebPatchRequest(
 }
 
 function resolveAuthenticatedGitHubPatchRequest(
-  environment: GitHubEnvironment,
   path: string,
   token: string
 ): PatchFetchTarget | undefined {
@@ -289,12 +269,12 @@ function resolveAuthenticatedGitHubPatchRequest(
     return undefined;
   }
 
-  const sourceURL = `${environment.webURL}${removeDiffExtension(normalizedPath)}`;
+  const sourceURL = `${getGitHubEnvironment().webURL}${removeDiffExtension(normalizedPath)}`;
   if (source.kind === 'pull') {
     return {
       kind: 'github-pull',
       label: 'authenticated pull metadata',
-      pullURL: createGitHubDiffAPIURL(environment, source),
+      pullURL: createGitHubDiffAPIURL(source),
       repo: source.repo,
       requestHeaders: createGitHubJSONAPIHeaders(token),
       sourceURL,
@@ -302,7 +282,12 @@ function resolveAuthenticatedGitHubPatchRequest(
     };
   }
 
-  return createGitHubDiffTarget(environment, source, token, sourceURL);
+  return {
+    label: `authenticated ${source.kind} diff API`,
+    patchURL: createGitHubDiffAPIURL(source),
+    requestHeaders: createGitHubDiffAPIHeaders(token),
+    sourceURL,
+  };
 }
 
 function isPatchFetchTarget(
@@ -353,10 +338,7 @@ function getHiddenPatchDomainRule(
   return undefined;
 }
 
-function resolveGitHubPath(
-  environment: GitHubEnvironment,
-  path: string
-): string | undefined {
+function resolveGitHubPath(path: string): string | undefined {
   if (path === '/') {
     return undefined;
   }
@@ -366,6 +348,7 @@ function resolveGitHubPath(
     return undefined;
   }
 
+  const environment = getGitHubEnvironment();
   if (environment.isGitHubDotCom) {
     const blobPatchURL = CACHED_BLOBS.get(removeDiffExtension(patchPath));
     if (blobPatchURL != null) {
@@ -411,10 +394,8 @@ function isAllowedHTTPSURL(url: URL): boolean {
   );
 }
 
-function createGitHubDiffAPIURL(
-  environment: GitHubEnvironment,
-  source: GitHubDiffSource
-): string {
+function createGitHubDiffAPIURL(source: GitHubDiffSource): string {
+  const environment = getGitHubEnvironment();
   switch (source.kind) {
     case 'pull':
       return createGitHubAPIURL(
@@ -432,20 +413,6 @@ function createGitHubDiffAPIURL(
         `/repos/${encodeURLSegment(source.repo.owner)}/${encodeURLSegment(source.repo.repo)}/compare/${encodeURLSegment(source.range)}`
       );
   }
-}
-
-function createGitHubDiffTarget(
-  environment: GitHubEnvironment,
-  source: Exclude<GitHubDiffSource, { kind: 'pull' }>,
-  token: string,
-  sourceURL: string
-): DirectPatchFetchTarget {
-  return {
-    label: `authenticated ${source.kind} diff API`,
-    patchURL: createGitHubDiffAPIURL(environment, source),
-    requestHeaders: createGitHubDiffAPIHeaders(token),
-    sourceURL,
-  };
 }
 
 function createGitHubAuthHeaders(token: string): Record<string, string> {
@@ -509,7 +476,6 @@ function createPatchTextResponse(
 // GitHub HTML pages and redirects become small text errors instead of Next.js
 // error documents.
 async function createPatchStreamResponse(
-  environment: GitHubEnvironment,
   patchRequest: ResolvedPatchRequest,
   requestSignal: AbortSignal
 ): Promise<Response> {
@@ -524,7 +490,6 @@ async function createPatchStreamResponse(
   for (;;) {
     try {
       const fetchResult = await fetchPatchTarget(
-        environment,
         activeRequest,
         upstreamController.signal
       );
@@ -541,10 +506,14 @@ async function createPatchStreamResponse(
       return createTextResponse('Failed to fetch patch.', { status: 502 });
     }
 
+    // The auth-failure hint costs extra GitHub API round trips, so it is only
+    // computed for the terminal attempt — intermediate failures are discarded
+    // when a fallback target remains.
+    const isTerminalAttempt = fallbackRequests.length === 0;
     const failure = await getPatchResponseFailure(
-      environment,
       response,
-      responseTarget
+      responseTarget,
+      isTerminalAttempt
     );
     if (failure == null) {
       break;
@@ -599,12 +568,11 @@ async function createPatchStreamResponse(
 }
 
 function fetchPatchTarget(
-  environment: GitHubEnvironment,
   target: PatchFetchTarget,
   signal: AbortSignal
 ): Promise<PatchFetchResult> {
   if (target.kind === 'github-pull') {
-    return fetchGitHubPullPatchTarget(environment, target, signal);
+    return fetchGitHubPullPatchTarget(target, signal);
   }
 
   return fetchDirectPatchTarget(target, signal);
@@ -616,20 +584,19 @@ async function fetchDirectPatchTarget(
 ): Promise<PatchFetchResult> {
   const response = await fetch(target.patchURL, {
     cache: 'no-store',
-    headers: { 'User-Agent': 'pierre-diffshub', ...target.requestHeaders },
+    headers: { 'User-Agent': GITHUB_USER_AGENT, ...target.requestHeaders },
     signal,
   });
   return { response, target };
 }
 
 async function fetchGitHubPullPatchTarget(
-  environment: GitHubEnvironment,
   target: GitHubPullPatchFetchTarget,
   signal: AbortSignal
 ): Promise<PatchFetchResult> {
   const pullResponse = await fetch(target.pullURL, {
     cache: 'no-store',
-    headers: { 'User-Agent': 'pierre-diffshub', ...target.requestHeaders },
+    headers: { 'User-Agent': GITHUB_USER_AGENT, ...target.requestHeaders },
     signal,
   });
 
@@ -666,7 +633,7 @@ async function fetchGitHubPullPatchTarget(
   return fetchDirectPatchTarget(
     {
       patchURL: createGitHubAPIURL(
-        environment,
+        getGitHubEnvironment(),
         `/repos/${encodeURLSegment(compareBaseRepo.owner)}/${encodeURLSegment(compareBaseRepo.repo)}/compare/${encodeURLSegment(compareRange)}`
       ),
       label: 'authenticated pull compare diff API',
@@ -678,17 +645,15 @@ async function fetchGitHubPullPatchTarget(
 }
 
 async function getPatchResponseFailure(
-  environment: GitHubEnvironment,
   response: Response,
-  target: DirectPatchFetchTarget
+  target: DirectPatchFetchTarget,
+  includeAuthHint: boolean
 ): Promise<{ message: string; status: number } | undefined> {
   if (!response.ok) {
     const status = response.status >= 400 ? response.status : 502;
-    const authHint = await getGitHubAuthFailureHint(
-      environment,
-      response,
-      target
-    );
+    const authHint = includeAuthHint
+      ? await getGitHubAuthFailureHint(response, target)
+      : '';
     return {
       status,
       message: `Failed to fetch patch from ${target.label ?? 'upstream'}: ${response.status} ${response.statusText}.${authHint}`,
@@ -708,7 +673,6 @@ async function getPatchResponseFailure(
 }
 
 async function getGitHubAuthFailureHint(
-  environment: GitHubEnvironment,
   response: Response,
   target: DirectPatchFetchTarget
 ): Promise<string> {
@@ -722,11 +686,7 @@ async function getGitHubAuthFailureHint(
     return '';
   }
 
-  const tokenStatus = await fetchGitHubDiagnosticStatus(
-    environment,
-    '/user',
-    token
-  );
+  const tokenStatus = await fetchGitHubDiagnosticStatus('/user', token);
   if (tokenStatus === 401) {
     return ' GitHub rejected the token as invalid or expired.';
   }
@@ -737,13 +697,12 @@ async function getGitHubAuthFailureHint(
     return ' GitHub token validation failed; check that the token is still valid.';
   }
 
-  const source = readGitHubSourceFromURL(environment, target.sourceURL);
+  const source = readGitHubSourceFromURL(target.sourceURL);
   if (source == null) {
     return ' GitHub accepted the token, but the patch endpoint was not accessible.';
   }
 
   const repoStatus = await fetchGitHubDiagnosticStatus(
-    environment,
     `/repos/${encodeURLSegment(source.repo.owner)}/${encodeURLSegment(source.repo.repo)}`,
     token
   );
@@ -765,18 +724,20 @@ async function getGitHubAuthFailureHint(
 }
 
 async function fetchGitHubDiagnosticStatus(
-  environment: GitHubEnvironment,
   path: string,
   token: string
 ): Promise<number> {
   try {
-    const response = await fetch(createGitHubAPIURL(environment, path), {
-      cache: 'no-store',
-      headers: {
-        'User-Agent': 'pierre-diffshub',
-        ...createGitHubJSONAPIHeaders(token),
-      },
-    });
+    const response = await fetch(
+      createGitHubAPIURL(getGitHubEnvironment(), path),
+      {
+        cache: 'no-store',
+        headers: {
+          'User-Agent': GITHUB_USER_AGENT,
+          ...createGitHubJSONAPIHeaders(token),
+        },
+      }
+    );
     return response.status;
   } catch {
     return 0;
@@ -784,7 +745,6 @@ async function fetchGitHubDiagnosticStatus(
 }
 
 function readGitHubSourceFromURL(
-  environment: GitHubEnvironment,
   sourceURL: string | undefined
 ): GitHubDiffSource | undefined {
   if (sourceURL == null) {
@@ -793,7 +753,7 @@ function readGitHubSourceFromURL(
 
   try {
     const url = new URL(sourceURL);
-    if (url.origin !== environment.webURL) {
+    if (url.origin !== getGitHubEnvironment().webURL) {
       return undefined;
     }
     return parseGitHubDiffSource(url.pathname);

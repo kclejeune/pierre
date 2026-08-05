@@ -19,6 +19,11 @@ export const GITHUB_DOTCOM_WEB_URL = 'https://github.com';
 const GITHUB_DOTCOM_API_URL = 'https://api.github.com';
 const GITHUB_DOTCOM_RAW_URL = 'https://raw.githubusercontent.com';
 
+// Shared by every module that talks to the configured GitHub instance, so an
+// API version bump or UA change happens in one place.
+export const GITHUB_API_VERSION = '2022-11-28';
+export const GITHUB_USER_AGENT = 'pierre-diffshub';
+
 export interface GitHubEnvironment {
   // REST API root without a trailing slash, e.g. https://github.example.com/api/v3
   apiURL: string;
@@ -78,12 +83,17 @@ export function resolveGitHubEnvironment(
   };
 }
 
+// Environment variables are fixed for the process lifetime, so the derived
+// (and validated) environment is memoized after the first successful read.
+let cachedEnvironment: GitHubEnvironment | undefined;
+
 export function getGitHubEnvironment(): GitHubEnvironment {
-  return resolveGitHubEnvironment(
+  cachedEnvironment ??= resolveGitHubEnvironment(
     process.env.DIFFSHUB_GITHUB_URL,
     process.env.DIFFSHUB_GITHUB_API_URL,
     process.env.DIFFSHUB_GITHUB_RAW_URL
   );
+  return cachedEnvironment;
 }
 
 export function getGitHubOAuthConfig(): GitHubOAuthConfig | undefined {

@@ -22,6 +22,19 @@ interface GitHubTokenControlProps {
   title?: string;
 }
 
+function TokenLink({ href, children }: { href: string; children: string }) {
+  return (
+    <a
+      className="inline-link"
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+    >
+      {children}
+    </a>
+  );
+}
+
 export const GitHubTokenControl = memo(function GitHubTokenControl({
   active,
   className,
@@ -100,35 +113,20 @@ export const GitHubTokenControl = memo(function GitHubTokenControl({
             {oauthEnabled ? 'Or create' : 'Create'}{' '}
             {isGitHubDotCom ? (
               <>
-                <a
-                  className="inline-link"
-                  href={`${webURL}${CREATE_TOKEN_PATH}`}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                >
+                <TokenLink href={`${webURL}${CREATE_TOKEN_PATH}`}>
                   a fine-grained PAT
-                </a>{' '}
+                </TokenLink>{' '}
                 on GitHub to view private diffs, or{' '}
-                <a
-                  className="inline-link"
-                  href={`${webURL}${CLASSIC_TOKEN_PATH}`}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                >
+                <TokenLink href={`${webURL}${CLASSIC_TOKEN_PATH}`}>
                   a classic token
-                </a>{' '}
+                </TokenLink>{' '}
                 with repo scope.
               </>
             ) : (
               <>
-                <a
-                  className="inline-link"
-                  href={`${webURL}${CLASSIC_TOKEN_PATH}`}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                >
+                <TokenLink href={`${webURL}${CLASSIC_TOKEN_PATH}`}>
                   a personal access token
-                </a>{' '}
+                </TokenLink>{' '}
                 with repo scope to view private diffs.
               </>
             )}{' '}

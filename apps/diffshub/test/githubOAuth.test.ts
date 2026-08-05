@@ -39,7 +39,11 @@ describe('OAuth state round trip', () => {
   });
 
   test('sanitizes a tampered return path on parse', () => {
-    expect(parseOAuthState('abc //evil.example')).toEqual({
+    expect(
+      parseOAuthState(
+        JSON.stringify({ returnTo: '//evil.example', state: 'abc' })
+      )
+    ).toEqual({
       returnTo: '/',
       state: 'abc',
     });
@@ -48,7 +52,8 @@ describe('OAuth state round trip', () => {
   test('rejects malformed cookies', () => {
     expect(parseOAuthState(undefined)).toBeUndefined();
     expect(parseOAuthState('')).toBeUndefined();
-    expect(parseOAuthState('no-separator')).toBeUndefined();
+    expect(parseOAuthState('not json')).toBeUndefined();
+    expect(parseOAuthState('{"state":"abc"}')).toBeUndefined();
   });
 });
 

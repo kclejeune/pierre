@@ -1,6 +1,5 @@
+import { GITHUB_DOTCOM_WEB_URL } from './githubEnvironment';
 import { normalizeGitHubPath } from './normalizeGitHubPath';
-
-const GITHUB_WEB_URL = 'https://github.com';
 
 export type DiffshubViewerRoute =
   | { kind: 'redirect'; target: string }
@@ -22,7 +21,7 @@ export type DiffshubViewerRoute =
 export function resolveDiffshubViewerRoute(
   pathSegments: readonly string[],
   requestedDomainInput: string | undefined,
-  githubWebURL: string = GITHUB_WEB_URL
+  githubWebURL: string = GITHUB_DOTCOM_WEB_URL
 ): DiffshubViewerRoute {
   if (pathSegments.length === 0) {
     return { kind: 'redirect', target: '/' };

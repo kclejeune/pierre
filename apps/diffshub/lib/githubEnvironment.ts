@@ -72,6 +72,11 @@ export interface GitHubClientEnvironment {
   host: string;
   isGitHubDotCom: boolean;
   oauthEnabled: boolean;
+  // When DIFFSHUB_REQUIRE_LOGIN is set, every page is gated behind a saved
+  // token: anonymous visitors are redirected to /login and returned to their
+  // original URL after signing in. The check is client-side because the token
+  // lives in localStorage.
+  requireLogin: boolean;
   webURL: string;
 }
 
@@ -145,10 +150,12 @@ export function getGitHubClientEnvironment(): GitHubClientEnvironment {
   // requiring the secret there would force it into build environments and
   // image layers. A missing secret surfaces at the login route instead.
   const clientId = process.env.DIFFSHUB_GITHUB_CLIENT_ID?.trim();
+  const requireLogin = process.env.DIFFSHUB_REQUIRE_LOGIN?.trim().toLowerCase();
   return {
     host: environment.host,
     isGitHubDotCom: environment.isGitHubDotCom,
     oauthEnabled: clientId != null && clientId !== '',
+    requireLogin: requireLogin === '1' || requireLogin === 'true',
     webURL: environment.webURL,
   };
 }

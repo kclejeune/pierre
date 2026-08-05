@@ -403,40 +403,70 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
   );
 }
 
+const DOC_COMMENT_SCROLL_CANCEL_EVENTS = [
+  'wheel',
+  'touchstart',
+  'keydown',
+] as const;
+
+// Cancels the previous card-scroll loop whenever a new selection starts.
+let cancelActiveDocCommentScroll: (() => void) | null = null;
+
 // Centers a doc-rail comment card (stamped with data-diffshub-doc-comment by
-// MarkdownDocAnnotation) in the viewport. Retries across animation frames
-// because the card only exists once the virtualizer has mounted the item the
-// preceding scrollTo targets, then re-centers for a short window afterwards:
-// surrounding virtualized items re-measure as they mount, which shifts the
-// scroll content underneath a one-shot scrollIntoView.
-function scrollDocCommentIntoView(key: string, attempt = 0): void {
+// MarkdownDocAnnotation) in the viewport. The card only exists once the
+// virtualizer has mounted the item the preceding scrollTo targets AND the
+// rendered document has hydrated — a network fetch on partial diffs — so the
+// loop polls against a generous deadline rather than a fixed frame count, and
+// keeps re-centering until layout stops shifting (mounting neighbors
+// re-measure underneath a one-shot scrollIntoView). Any manual scroll input
+// cancels it so the page never fights the user.
+function scrollDocCommentIntoView(key: string): void {
+  cancelActiveDocCommentScroll?.();
   const selector = `[data-diffshub-doc-comment="${CSS.escape(key)}"]`;
-  const card = document.querySelector(selector);
-  if (card == null) {
-    if (attempt < 60) {
-      requestAnimationFrame(() => scrollDocCommentIntoView(key, attempt + 1));
+  const deadline = Date.now() + 8000;
+  let stableChecks = 0;
+  let timer: number | undefined;
+  const cleanup = () => {
+    if (timer != null) {
+      window.clearTimeout(timer);
     }
-    return;
-  }
-  card.scrollIntoView({ behavior: 'auto', block: 'center' });
-  let rechecks = 0;
-  const recheck = () => {
-    const element = document.querySelector(selector);
-    if (element == null) {
-      return;
+    for (const type of DOC_COMMENT_SCROLL_CANCEL_EVENTS) {
+      window.removeEventListener(type, cleanup, true);
     }
-    const rect = element.getBoundingClientRect();
-    const visible =
-      rect.top < window.innerHeight * 0.75 &&
-      rect.bottom > window.innerHeight * 0.25;
-    if (!visible) {
-      element.scrollIntoView({ behavior: 'auto', block: 'center' });
-    }
-    if (++rechecks < 8) {
-      setTimeout(recheck, 120);
+    if (cancelActiveDocCommentScroll === cleanup) {
+      cancelActiveDocCommentScroll = null;
     }
   };
-  setTimeout(recheck, 120);
+  cancelActiveDocCommentScroll = cleanup;
+  for (const type of DOC_COMMENT_SCROLL_CANCEL_EVENTS) {
+    window.addEventListener(type, cleanup, { capture: true, passive: true });
+  }
+  const tick = () => {
+    if (Date.now() > deadline) {
+      cleanup();
+      return;
+    }
+    const element = document.querySelector(selector);
+    if (element != null) {
+      const rect = element.getBoundingClientRect();
+      const visible =
+        rect.top < window.innerHeight * 0.75 &&
+        rect.bottom > window.innerHeight * 0.25;
+      if (visible) {
+        // Stop once the card has stayed put for a few checks — layout has
+        // settled and lingering longer would only risk fighting the user.
+        if (++stableChecks >= 5) {
+          cleanup();
+          return;
+        }
+      } else {
+        stableChecks = 0;
+        element.scrollIntoView({ behavior: 'auto', block: 'center' });
+      }
+    }
+    timer = window.setTimeout(tick, 120);
+  };
+  tick();
 }
 
 function useIsWorkerPoolReadyOrDisabled() {

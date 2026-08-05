@@ -119,6 +119,12 @@ describe('getPatchViewerHref', () => {
         '/nodejs/node/pull/59805'
       );
     });
+
+    test('numeric segment shorthand owner/repo/123', () => {
+      expect(getPatchViewerHref('nodejs/node/59805')).toBe(
+        '/nodejs/node/pull/59805'
+      );
+    });
   });
 
   describe('raw GitHub diff URLs', () => {

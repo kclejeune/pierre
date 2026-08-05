@@ -1,7 +1,8 @@
 'use client';
 
+import { IconImage } from '@pierre/icons';
 import type { Element as HastElement } from 'hast';
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
@@ -44,19 +45,45 @@ const BASE_REHYPE_PLUGINS: NonNullable<
 // The default renderer for markdown images: same-instance assets (pasted
 // user-attachment images, avatars in HTML tables) are routed through the
 // authenticated web-asset proxy so they load on private-mode GHES; every
-// other URL renders as a plain <img>. Exported so callers overriding `img`
-// for their own URL schemes (the rendered-document view's repo-relative
-// paths) can fall back to the same behavior.
+// other URL renders as a plain <img>. When the instance refuses token auth
+// on the asset route, the image cannot be inlined at all from this origin —
+// but a top-level navigation carries the viewer's GitHub session, so the
+// failure case degrades to a link that opens the image on GitHub. Exported
+// so callers overriding `img` for their own URL schemes (the
+// rendered-document view's repo-relative paths) can fall back to the same
+// behavior.
 export function MarkdownImage({
   src,
   alt,
   ...rest
 }: React.ImgHTMLAttributes<HTMLImageElement>) {
   const { webURL } = useGitHubEnvironment();
+  const [failed, setFailed] = useState(false);
+  const sourceURL = typeof src === 'string' ? src : null;
   const proxied =
-    typeof src === 'string' ? createGitHubWebAssetProxyURL(src, webURL) : null;
-  if (proxied != null) {
-    return <GitHubAssetImage {...rest} alt={alt ?? ''} src={proxied} />;
+    sourceURL != null ? createGitHubWebAssetProxyURL(sourceURL, webURL) : null;
+  if (sourceURL != null && proxied != null) {
+    if (failed) {
+      return (
+        <a
+          className="border-border text-muted-foreground hover:text-foreground inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 !no-underline"
+          href={sourceURL}
+          rel="noreferrer noopener"
+          target="_blank"
+        >
+          <IconImage size={14} />
+          {alt !== '' && alt != null ? alt : 'Image'} — open on GitHub
+        </a>
+      );
+    }
+    return (
+      <GitHubAssetImage
+        {...rest}
+        alt={alt ?? ''}
+        src={proxied}
+        onError={() => setFailed(true)}
+      />
+    );
   }
   return <img {...rest} alt={alt ?? ''} loading="lazy" src={src} />;
 }

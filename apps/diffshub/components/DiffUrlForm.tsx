@@ -13,6 +13,10 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
+import {
+  type DiffUrlSuggestion,
+  useDiffUrlSuggestions,
+} from './useDiffUrlSuggestions';
 import { Button } from '@/components/Button';
 import { useGitHubEnvironment } from '@/components/GitHubEnvironmentProvider';
 import { cn } from '@/lib/cn';
@@ -65,6 +69,65 @@ export function DiffUrlForm({
   // Prevents the onBlur restore from firing when blur is caused by Enter.
   const isSubmittingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Shorthand autocompletion: repo names while "owner/rep…" is typed, open
+  // pull requests once a repo is complete. Only active while focused so the
+  // dropdown never lingers after navigation.
+  const [isFocused, setIsFocused] = useState(false);
+  const suggestions = useDiffUrlSuggestions(isFocused ? url : '');
+  const [activeSuggestion, setActiveSuggestion] = useState(-1);
+  const suggestionsOpen =
+    isFocused && suggestions.length > 0 && validationError === null;
+  const [suggestAnchor, setSuggestAnchor] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
+
+  useEffect(() => {
+    setActiveSuggestion(-1);
+  }, [suggestions]);
+
+  useEffect(() => {
+    if (!suggestionsOpen) {
+      setSuggestAnchor(null);
+      return;
+    }
+    const updatePosition = () => {
+      const rect = inputRef.current?.getBoundingClientRect();
+      if (rect != null) {
+        setSuggestAnchor({
+          left: rect.left,
+          top: rect.bottom,
+          width: rect.width,
+        });
+      }
+    };
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [suggestionsOpen]);
+
+  const acceptSuggestion = useStableCallback(
+    (suggestion: DiffUrlSuggestion) => {
+      setURL(suggestion.fill);
+      setValidationError(null);
+      if (suggestion.href != null) {
+        isSubmittingRef.current = true;
+        inputRef.current?.blur();
+        const { href } = suggestion;
+        startTransition(() => {
+          router.push(href);
+        });
+      } else {
+        inputRef.current?.focus();
+      }
+    }
+  );
 
   useEffect(() => {
     setURL(initialUrl);
@@ -139,11 +202,16 @@ export function DiffUrlForm({
         enterKeyHint="go"
         value={url}
         type="url"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={suggestionsOpen}
         onChange={({ currentTarget }) => {
           setURL(currentTarget.value);
           if (validationError) setValidationError(null);
         }}
+        onFocus={() => setIsFocused(true)}
         onBlur={() => {
+          setIsFocused(false);
           if (isSubmittingRef.current) return;
           // Only restore the committed URL when the field is empty — if the
           // user typed something and clicked away, keep their draft.
@@ -153,6 +221,23 @@ export function DiffUrlForm({
           }
         }}
         onKeyDown={(e) => {
+          if (suggestionsOpen && e.key === 'ArrowDown') {
+            e.preventDefault();
+            setActiveSuggestion((index) => (index + 1) % suggestions.length);
+            return;
+          }
+          if (suggestionsOpen && e.key === 'ArrowUp') {
+            e.preventDefault();
+            setActiveSuggestion(
+              (index) => (index - 1 + suggestions.length) % suggestions.length
+            );
+            return;
+          }
+          if (suggestionsOpen && e.key === 'Enter' && activeSuggestion >= 0) {
+            e.preventDefault();
+            acceptSuggestion(suggestions[activeSuggestion]);
+            return;
+          }
           if (e.key === 'Escape') {
             setURL(initialUrl);
             setValidationError(null);
@@ -182,6 +267,41 @@ export function DiffUrlForm({
       {children?.(isPending, url)}
       {/* Hidden submit ensures Enter triggers form submission in all browsers */}
       <button type="submit" hidden />
+      {suggestionsOpen &&
+        suggestAnchor !== null &&
+        createPortal(
+          <ul
+            role="listbox"
+            style={{
+              left: suggestAnchor.left,
+              minWidth: Math.max(suggestAnchor.width, 320),
+              top: suggestAnchor.top + 6,
+            }}
+            className="bg-background border-border fixed z-50 max-h-80 max-w-[560px] overflow-y-auto rounded-md border py-1 shadow-lg"
+          >
+            {suggestions.map((suggestion, index) => (
+              <li key={suggestion.key}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={index === activeSuggestion}
+                  className={cn(
+                    'block w-full cursor-pointer truncate px-3 py-1.5 text-left text-sm',
+                    index === activeSuggestion && 'bg-muted'
+                  )}
+                  // preventDefault keeps focus in the input so the blur
+                  // handler doesn't close the list before click lands.
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => acceptSuggestion(suggestion)}
+                  onMouseEnter={() => setActiveSuggestion(index)}
+                >
+                  {suggestion.label}
+                </button>
+              </li>
+            ))}
+          </ul>,
+          document.body
+        )}
       {errorAnchor !== null &&
         createPortal(
           <div

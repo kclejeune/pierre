@@ -178,7 +178,7 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
               // block. Container query, since the card's width tracks the
               // viewer column rather than the viewport.
               rail != null
-                ? '@3xl:grid @3xl:grid-cols-[minmax(0,1fr)_minmax(260px,320px)] @3xl:gap-4'
+                ? '@3xl:grid @3xl:grid-cols-[minmax(0,900px)_minmax(280px,1fr)] @3xl:gap-4'
                 : 'relative'
             )}
           >
@@ -203,7 +203,7 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
               {props.children}
             </div>
             {rail != null && blockComments.length > 0 && (
-              <div className="flex min-w-0 flex-col self-start">
+              <div className="flex max-w-[560px] min-w-0 flex-col self-start">
                 <CommentCards
                   annotations={blockComments}
                   itemId={itemId}
@@ -231,7 +231,10 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
       ref={containerRef}
       className={cn(
         '@container m-2 rounded-xl border border-[var(--diffshub-annotation-border,var(--color-border))] bg-[var(--diffshub-annotation-bg,var(--color-card))] font-sans text-[var(--diffshub-annotation-fg,var(--color-card-foreground))] shadow-[var(--diffshub-annotation-shadow,0_2px_4px_rgb(0_0_0_/_0.025),0_4px_8px_rgb(0_0_0_/_0.025))]',
-        rail != null ? 'max-w-[1240px]' : 'max-w-[860px]'
+        // With a comment rail the card spans the viewer column — the prose
+        // track caps itself at a readable measure and the rail absorbs the
+        // remaining width, so wide screens have no dead gutter to the right.
+        rail != null ? 'max-w-none' : 'max-w-[860px]'
       )}
     >
       <div className="text-muted-foreground flex items-center gap-2 border-b border-[var(--diffshub-annotation-border,var(--color-border))] px-4 py-2 text-[12px] tracking-wide uppercase">

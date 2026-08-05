@@ -15,6 +15,8 @@
 //                              OAuth app credentials enabling "Sign in with
 //                              GitHub" instead of pasting a PAT.
 
+import { parseBearerToken } from './parseBearerToken';
+
 export const GITHUB_DOTCOM_WEB_URL = 'https://github.com';
 const GITHUB_DOTCOM_API_URL = 'https://api.github.com';
 const GITHUB_DOTCOM_RAW_URL = 'https://raw.githubusercontent.com';
@@ -49,6 +51,19 @@ export function getFallbackGitHubToken(): string | undefined {
     process.env.DIFFSHUB_GITHUB_TOKEN ??
     process.env.GITHUB_TOKEN ??
     process.env.GH_TOKEN
+  );
+}
+
+// The token a read-only route should act with: the requester's own Bearer
+// token when the request carries one, the server fallback token otherwise.
+// Write paths must NOT use this — they take the parsed request token alone so
+// the fallback can never author changes on a visitor's behalf.
+export function resolveRequestGitHubToken(request: {
+  headers: { get(name: string): string | null };
+}): string | undefined {
+  return (
+    parseBearerToken(request.headers.get('authorization')) ??
+    getFallbackGitHubToken()
   );
 }
 

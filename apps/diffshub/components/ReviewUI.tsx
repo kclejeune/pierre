@@ -271,11 +271,34 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
   const handleSelectComment = useCallback(
     (comment: DiffsHubSavedCommentEntry) => {
       setFileTreeOverlayOpen(false);
-      viewerRef.current?.setSelectedLines({
+      const viewer = viewerRef.current;
+      if (viewer == null) {
+        return;
+      }
+      viewer.setSelectedLines({
         id: comment.itemId,
         range: comment.range,
       });
-      viewerRef.current?.scrollTo({
+      // When the item's rendered-document view is open, the diff lines the
+      // comment anchors to are hidden, so a line-target scroll would land in
+      // collapsed space. Scroll to the item instead and then center the
+      // comment's card in the document's comment rail.
+      const item = viewer.getItem(comment.itemId);
+      const docOpen =
+        item?.annotations?.some(
+          (annotation) => annotation.metadata?.kind === 'doc'
+        ) ?? false;
+      if (docOpen) {
+        viewer.scrollTo({
+          type: 'item',
+          id: comment.itemId,
+          align: 'start',
+          behavior: 'smooth-auto',
+        });
+        scrollDocCommentIntoView(comment.key);
+        return;
+      }
+      viewer.scrollTo({
         type: 'line',
         id: comment.itemId,
         lineNumber: comment.range.end,
@@ -374,6 +397,42 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
       )}
     </ReviewGrid>
   );
+}
+
+// Centers a doc-rail comment card (stamped with data-diffshub-doc-comment by
+// MarkdownDocAnnotation) in the viewport. Retries across animation frames
+// because the card only exists once the virtualizer has mounted the item the
+// preceding scrollTo targets, then re-centers for a short window afterwards:
+// surrounding virtualized items re-measure as they mount, which shifts the
+// scroll content underneath a one-shot scrollIntoView.
+function scrollDocCommentIntoView(key: string, attempt = 0): void {
+  const selector = `[data-diffshub-doc-comment="${CSS.escape(key)}"]`;
+  const card = document.querySelector(selector);
+  if (card == null) {
+    if (attempt < 60) {
+      requestAnimationFrame(() => scrollDocCommentIntoView(key, attempt + 1));
+    }
+    return;
+  }
+  card.scrollIntoView({ behavior: 'auto', block: 'center' });
+  let rechecks = 0;
+  const recheck = () => {
+    const element = document.querySelector(selector);
+    if (element == null) {
+      return;
+    }
+    const rect = element.getBoundingClientRect();
+    const visible =
+      rect.top < window.innerHeight * 0.75 &&
+      rect.bottom > window.innerHeight * 0.25;
+    if (!visible) {
+      element.scrollIntoView({ behavior: 'auto', block: 'center' });
+    }
+    if (++rechecks < 8) {
+      setTimeout(recheck, 120);
+    }
+  };
+  setTimeout(recheck, 120);
 }
 
 function useIsWorkerPoolReadyOrDisabled() {

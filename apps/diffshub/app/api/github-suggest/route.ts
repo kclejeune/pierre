@@ -3,11 +3,10 @@ import { type NextRequest } from 'next/server';
 import {
   createGitHubAPIURL,
   createGitHubJSONHeaders,
-  getFallbackGitHubToken,
   getGitHubEnvironment,
+  resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
 
 // Autocomplete data for the diff URL bar: repository name search while the
 // user types "owner/rep…", and the open pull requests of a repo once one is
@@ -17,12 +16,9 @@ import { parseBearerToken } from '@/lib/parseBearerToken';
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const kind = params.get('kind');
-  const token =
-    parseBearerToken(request.headers.get('authorization')) ??
-    getFallbackGitHubToken();
+  const token = resolveRequestGitHubToken(request);
   const environment = getGitHubEnvironment();
 
-  let url: string | null = null;
   if (kind === 'repos') {
     const query = params.get('q')?.trim() ?? '';
     const owner = params.get('owner')?.trim() ?? '';
@@ -39,8 +35,23 @@ export async function GET(request: NextRequest) {
     if (query === '') {
       searchParams.sort = 'updated';
     }
-    url = createGitHubAPIURL(environment, '/search/repositories', searchParams);
-  } else if (kind === 'pulls') {
+    const result = await fetchSuggestPayload(
+      createGitHubAPIURL(environment, '/search/repositories', searchParams),
+      token
+    );
+    if (result.error != null) {
+      return result.error;
+    }
+    const items =
+      (result.payload as { items?: { full_name?: unknown }[] }).items ?? [];
+    return createJSONResponse({
+      repos: items
+        .map((item) => item.full_name)
+        .filter((name): name is string => typeof name === 'string'),
+    });
+  }
+
+  if (kind === 'pulls') {
     const owner = params.get('owner');
     const repo = params.get('repo');
     if (owner == null || repo == null) {
@@ -49,19 +60,41 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
-    url = createGitHubAPIURL(
-      environment,
-      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`,
-      { per_page: '30', state: 'open' }
+    const result = await fetchSuggestPayload(
+      createGitHubAPIURL(
+        environment,
+        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`,
+        { per_page: '30', state: 'open' }
+      ),
+      token
     );
-  }
-  if (url == null) {
-    return createJSONResponse(
-      { error: 'kind must be repos or pulls.' },
-      { status: 400 }
-    );
+    if (result.error != null) {
+      return result.error;
+    }
+    const pulls = Array.isArray(result.payload) ? result.payload : [];
+    return createJSONResponse({
+      pulls: pulls
+        .map((pull: { number?: unknown; title?: unknown }) => ({
+          number: pull.number,
+          title: pull.title,
+        }))
+        .filter(
+          (pull): pull is { number: number; title: string } =>
+            typeof pull.number === 'number' && typeof pull.title === 'string'
+        ),
+    });
   }
 
+  return createJSONResponse(
+    { error: 'kind must be repos or pulls.' },
+    { status: 400 }
+  );
+}
+
+async function fetchSuggestPayload(
+  url: string,
+  token: string | undefined
+): Promise<{ payload?: unknown; error?: Response }> {
   let response: Response;
   try {
     response = await fetch(url, {
@@ -69,38 +102,20 @@ export async function GET(request: NextRequest) {
       cache: 'no-store',
     });
   } catch {
-    return createJSONResponse(
-      { error: `Could not reach ${environment.host}.` },
-      { status: 502 }
-    );
+    return {
+      error: createJSONResponse(
+        { error: `Could not reach ${getGitHubEnvironment().host}.` },
+        { status: 502 }
+      ),
+    };
   }
   if (!response.ok) {
-    return createJSONResponse(
-      { error: `GitHub responded with ${response.status}.` },
-      { status: 502 }
-    );
-  }
-
-  const payload = (await response.json()) as unknown;
-  if (kind === 'repos') {
-    const items =
-      (payload as { items?: { full_name?: unknown }[] }).items ?? [];
-    return createJSONResponse({
-      repos: items
-        .map((item) => item.full_name)
-        .filter((name): name is string => typeof name === 'string'),
-    });
-  }
-  const pulls = Array.isArray(payload) ? payload : [];
-  return createJSONResponse({
-    pulls: pulls
-      .map((pull: { number?: unknown; title?: unknown }) => ({
-        number: pull.number,
-        title: pull.title,
-      }))
-      .filter(
-        (pull): pull is { number: number; title: string } =>
-          typeof pull.number === 'number' && typeof pull.title === 'string'
+    return {
+      error: createJSONResponse(
+        { error: `GitHub responded with ${response.status}.` },
+        { status: 502 }
       ),
-  });
+    };
+  }
+  return { payload: await response.json() };
 }

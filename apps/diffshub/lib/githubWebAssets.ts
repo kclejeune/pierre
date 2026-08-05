@@ -7,19 +7,34 @@
 // on github.com) is left untouched.
 const PROXIED_PATH_PREFIXES = ['/avatars/', '/user-attachments/'];
 
+// webURL is a per-deployment constant but this matcher runs for every image
+// and avatar on every render; cache its parsed origin instead of re-parsing.
+const originByWebURL = new Map<string, string | null>();
+
+function getWebOrigin(webURL: string): string | null {
+  let origin = originByWebURL.get(webURL);
+  if (origin === undefined) {
+    try {
+      origin = new URL(webURL).origin;
+    } catch {
+      origin = null;
+    }
+    originByWebURL.set(webURL, origin);
+  }
+  return origin;
+}
+
 // The parsed URL when `src` is a same-instance asset the proxy may serve;
 // null for anything else. Shared by the client (deciding whether to rewrite)
 // and the proxy route (validating the requested URL before fetching it).
 export function matchGitHubWebAsset(src: string, webURL: string): URL | null {
   let url: URL;
-  let base: URL;
   try {
     url = new URL(src);
-    base = new URL(webURL);
   } catch {
     return null;
   }
-  if (url.origin !== base.origin) {
+  if (url.origin !== getWebOrigin(webURL)) {
     return null;
   }
   return PROXIED_PATH_PREFIXES.some((prefix) => url.pathname.startsWith(prefix))

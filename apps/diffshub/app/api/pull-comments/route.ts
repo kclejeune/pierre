@@ -3,9 +3,9 @@ import { type NextRequest } from 'next/server';
 import {
   createGitHubAPIURL,
   createGitHubJSONHeaders,
-  getFallbackGitHubToken,
   getGitHubEnvironment,
   type GitHubEnvironment,
+  resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
@@ -38,9 +38,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const token =
-    parseBearerToken(request.headers.get('authorization')) ??
-    getFallbackGitHubToken();
+  const token = resolveRequestGitHubToken(request);
   const environment = getGitHubEnvironment();
   // request.signal aborts the GitHub calls when the browser abandons this
   // request (e.g. a superseded thread fetch), instead of paginating to
@@ -327,6 +325,7 @@ function normalizeReviewComment(comment: unknown): PullReviewComment | null {
     },
     body: record.body,
     createdAt: record.created_at,
+    htmlUrl: typeof record.html_url === 'string' ? record.html_url : null,
     id: record.id,
     inReplyToId:
       typeof record.in_reply_to_id === 'number' ? record.in_reply_to_id : null,

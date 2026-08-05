@@ -23,7 +23,9 @@ export function upsertSavedCommentSidebarEntry(
     lineNumber: entry.lineNumber,
     lineType: entry.lineType,
     message: entry.message,
+    participants: entry.participants,
     range: entry.range,
+    replyCount: entry.replyCount,
     side: entry.side,
   };
 

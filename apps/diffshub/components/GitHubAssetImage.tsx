@@ -4,14 +4,16 @@ import { type ImgHTMLAttributes, useEffect, useState } from 'react';
 
 import { readStoredGitHubToken } from './useGitHubToken';
 
-// An image served through the doc-asset proxy. <img> requests cannot carry an
-// Authorization header, so when the viewer has a saved GitHub token the asset
-// is fetched with the header and shown from an object URL — private repos and
-// GHES then load doc images with the viewer's own credentials instead of
-// requiring the server fallback token. Without a saved token (or when the
+// An image served through one of the same-origin GitHub asset proxies
+// (/api/github-doc-asset, /api/github-web-asset). <img> requests cannot carry
+// an Authorization header, so when the viewer has a saved GitHub token the
+// asset is fetched with the header and shown from an object URL — private
+// repos and GHES then load images with the viewer's own credentials instead
+// of requiring the server fallback token. Without a saved token (or when the
 // authorized fetch fails) the proxy URL is used directly, letting the server
-// fall back to its own token.
-export function DocAssetImage({
+// fall back to its own token; if that fails too, the native onError fires so
+// callers can render a fallback.
+export function GitHubAssetImage({
   src,
   alt,
   ...rest
@@ -32,7 +34,7 @@ export function DocAssetImage({
     })
       .then(async (response) => {
         if (!response.ok) {
-          throw new Error(`Doc asset request failed: ${response.status}`);
+          throw new Error(`Asset request failed: ${response.status}`);
         }
         objectURL = URL.createObjectURL(await response.blob());
         setResolvedSrc(objectURL);

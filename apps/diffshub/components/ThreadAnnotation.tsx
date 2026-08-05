@@ -6,12 +6,14 @@ import { memo, useState } from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { CommentComposer } from './CommentComposer';
+import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
 import { MarkdownContent } from './MarkdownContent';
 import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
 import { annotationCardBase } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
+import type { PullRequestRef } from '@/lib/pullCommentsClient';
 import type { PullReviewComment, ThreadCommentMetadata } from '@/lib/types';
 
 interface ThreadAnnotationProps {
@@ -19,6 +21,8 @@ interface ThreadAnnotationProps {
   itemId: string;
   // Whether a token is saved, i.e. replies/edits can be attempted at all.
   canWrite: boolean;
+  // When set, each comment's timestamp links to the comment on GitHub.
+  pullRequest?: PullRequestRef;
   onDeleteComment(
     itemId: string,
     key: string,
@@ -40,12 +44,14 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
   annotation,
   itemId,
   canWrite,
+  pullRequest,
   onDeleteComment,
   onEditComment,
   onReply,
 }: ThreadAnnotationProps) {
   const { key, thread } = annotation.metadata;
   const githubUser = useGitHubUser();
+  const { webURL } = useGitHubEnvironment();
 
   return (
     <div className={cn(annotationCardBase, 'flex-col gap-3')}>
@@ -54,6 +60,11 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
           key={comment.id}
           comment={comment}
           canModify={canWrite && githubUser?.login === comment.author.login}
+          githubUrl={
+            pullRequest != null
+              ? `${webURL}/${pullRequest.owner}/${pullRequest.repo}/pull/${pullRequest.number}#discussion_r${comment.id}`
+              : undefined
+          }
           onDelete={() => onDeleteComment(itemId, key, comment.id)}
           onEdit={(body) => onEditComment(itemId, key, comment.id, body)}
         />
@@ -72,6 +83,9 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
 interface ThreadCommentProps {
   canModify: boolean;
   comment: PullReviewComment;
+  // Link to this comment on GitHub; rendered as the timestamp's permalink,
+  // matching GitHub's own comment headers.
+  githubUrl?: string;
   onDelete(): Promise<void>;
   onEdit(body: string): Promise<void>;
 }
@@ -79,6 +93,7 @@ interface ThreadCommentProps {
 function ThreadComment({
   canModify,
   comment,
+  githubUrl,
   onDelete,
   onEdit,
 }: ThreadCommentProps) {
@@ -91,9 +106,21 @@ function ThreadComment({
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex items-baseline gap-2">
           <strong className="text-[13px]">{comment.author.login}</strong>
-          <span className="text-muted-foreground text-[12px]">
-            {formatRelativeTime(comment.createdAt)}
-          </span>
+          {githubUrl != null ? (
+            <a
+              className="text-muted-foreground hover:text-foreground text-[12px] hover:underline"
+              href={githubUrl}
+              rel="noreferrer noopener"
+              target="_blank"
+              title="View this comment on GitHub"
+            >
+              {formatRelativeTime(comment.createdAt)}
+            </a>
+          ) : (
+            <span className="text-muted-foreground text-[12px]">
+              {formatRelativeTime(comment.createdAt)}
+            </span>
+          )}
           {canModify && !isEditing && (
             <span className="ml-auto flex gap-1 opacity-0 transition-opacity duration-100 group-hover/comment:opacity-100">
               <Button

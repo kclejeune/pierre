@@ -7,8 +7,11 @@ import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
 
+import { GitHubAssetImage } from './GitHubAssetImage';
+import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
 import { MermaidDiagram } from './MermaidDiagram';
 import { cn } from '@/lib/cn';
+import { createGitHubWebAssetProxyURL } from '@/lib/githubWebAssets';
 
 const REMARK_PLUGINS = [remarkGfm];
 
@@ -38,9 +41,30 @@ const BASE_REHYPE_PLUGINS: NonNullable<
   React.ComponentProps<typeof Markdown>['rehypePlugins']
 > = [rehypeRaw, [rehypeSanitize, SANITIZE_SCHEMA]];
 
+// The default renderer for markdown images: same-instance assets (pasted
+// user-attachment images, avatars in HTML tables) are routed through the
+// authenticated web-asset proxy so they load on private-mode GHES; every
+// other URL renders as a plain <img>. Exported so callers overriding `img`
+// for their own URL schemes (the rendered-document view's repo-relative
+// paths) can fall back to the same behavior.
+export function MarkdownImage({
+  src,
+  alt,
+  ...rest
+}: React.ImgHTMLAttributes<HTMLImageElement>) {
+  const { webURL } = useGitHubEnvironment();
+  const proxied =
+    typeof src === 'string' ? createGitHubWebAssetProxyURL(src, webURL) : null;
+  if (proxied != null) {
+    return <GitHubAssetImage {...rest} alt={alt ?? ''} src={proxied} />;
+  }
+  return <img {...rest} alt={alt ?? ''} loading="lazy" src={src} />;
+}
+
 // ```mermaid fences render as diagrams (as GitHub does); every other code
 // block keeps the default <pre> rendering.
 const DEFAULT_COMPONENTS: Components = {
+  img: ({ node: _node, ...rest }) => <MarkdownImage {...rest} />,
   pre: ({ node, ...rest }) => {
     const mermaidSource = getMermaidSource(node);
     if (mermaidSource != null) {

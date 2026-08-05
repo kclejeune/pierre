@@ -150,9 +150,12 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
                   author={comment.author}
                   className="size-5"
                 />
-                <div className="flex flex-col items-start gap-0.5 select-text">
-                  <div className="text-muted-foreground flex gap-1">
-                    {comment.author.login} commented on{' '}
+                <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 select-text">
+                  <div className="text-muted-foreground flex flex-wrap gap-x-1">
+                    <span className="text-foreground font-medium">
+                      @{comment.author.login}
+                    </span>
+                    <span>commented on</span>
                     <span
                       className={cn(
                         getCommentLineClassName(comment.side, comment.lineType),
@@ -169,6 +172,25 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
                   <p className="text-foreground w-full break-words whitespace-pre-wrap">
                     {comment.message}
                   </p>
+                  {comment.replyCount > 0 && (
+                    <div className="text-muted-foreground mt-1 flex items-center gap-1.5 text-[12px]">
+                      <span className="flex -space-x-1.5">
+                        {comment.participants.slice(0, 4).map((participant) => (
+                          <CommentAuthorAvatar
+                            key={participant.login}
+                            author={participant}
+                            className="size-4 text-[8px] ring-2 ring-[var(--diffshub-card-bg,var(--color-card))]"
+                          />
+                        ))}
+                      </span>
+                      <span>
+                        {comment.replyCount}{' '}
+                        {comment.replyCount === 1 ? 'reply' : 'replies'}
+                        {comment.participants.length > 1 &&
+                          ` · ${comment.participants.length} participants`}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </button>
             ))}

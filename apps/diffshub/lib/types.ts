@@ -113,7 +113,12 @@ export interface DiffsHubSavedCommentEvent {
   lineNumber: number;
   lineType: CommentLineType;
   message: string;
+  // Unique thread authors in first-comment order (root author first), so the
+  // sidebar can show who is involved beyond the root author. Local comments
+  // carry just their author.
+  participants: CommentAuthor[];
   range: SelectedLineRange;
+  replyCount: number;
   side: AnnotationSide;
 }
 
@@ -129,7 +134,9 @@ export interface DiffsHubSavedCommentEntry {
   lineNumber: number;
   lineType: CommentLineType;
   message: string;
+  participants: CommentAuthor[];
   range: SelectedLineRange;
+  replyCount: number;
   side: AnnotationSide;
 }
 

@@ -1,8 +1,8 @@
 'use client';
 
 import type { AnnotationSide } from '@pierre/diffs';
-import { IconConvoFill, IconPlus } from '@pierre/icons';
-import { memo, type MouseEvent } from 'react';
+import { IconArrowUpRight, IconConvoFill, IconPlus } from '@pierre/icons';
+import { memo, type MouseEvent, useState } from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { cn } from '@/lib/cn';
@@ -92,10 +92,7 @@ function getCommentLineClassName(
 // button; bail out only when the resulting selection is anchored inside this
 // row, so a pre-existing selection elsewhere on the page (e.g. in the diff
 // viewer) does not block keyboard/mouse activation of the row.
-function handleRowClick(
-  event: MouseEvent<HTMLButtonElement>,
-  run: () => void
-): void {
+function handleRowClick(event: MouseEvent<HTMLElement>, run: () => void): void {
   if (event.button !== 0) {
     return;
   }
@@ -113,6 +110,69 @@ function handleRowClick(
     }
   }
   run();
+}
+
+// A PR-level conversation entry. There is no diff anchor to scroll to, so the
+// row's default click expands the clamped body in place — reading the comment
+// stays in-app. The upstream GitHub permalink is an explicit arrow affordance,
+// matching the embedded thread cards, rather than the whole-row default.
+function DiscussionRow({ comment }: { comment: PullDiscussionComment }) {
+  const [expanded, setExpanded] = useState(false);
+  const preview = createCommentSidebarPreview(comment.body);
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-expanded={expanded}
+      className="focus-visible:ring-ring flex w-full cursor-pointer items-start gap-2 border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] p-3 text-left text-sm outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]"
+      onClick={(event) =>
+        handleRowClick(event, () => setExpanded((prev) => !prev))
+      }
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          setExpanded((prev) => !prev);
+        }
+      }}
+    >
+      <CommentAuthorAvatar author={comment.author} className="size-5" />
+      <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 select-text">
+        <div className="text-muted-foreground flex w-full flex-wrap items-center gap-x-1">
+          <span className="text-foreground font-medium">
+            @{comment.author.login}
+          </span>
+          <span className={cn(getDiscussionVerbClassName(comment))}>
+            {getDiscussionVerb(comment)}
+          </span>
+          <span>· {formatRelativeTime(comment.createdAt)}</span>
+          {comment.htmlUrl != null && (
+            <a
+              className="hover:text-foreground ml-auto shrink-0"
+              aria-label="Open comment on GitHub"
+              title="Open comment on GitHub"
+              href={comment.htmlUrl}
+              rel="noreferrer noopener"
+              target="_blank"
+              // Keep the anchor's navigation from also toggling the row.
+              onClick={(event) => event.stopPropagation()}
+            >
+              <IconArrowUpRight size={14} />
+            </a>
+          )}
+        </div>
+        {preview !== '' && (
+          <p
+            className={cn(
+              'text-foreground w-full break-words whitespace-pre-wrap',
+              !expanded && 'line-clamp-6'
+            )}
+          >
+            {preview}
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
@@ -152,59 +212,12 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
             Conversation
           </div>
           <div className="rounded-lg border border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]">
-            {discussion.map((comment) => {
-              const preview = createCommentSidebarPreview(comment.body);
-              const content = (
-                <>
-                  <CommentAuthorAvatar
-                    author={comment.author}
-                    className="size-5"
-                  />
-                  <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 select-text">
-                    <div className="text-muted-foreground flex flex-wrap gap-x-1">
-                      <span className="text-foreground font-medium">
-                        @{comment.author.login}
-                      </span>
-                      <span className={cn(getDiscussionVerbClassName(comment))}>
-                        {getDiscussionVerb(comment)}
-                      </span>
-                      <span>· {formatRelativeTime(comment.createdAt)}</span>
-                    </div>
-                    {preview !== '' && (
-                      <p className="text-foreground line-clamp-6 w-full break-words whitespace-pre-wrap">
-                        {preview}
-                      </p>
-                    )}
-                  </div>
-                </>
-              );
-              // These comments have no diff anchor to scroll to, so the row
-              // links to the comment on GitHub instead.
-              const rowClassName =
-                'focus-visible:ring-ring flex w-full items-start gap-2 border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] p-3 text-left text-sm outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 focus-visible:ring-2 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]';
-              return comment.htmlUrl != null ? (
-                <a
-                  key={`${comment.kind}-${comment.id}`}
-                  className={cn(
-                    rowClassName,
-                    'cursor-pointer hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))]'
-                  )}
-                  href={comment.htmlUrl}
-                  rel="noreferrer noopener"
-                  target="_blank"
-                  title="Open on GitHub"
-                >
-                  {content}
-                </a>
-              ) : (
-                <div
-                  key={`${comment.kind}-${comment.id}`}
-                  className={rowClassName}
-                >
-                  {content}
-                </div>
-              );
-            })}
+            {discussion.map((comment) => (
+              <DiscussionRow
+                key={`${comment.kind}-${comment.id}`}
+                comment={comment}
+              />
+            ))}
           </div>
         </section>
       )}

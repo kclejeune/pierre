@@ -11,10 +11,7 @@ import { DiffUrlForm } from '@/components/DiffUrlForm';
 export const HomeFetchForm = memo(function HomeFetchForm() {
   return (
     <div className="px-4">
-      <DiffUrlForm
-        placeholder="https://github.com/org/repo/123"
-        inputClassName="text-md h-12 w-full text-start"
-      >
+      <DiffUrlForm inputClassName="text-md h-12 w-full text-start">
         {(isPending, url) => (
           <Button
             type="submit"

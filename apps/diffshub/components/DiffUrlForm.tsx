@@ -30,6 +30,7 @@ interface DiffUrlFormProps {
   // Called whenever the controlled URL value changes, so parent components
   // can react to edits (e.g. to conditionally show/hide related controls).
   onUrlChange?: (url: string) => void;
+  // Defaults to an example URL on the configured GitHub instance.
   placeholder?: string;
   // Render prop for the submit button area. Receives the transition pending
   // state and current URL value so callers can conditionally render controls.
@@ -49,7 +50,7 @@ export function DiffUrlForm({
   children,
 }: DiffUrlFormProps) {
   const router = useRouter();
-  const { host: githubHost } = useGitHubEnvironment();
+  const { host: githubHost, webURL: githubWebURL } = useGitHubEnvironment();
   const [isPending, startTransition] = useTransition();
   const [url, setURL] = useState(initialUrl);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -160,7 +161,7 @@ export function DiffUrlForm({
             isSubmittingRef.current = true;
           }
         }}
-        placeholder={placeholder}
+        placeholder={placeholder ?? `${githubWebURL}/org/repo/123`}
       />
       {showClear && (
         <Button

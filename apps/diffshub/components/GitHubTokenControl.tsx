@@ -4,14 +4,15 @@ import { IconBrandGithub } from '@pierre/icons';
 import { type FormEvent, memo, useState } from 'react';
 
 import { Button } from '@/components/Button';
+import { useGitHubEnvironment } from '@/components/GitHubEnvironmentProvider';
 import { Input } from '@/components/Input';
 import { cn } from '@/lib/cn';
 
-export const CREATE_TOKEN_URL =
-  'https://github.com/settings/personal-access-tokens/new?name=DiffsHub%20Private%20Repo%20Read%20Access&description=Read+private+PRs+and+expand+collapsed+hunks&expires_in=90&contents=read&pull_requests=read&issues=read';
+const CREATE_TOKEN_PATH =
+  '/settings/personal-access-tokens/new?name=DiffsHub%20Private%20Repo%20Read%20Access&description=Read+private+PRs+and+expand+collapsed+hunks&expires_in=90&contents=read&pull_requests=read&issues=read';
 
-export const CLASSIC_TOKEN_URL =
-  'https://github.com/settings/tokens/new?description=DiffsHub%20Private%20Repo%20Read%20Access&scopes=repo&default_expires_at=90';
+const CLASSIC_TOKEN_PATH =
+  '/settings/tokens/new?description=DiffsHub%20Private%20Repo%20Read%20Access&scopes=repo&default_expires_at=90';
 
 interface GitHubTokenControlProps {
   active: boolean;
@@ -28,6 +29,7 @@ export const GitHubTokenControl = memo(function GitHubTokenControl({
   onSave,
   title = 'GitHub Token',
 }: GitHubTokenControlProps) {
+  const { isGitHubDotCom, oauthEnabled, webURL } = useGitHubEnvironment();
   const [draftToken, setDraftToken] = useState('');
   const canSave = draftToken.trim() !== '';
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -37,6 +39,15 @@ export const GitHubTokenControl = memo(function GitHubTokenControl({
     }
     onSave(draftToken);
     setDraftToken('');
+  };
+  // The login route restores the user to the exact diff they were viewing, so
+  // the return path is captured at click time rather than render time.
+  const handleSignIn = () => {
+    const { hash, pathname, search } = window.location;
+    const returnTo = `${pathname}${search}${hash}`;
+    window.location.assign(
+      `/api/auth/github/login?returnTo=${encodeURIComponent(returnTo)}`
+    );
   };
 
   return (
@@ -58,7 +69,8 @@ export const GitHubTokenControl = memo(function GitHubTokenControl({
       {active ? (
         <>
           <p className="text-muted-foreground mt-1 max-w-124 text-[13px] text-pretty">
-            Using your PAT from localStorage. Clear it to create a new one.
+            Using your saved token from localStorage. Clear it to sign in again
+            or use a different token.
           </p>
           <div className="mt-2 flex items-center gap-2">
             <Button
@@ -76,25 +88,51 @@ export const GitHubTokenControl = memo(function GitHubTokenControl({
         </>
       ) : (
         <>
+          {oauthEnabled && (
+            <div className="mt-2">
+              <Button type="button" size="sm" onClick={handleSignIn}>
+                <IconBrandGithub className="size-4" />
+                Sign in with GitHub
+              </Button>
+            </div>
+          )}
           <p className="text-muted-foreground mt-1 max-w-124 text-[13px] text-pretty">
-            <a
-              className="inline-link"
-              href={CREATE_TOKEN_URL}
-              target="_blank"
-              rel="noreferrer noopener"
-            >
-              Create a fine-grained PAT
-            </a>{' '}
-            on GitHub to view private diffs, or{' '}
-            <a
-              className="inline-link"
-              href={CLASSIC_TOKEN_URL}
-              target="_blank"
-              rel="noreferrer noopener"
-            >
-              a classic token
-            </a>{' '}
-            with repo scope. Saved only in localStorage.
+            {oauthEnabled ? 'Or create' : 'Create'}{' '}
+            {isGitHubDotCom ? (
+              <>
+                <a
+                  className="inline-link"
+                  href={`${webURL}${CREATE_TOKEN_PATH}`}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  a fine-grained PAT
+                </a>{' '}
+                on GitHub to view private diffs, or{' '}
+                <a
+                  className="inline-link"
+                  href={`${webURL}${CLASSIC_TOKEN_PATH}`}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  a classic token
+                </a>{' '}
+                with repo scope.
+              </>
+            ) : (
+              <>
+                <a
+                  className="inline-link"
+                  href={`${webURL}${CLASSIC_TOKEN_PATH}`}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  a personal access token
+                </a>{' '}
+                with repo scope to view private diffs.
+              </>
+            )}{' '}
+            Saved only in localStorage.
           </p>
           <form className="mt-2 flex gap-1.5" onSubmit={handleSubmit}>
             <Input

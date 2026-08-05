@@ -148,7 +148,6 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
         className="order-last md:order-none md:mr-auto"
         initialUrl={initialUrl}
         onUrlChange={setCurrentUrl}
-        placeholder="https://github.com/org/repo/123"
         inputClassName="w-full md:w-auto"
       />
       <div className="flex w-full items-center justify-between gap-2 md:w-auto md:justify-end">

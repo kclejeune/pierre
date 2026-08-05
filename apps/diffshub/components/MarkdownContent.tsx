@@ -13,32 +13,27 @@ import { cn } from '@/lib/cn';
 const REMARK_PLUGINS = [remarkGfm];
 
 // GitHub-flavored sanitization, extended to keep the sizing attributes HTML
-// <img> tags commonly carry in READMEs (avatar grids, logos, badges) and the
-// source-range attributes the rendered-document view attaches to its block
-// wrappers before sanitization runs.
+// <img> tags commonly carry in READMEs (avatar grids, logos, badges). Divs
+// additionally keep all data attributes (inert by nature) so caller plugins —
+// e.g. the rendered-document view's source-range wrappers — survive
+// sanitization without this shared schema naming each caller's attributes.
 const SANITIZE_SCHEMA: typeof defaultSchema = {
   ...defaultSchema,
   attributes: {
     ...defaultSchema.attributes,
     img: [...(defaultSchema.attributes?.img ?? []), 'width', 'height', 'align'],
-    div: [
-      ...(defaultSchema.attributes?.div ?? []),
-      'dataSourceStart',
-      'dataSourceEnd',
-      'dataClaimStart',
-      'dataClaimEnd',
-    ],
+    div: [...(defaultSchema.attributes?.div ?? []), 'data*'],
   },
 };
 
 // Raw HTML embedded in the markdown (image tags, <details>, <sup>, …) is
 // parsed and then sanitized against the GitHub schema, so it renders the way
 // GitHub renders it without opening the page to script injection. Caller
-// plugins run BEFORE these: rehype-raw re-parses the whole document, which
-// restructures blocks around malformed HTML and invalidates source positions,
-// so any plugin that reads positions must see the tree first. Attributes a
-// caller plugin attaches must be allowlisted in SANITIZE_SCHEMA to survive,
-// and the raw re-parse stringifies them.
+// plugins run BEFORE these (hence the prop name): rehype-raw re-parses the
+// whole document, which restructures blocks around malformed HTML and
+// invalidates source positions, so any plugin that reads positions must see
+// the tree first. Attributes a caller plugin attaches must survive
+// SANITIZE_SCHEMA, and the raw re-parse stringifies them.
 const BASE_REHYPE_PLUGINS: NonNullable<
   React.ComponentProps<typeof Markdown>['rehypePlugins']
 > = [rehypeRaw, [rehypeSanitize, SANITIZE_SCHEMA]];
@@ -95,7 +90,9 @@ interface MarkdownContentProps {
   className?: string;
   components?: Components;
   markdown: string;
-  rehypePlugins?: React.ComponentProps<typeof Markdown>['rehypePlugins'];
+  rehypePluginsBeforeRaw?: React.ComponentProps<
+    typeof Markdown
+  >['rehypePlugins'];
 }
 
 // Sanitized-by-default markdown rendering (react-markdown ignores embedded
@@ -105,13 +102,16 @@ export const MarkdownContent = memo(function MarkdownContent({
   className,
   components,
   markdown,
-  rehypePlugins,
+  rehypePluginsBeforeRaw,
 }: MarkdownContentProps) {
   return (
     <div className={cn(MARKDOWN_PROSE_CLASS, className)}>
       <Markdown
         remarkPlugins={REMARK_PLUGINS}
-        rehypePlugins={[...(rehypePlugins ?? []), ...BASE_REHYPE_PLUGINS]}
+        rehypePlugins={[
+          ...(rehypePluginsBeforeRaw ?? []),
+          ...BASE_REHYPE_PLUGINS,
+        ]}
         components={{ ...DEFAULT_COMPONENTS, ...components }}
       >
         {markdown}

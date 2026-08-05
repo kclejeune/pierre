@@ -79,9 +79,9 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
       },
       div: (props) => {
         const { node } = props;
-        const sourceStart = node?.properties?.dataSourceStart;
-        const sourceEnd = node?.properties?.dataSourceEnd;
-        if (typeof sourceStart !== 'number' || typeof sourceEnd !== 'number') {
+        const sourceStart = parseSourceLine(node?.properties?.dataSourceStart);
+        const sourceEnd = parseSourceLine(node?.properties?.dataSourceEnd);
+        if (sourceStart == null || sourceEnd == null) {
           return <div {...props} />;
         }
         const changed =
@@ -226,9 +226,28 @@ function useMarkdownDocContents(
   return fetchedState ?? { kind: 'loading' };
 }
 
+// The wrapper attributes round-trip through rehype-raw's HTML re-parse, which
+// turns the numbers the plugin wrote into strings.
+function parseSourceLine(value: unknown): number | null {
+  if (typeof value !== 'number' && typeof value !== 'string') {
+    return null;
+  }
+  const line = Number(value);
+  return Number.isInteger(line) && line > 0 ? line : null;
+}
+
 // Wraps every top-level block of the document in a div carrying its source
 // line range, so the components override above can attach change markers and
 // comment affordances without re-parsing the markdown.
+//
+// This must run BEFORE rehype-raw (MarkdownContent orders caller plugins
+// first): raw re-parses the whole document, and malformed HTML — an unclosed
+// <div> in a README, say — absorbs every later block into one element whose
+// position spans the rest of the file. Comment anchors computed from such a
+// range land on unrelated lines. Wrapping first captures each block's true
+// range; the re-parse merely nests the wrappers inside the malformed element,
+// which is why the div override above matches wrappers at any depth rather
+// than only at the top level.
 function rehypeWrapTopLevelBlocks() {
   return (tree: HastRoot) => {
     tree.children = tree.children.map((child) => {

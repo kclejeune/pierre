@@ -71,5 +71,7 @@ matching source line. The rendered view matches GitHub's markdown rendering:
 ` ```mermaid ` fences render as diagrams, embedded HTML (image tags,
 `<details>`, …) is sanitized against the GitHub schema, and relative image
 references are served from the repository at the diff's revision through a
-server-side proxy. Signed-in viewers load private-repo images with their own
-token; anonymous visitors need the server fallback token.
+server-side proxy, as are assets the instance itself hosts (comment-author
+avatars and pasted user-attachment images on private-mode GHES). Signed-in
+viewers load all of these with their own token; anonymous visitors need the
+server fallback token.

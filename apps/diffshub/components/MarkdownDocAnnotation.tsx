@@ -17,8 +17,8 @@ import {
 } from 'react';
 import type { Components } from 'react-markdown';
 
-import { DocAssetImage } from './DocAssetImage';
-import { MarkdownContent } from './MarkdownContent';
+import { GitHubAssetImage } from './GitHubAssetImage';
+import { MarkdownContent, MarkdownImage } from './MarkdownContent';
 import { cn } from '@/lib/cn';
 import {
   buildNewFileChangeMap,
@@ -74,14 +74,12 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
     () => (isDeletedDoc ? null : buildNewFileChangeMap(fileDiff)),
     [fileDiff, isDeletedDoc]
   );
-  // The rail only exists (and reserves layout space) when there is something
-  // to show. Sorting once here keeps every per-block slice in line order.
+  // The rail exists whenever the caller can render comments at all — even
+  // with none saved yet — so the card keeps one stable width instead of
+  // reflowing the whole document when the first comment or draft appears.
+  // Sorting once here keeps every per-block slice in line order.
   const rail = useMemo(() => {
-    if (
-      renderComment == null ||
-      commentAnnotations == null ||
-      commentAnnotations.length === 0
-    ) {
+    if (renderComment == null || commentAnnotations == null) {
       return null;
     }
     return {
@@ -120,8 +118,10 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
   const components = useMemo<Components>(
     () => ({
       // Relative image references point at repository paths; route them
-      // through the asset proxy so they load from the raw host at this
-      // diff's ref instead of 404ing against the DiffsHub origin.
+      // through the doc-asset proxy so they load from the raw host at this
+      // diff's ref instead of 404ing against the DiffsHub origin. Absolute
+      // URLs fall back to the shared default, which proxies same-instance
+      // assets (pasted user-attachment images) and passes the rest through.
       img: ({ node: _node, src, alt, ...rest }) => {
         const assetPath =
           typeof src === 'string' && sourcePath != null
@@ -129,7 +129,7 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
             : null;
         if (assetPath != null && sourcePath != null) {
           return (
-            <DocAssetImage
+            <GitHubAssetImage
               {...rest}
               alt={alt ?? ''}
               src={createDocAssetURL(
@@ -140,7 +140,7 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
             />
           );
         }
-        return <img {...rest} alt={alt ?? ''} loading="lazy" src={src} />;
+        return <MarkdownImage {...rest} alt={alt} src={src} />;
       },
       div: (props) => {
         const { node } = props;
@@ -261,7 +261,8 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
           />
         )}
         {contentsState.kind !== 'ready' &&
-          rail != null && (
+          rail != null &&
+          rail.annotations.length > 0 && (
             // Without rendered blocks to attach to, keep the comments visible
             // as a flat list so they never silently disappear.
             <div className="mt-2 flex max-w-[620px] flex-col">

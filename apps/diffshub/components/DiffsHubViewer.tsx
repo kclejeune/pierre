@@ -724,6 +724,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
             annotation={annotation}
             itemId={itemId}
             canWrite={getWriteToken() != null}
+            pullRequest={pullRequest}
             onDeleteComment={handleThreadDeleteComment}
             onEditComment={handleThreadEditComment}
             onReply={handleThreadReply}

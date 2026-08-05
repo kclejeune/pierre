@@ -34,10 +34,7 @@ export function DraftAnnotation({
   // an identity; otherwise fall back to a random demo persona.
   const githubUser = useGitHubUser();
   const [personaAuthor] = useState(getRandomPersonaAuthor);
-  const author: CommentAuthor =
-    githubUser != null
-      ? { avatarUrl: githubUser.avatarUrl, login: githubUser.login }
-      : personaAuthor;
+  const author: CommentAuthor = githubUser ?? personaAuthor;
   const [isSaving, setIsSaving] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const trimmedMessage = message.trim();

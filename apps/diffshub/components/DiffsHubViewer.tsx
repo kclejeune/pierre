@@ -23,9 +23,9 @@ import { ThemedCodeView } from './ThemedCodeView';
 import { ThreadAnnotation } from './ThreadAnnotation';
 import { useChromeThemeProps } from './useChromeThemeProps';
 import { buildAnnotationThemeStyle } from '@/lib/annotationThemeStyle';
-import { classifyCommentLineType } from '@/lib/classifyCommentLineType';
 import { cn } from '@/lib/cn';
 import { CODE_VIEW_CUSTOM_CSS, CODE_VIEW_LAYOUT } from '@/lib/constants';
+import { incrementItemVersion } from '@/lib/incrementItemVersion';
 import { isDiffItem } from '@/lib/isDiffItem';
 import { DOC_PREVIEW_KEY, isDocAnnotation } from '@/lib/isDocAnnotation';
 import { isDraftAnnotation } from '@/lib/isDraftAnnotation';
@@ -41,18 +41,22 @@ import {
   postPullReviewReply,
   type PullRequestRef,
 } from '@/lib/pullCommentsClient';
-import { createPullReviewThread } from '@/lib/pullReviewThreads';
+import {
+  createPullReviewThread,
+  createThreadAnnotation,
+} from '@/lib/pullReviewThreads';
+import {
+  createLocalSavedCommentEvent,
+  createThreadSavedCommentEvent,
+} from '@/lib/savedCommentEvent';
 import { diffshubChromeMapping } from '@/lib/theme/diffshubChromeMapping';
 import type {
   CommentAuthor,
   CommentMetadata,
   DiffsHubDeletedCommentEvent,
   DiffsHubSavedCommentEvent,
+  SavedCommentMetadata,
 } from '@/lib/types';
-
-function getNextItemVersion(item: CodeViewItem<CommentMetadata>): number {
-  return typeof item.version === 'number' ? item.version + 1 : 1;
-}
 
 function updateViewerDiffItem(
   viewer: CodeViewHandle<CommentMetadata>,
@@ -68,7 +72,7 @@ function updateViewerDiffItem(
     return undefined;
   }
 
-  item.version = getNextItemVersion(item);
+  incrementItemVersion(item);
   return viewer.updateItem(item) ? item : undefined;
 }
 
@@ -338,73 +342,56 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
 
       // On a pull-request view with a token, comments publish to the real PR
       // and become GitHub-backed threads; otherwise they stay local.
-      const token = getGitHubToken?.();
-      const anchor =
-        pullRequest != null && token != null && token !== ''
-          ? createCommentAnchor(
-              item.fileDiff.name,
-              draftAnnotation.metadata.range
-            )
-          : null;
-      if (
-        pullRequest != null &&
-        token != null &&
-        token !== '' &&
-        anchor != null
-      ) {
-        let comment;
-        try {
-          comment = await postPullReviewComment(
-            pullRequest,
-            token,
-            anchor,
-            trimmedMessage
-          );
-        } catch (error) {
-          toast.error(
-            error instanceof Error
-              ? error.message
-              : 'Posting the comment failed.'
-          );
-          throw error;
-        }
-        const thread = createPullReviewThread(comment);
-        if (thread != null) {
-          const updatedItem = replaceAnnotation(viewer, itemId, key, {
-            side: thread.side,
-            lineNumber: thread.lineNumber,
-            metadata: {
-              kind: 'thread',
-              key: thread.key,
-              range: thread.range,
-              thread,
-            },
-          });
-          if (updatedItem == null) {
+      const token = getWriteToken();
+      if (pullRequest != null && token != null) {
+        const anchor = createCommentAnchor(
+          item.fileDiff.name,
+          draftAnnotation.metadata.range
+        );
+        if (anchor != null) {
+          let comment;
+          try {
+            comment = await postPullReviewComment(
+              pullRequest,
+              token,
+              anchor,
+              trimmedMessage
+            );
+          } catch (error) {
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : 'Posting the comment failed.'
+            );
+            throw error;
+          }
+          const thread = createPullReviewThread(comment);
+          if (thread != null) {
+            const updatedItem = replaceAnnotation(
+              viewer,
+              itemId,
+              key,
+              createThreadAnnotation(thread)
+            );
+            if (updatedItem == null) {
+              return;
+            }
+            finishDraft(itemId, key);
+            onCommentSaved(
+              createThreadSavedCommentEvent(
+                updatedItem.fileDiff,
+                itemId,
+                thread
+              )
+            );
             return;
           }
-          finishDraft(itemId, key);
-          onCommentSaved({
-            author: comment.author,
-            itemId,
-            key: thread.key,
-            lineNumber: thread.lineNumber,
-            lineType: classifyCommentLineType(
-              updatedItem.fileDiff,
-              thread.side,
-              thread.lineNumber
-            ),
-            message: comment.body,
-            range: thread.range,
-            side: thread.side,
-          });
-          return;
+          // GitHub accepted the comment but echoed no usable anchor; fall
+          // through and keep a local card so the text isn't lost.
         }
-        // GitHub accepted the comment but echoed no usable anchor; fall
-        // through and keep a local card so the text isn't lost.
       }
 
-      const updatedItem = replaceAnnotation(viewer, itemId, key, {
+      const savedAnnotation: DiffLineAnnotation<SavedCommentMetadata> = {
         ...draftAnnotation,
         metadata: {
           kind: 'saved',
@@ -413,40 +400,41 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
           message: trimmedMessage,
           range: draftAnnotation.metadata.range,
         },
-      });
+      };
+      const updatedItem = replaceAnnotation(
+        viewer,
+        itemId,
+        key,
+        savedAnnotation
+      );
       if (updatedItem == null) {
         return;
       }
 
       finishDraft(itemId, key);
-      onCommentSaved({
-        author,
-        itemId,
-        key,
-        lineNumber: draftAnnotation.lineNumber,
-        lineType: classifyCommentLineType(
+      onCommentSaved(
+        createLocalSavedCommentEvent(
           updatedItem.fileDiff,
-          draftAnnotation.side,
-          draftAnnotation.lineNumber
-        ),
-        message: trimmedMessage,
-        range: draftAnnotation.metadata.range,
-        side: draftAnnotation.side,
-      });
+          itemId,
+          savedAnnotation
+        )
+      );
     }
   );
+
+  // The saved token normalized to undefined when absent — the single spelling
+  // of "can this session write to the PR".
+  const getWriteToken = (): string | undefined => {
+    const token = getGitHubToken?.();
+    return token == null || token === '' ? undefined : token;
+  };
 
   // Locates a thread annotation for the reply/edit/delete handlers below and
   // asserts the preconditions they share (mounted viewer, saved token).
   const getThreadContext = (itemId: string, key: string) => {
     const { current: viewer } = viewerRef;
-    const token = getGitHubToken?.();
-    if (
-      viewer == null ||
-      pullRequest == null ||
-      token == null ||
-      token === ''
-    ) {
+    const token = getWriteToken();
+    if (viewer == null || pullRequest == null || token == null) {
       return null;
     }
     const item = viewer.getItem(itemId);
@@ -528,20 +516,9 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       });
       // The sidebar shows the thread's first comment; keep it in sync.
       if (thread.comments[0]?.id === commentId) {
-        onCommentSaved({
-          author: nextThread.comments[0].author,
-          itemId,
-          key,
-          lineNumber: thread.lineNumber,
-          lineType: classifyCommentLineType(
-            item.fileDiff,
-            thread.side,
-            thread.lineNumber
-          ),
-          message: edited.body,
-          range: thread.range,
-          side: thread.side,
-        });
+        onCommentSaved(
+          createThreadSavedCommentEvent(item.fileDiff, itemId, nextThread)
+        );
       }
     }
   );
@@ -578,20 +555,9 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
         metadata: { ...annotation.metadata, thread: nextThread },
       });
       if (thread.comments[0]?.id === commentId) {
-        onCommentSaved({
-          author: remaining[0].author,
-          itemId,
-          key,
-          lineNumber: thread.lineNumber,
-          lineType: classifyCommentLineType(
-            item.fileDiff,
-            thread.side,
-            thread.lineNumber
-          ),
-          message: remaining[0].body,
-          range: thread.range,
-          side: thread.side,
-        });
+        onCommentSaved(
+          createThreadSavedCommentEvent(item.fileDiff, itemId, nextThread)
+        );
       }
     }
   );
@@ -612,27 +578,26 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       if (annotation == null || !isSavedAnnotation(annotation)) {
         return;
       }
-      const updatedItem = replaceAnnotation(viewer, itemId, key, {
+      const nextAnnotation = {
         ...annotation,
         metadata: { ...annotation.metadata, message },
-      });
+      };
+      const updatedItem = replaceAnnotation(
+        viewer,
+        itemId,
+        key,
+        nextAnnotation
+      );
       if (updatedItem == null) {
         return;
       }
-      onCommentSaved({
-        author: annotation.metadata.author,
-        itemId,
-        key,
-        lineNumber: annotation.lineNumber,
-        lineType: classifyCommentLineType(
+      onCommentSaved(
+        createLocalSavedCommentEvent(
           updatedItem.fileDiff,
-          annotation.side,
-          annotation.lineNumber
-        ),
-        message,
-        range: annotation.metadata.range,
-        side: annotation.side,
-      });
+          itemId,
+          nextAnnotation
+        )
+      );
     }
   );
 
@@ -702,7 +667,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
     // keep the collapsed file in view and anchored.
     const itemTop = viewer.getTopForItem(itemId);
     item.collapsed = item.collapsed !== true;
-    item.version = getNextItemVersion(item);
+    incrementItemVersion(item);
     if (!viewerHandle.updateItem(item)) {
       return;
     }
@@ -754,7 +719,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
           <ThreadAnnotation
             annotation={annotation}
             itemId={item.id}
-            canWrite={pullRequest != null && hasWriteToken()}
+            canWrite={getWriteToken() != null}
             onDeleteComment={handleThreadDeleteComment}
             onEditComment={handleThreadEditComment}
             onReply={handleThreadReply}
@@ -777,11 +742,6 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       );
     }
   );
-
-  function hasWriteToken(): boolean {
-    const token = getGitHubToken?.();
-    return token != null && token !== '';
-  }
 
   const renderHeaderPrefix = useStableCallback(
     (item: CodeViewItem<CommentMetadata>) => {

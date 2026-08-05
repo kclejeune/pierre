@@ -20,6 +20,7 @@ import { DiffsHubViewer } from './DiffsHubViewer';
 import { ThemeSourceProvider } from './ThemeSourceProvider';
 import { useGitHubToken } from './useGitHubToken';
 import { usePatchLoader } from './usePatchLoader';
+import { usePullReviewThreads } from './usePullReviewThreads';
 import { useThemeCycle } from './useThemeCycle';
 import {
   docsThemeCatalog,
@@ -27,6 +28,8 @@ import {
 } from '@/components/themeController';
 import { preloadAvatars } from '@/lib/annotation';
 import { createGitHubDiffFileLoader } from '@/lib/githubDiffFileLoader';
+import { parseGitHubDiffSource } from '@/lib/githubDiffSource';
+import type { PullRequestRef } from '@/lib/pullCommentsClient';
 import { removeSavedCommentSidebarEntry } from '@/lib/removeSavedCommentSidebarEntry';
 import type { DarkThemeName, LightThemeName } from '@/lib/themeNames';
 import type {
@@ -136,6 +139,21 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<CodeViewHandle<CommentMetadata> | null>(null);
+  // Review threads and comment publishing only exist for pull requests on
+  // the configured GitHub instance (never for arbitrary-domain patch URLs).
+  const pullRequest = useMemo<PullRequestRef | null>(() => {
+    if (domain != null && domain !== '') {
+      return null;
+    }
+    const source = parseGitHubDiffSource(path);
+    return source?.kind === 'pull'
+      ? {
+          number: source.number,
+          owner: source.repo.owner,
+          repo: source.repo.repo,
+        }
+      : null;
+  }, [domain, path]);
   const loadDiffFiles = useMemo(
     () =>
       domain == null && hasGitHubToken
@@ -219,6 +237,24 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     },
     [commentFileByItemId, setCommentSections]
   );
+  // Re-runs thread application when the CodeView handle (re)mounts, which can
+  // happen after the patch is already loaded (worker pool warm-up).
+  const [viewerReadyTick, setViewerReadyTick] = useState(0);
+  const handleViewerReady = useCallback(() => {
+    onViewerReady();
+    setViewerReadyTick((tick) => tick + 1);
+  }, [onViewerReady]);
+  usePullReviewThreads({
+    getToken: getGitHubToken,
+    loadState,
+    onThreadApplied: handleCommentSaved,
+    pathToItemId: treeSource?.pathToItemId ?? null,
+    pullRequest,
+    tokenVersion: githubTokenVersion,
+    viewerKey,
+    viewerReadyTick,
+    viewerRef,
+  });
   const handleCommentDeleted = useCallback(
     (comment: DiffsHubDeletedCommentEvent) => {
       setCommentSections((prev) =>
@@ -321,10 +357,12 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
             viewerRef={viewerRef}
             initialItems={initialItems}
             loadDiffFiles={loadDiffFiles}
+            pullRequest={pullRequest ?? undefined}
+            getGitHubToken={getGitHubToken}
             onCommentDeleted={handleCommentDeleted}
             onCommentSaved={handleCommentSaved}
             onLineLinkChange={onLineLinkChange}
-            onViewerReady={onViewerReady}
+            onViewerReady={handleViewerReady}
           />
         </>
       ) : (

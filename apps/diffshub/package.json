@@ -21,6 +21,8 @@
     "postcss-import": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "react-markdown": "catalog:",
+    "remark-gfm": "catalog:",
     "sonner": "catalog:",
     "tailwind-merge": "catalog:",
     "tailwindcss": "catalog:",
@@ -28,6 +30,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "catalog:",
+    "@types/hast": "catalog:",
     "@types/jsdom": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",

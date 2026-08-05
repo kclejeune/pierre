@@ -2,11 +2,13 @@ import { Geist } from 'next/font/google';
 import localFont from 'next/font/local';
 import type { ReactNode } from 'react';
 
+import { GitHubEnvironmentProvider } from '@/components/GitHubEnvironmentProvider';
 import { PreloadHighlighter } from '@/components/PreloadHighlighter';
 import { ScrollbarGutterVariables } from '@/components/ScrollbarGutterVariables';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { Toaster } from '@/components/Toaster';
 import { WorkerPoolContext } from '@/components/WorkerPoolContext';
+import { getGitHubClientEnvironment } from '@/lib/githubEnvironment';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -80,22 +82,24 @@ export function RootLayout({
       </head>
       <body className="diffshub">
         <ScrollbarGutterVariables />
-        <WorkerPoolContext>
-          <ThemeProvider attribute="class">
-            {children}
-            <Toaster />
-            <div
-              id="dark-mode-portal-container"
-              className="dark"
-              data-theme="dark"
-            ></div>
-            <div
-              id="light-mode-portal-container"
-              className="light"
-              data-theme="light"
-            ></div>
-          </ThemeProvider>
-        </WorkerPoolContext>
+        <GitHubEnvironmentProvider environment={getGitHubClientEnvironment()}>
+          <WorkerPoolContext>
+            <ThemeProvider attribute="class">
+              {children}
+              <Toaster />
+              <div
+                id="dark-mode-portal-container"
+                className="dark"
+                data-theme="dark"
+              ></div>
+              <div
+                id="light-mode-portal-container"
+                className="light"
+                data-theme="light"
+              ></div>
+            </ThemeProvider>
+          </WorkerPoolContext>
+        </GitHubEnvironmentProvider>
         <PreloadHighlighter />
       </body>
     </html>

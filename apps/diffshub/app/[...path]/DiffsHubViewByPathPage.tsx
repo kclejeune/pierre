@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 
 import { ReviewUI } from '@/components/ReviewUI';
+import { getGitHubEnvironment } from '@/lib/githubEnvironment';
 import { resolveDiffshubViewerRoute } from '@/lib/resolveDiffshubViewerRoute';
 
 // Viewer route that mirrors the upstream path. GitHub is the public default,
@@ -15,7 +16,11 @@ export async function DiffsHubViewByPathPage({
   const { path } = await params;
   const { domain } = await searchParams;
   const requestedDomain = Array.isArray(domain) ? domain[0] : domain;
-  const route = resolveDiffshubViewerRoute(path, requestedDomain);
+  const route = resolveDiffshubViewerRoute(
+    path,
+    requestedDomain,
+    getGitHubEnvironment().webURL
+  );
 
   if (route.kind === 'redirect') {
     redirect(route.target);

@@ -131,6 +131,37 @@ describe('getPatchViewerHref', () => {
     });
   });
 
+  describe('custom GitHub host (self-hosted GHES)', () => {
+    test('URLs on the configured host resolve to plain viewer paths', () => {
+      expect(
+        getPatchViewerHref(
+          'https://github.example.com/owner/repo/pull/123',
+          'github.example.com'
+        )
+      ).toBe('/owner/repo/pull/123');
+    });
+
+    test('domain-relative input on the configured host resolves', () => {
+      expect(
+        getPatchViewerHref(
+          'github.example.com/owner/repo/pull/123',
+          'github.example.com'
+        )
+      ).toBe('/owner/repo/pull/123');
+    });
+
+    test('patch-diff raw host is not recognized off github.com', () => {
+      expect(
+        getPatchViewerHref(
+          'https://patch-diff.githubusercontent.com/raw/owner/repo/pull/123.diff',
+          'github.example.com'
+        )
+      ).toBe(
+        '/raw/owner/repo/pull/123.diff?domain=patch-diff.githubusercontent.com'
+      );
+    });
+  });
+
   describe('invalid inputs', () => {
     test('empty string', () => {
       expect(getPatchViewerHref('')).toBeUndefined();

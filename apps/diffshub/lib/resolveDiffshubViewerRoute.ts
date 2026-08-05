@@ -1,6 +1,6 @@
 import { normalizeGitHubPath } from './normalizeGitHubPath';
 
-const GITHUB_HOST = 'github.com';
+const GITHUB_WEB_URL = 'https://github.com';
 
 export type DiffshubViewerRoute =
   | { kind: 'redirect'; target: string }
@@ -17,9 +17,12 @@ export type DiffshubViewerRoute =
 // GitHub paths are canonicalized via normalizeGitHubPath so direct navigation
 // matches the hrefs getPatchViewerHref produces from form input. Non-GitHub
 // hosts are passed through unchanged because their canonical form is unknown.
+// `githubWebURL` is the configured GitHub instance origin (github.com or a
+// GHES base URL) used to build the header's editable source URL.
 export function resolveDiffshubViewerRoute(
   pathSegments: readonly string[],
-  requestedDomainInput: string | undefined
+  requestedDomainInput: string | undefined,
+  githubWebURL: string = GITHUB_WEB_URL
 ): DiffshubViewerRoute {
   if (pathSegments.length === 0) {
     return { kind: 'redirect', target: '/' };
@@ -38,11 +41,13 @@ export function resolveDiffshubViewerRoute(
     return { kind: 'redirect', target: `${upstreamPath}${query}` };
   }
 
-  const host = domain ?? GITHUB_HOST;
   return {
     domain,
     kind: 'render',
     upstreamPath,
-    url: `https://${host}${upstreamPath}`,
+    url:
+      domain == null
+        ? `${githubWebURL}${upstreamPath}`
+        : `https://${domain}${upstreamPath}`,
   };
 }

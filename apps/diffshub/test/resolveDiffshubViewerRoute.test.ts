@@ -125,6 +125,36 @@ describe('resolveDiffshubViewerRoute', () => {
     });
   });
 
+  describe('custom GitHub web URL (self-hosted GHES)', () => {
+    test('renders against the configured instance', () => {
+      expect(
+        resolveDiffshubViewerRoute(
+          ['owner', 'repo', 'pull', '123'],
+          undefined,
+          'https://github.example.com'
+        )
+      ).toEqual({
+        domain: undefined,
+        kind: 'render',
+        upstreamPath: '/owner/repo/pull/123',
+        url: 'https://github.example.com/owner/repo/pull/123',
+      });
+    });
+
+    test('canonicalizes tab paths before rendering', () => {
+      expect(
+        resolveDiffshubViewerRoute(
+          ['owner', 'repo', 'pull', '123', 'files'],
+          undefined,
+          'https://github.example.com'
+        )
+      ).toEqual({
+        kind: 'redirect',
+        target: '/owner/repo/pull/123',
+      });
+    });
+  });
+
   describe('alternate domain', () => {
     test('renders against the requested host without rewriting', () => {
       expect(

@@ -12,6 +12,7 @@ import {
   GITHUB_API_VERSION,
   GITHUB_USER_AGENT,
 } from '@/lib/githubEnvironment';
+import { parseBearerToken } from '@/lib/parseBearerToken';
 
 const CACHE_CONTROL = 'no-store';
 const EMPTY_PATCH_MESSAGE = 'GitHub returned an empty diff.';
@@ -435,16 +436,6 @@ function createGitHubJSONAPIHeaders(token: string): Record<string, string> {
     Authorization: `Bearer ${token}`,
     'X-GitHub-Api-Version': GITHUB_API_VERSION,
   };
-}
-
-function parseBearerToken(value: string | null): string | undefined {
-  if (value == null) {
-    return undefined;
-  }
-
-  const match = /^Bearer\s+(.+)$/i.exec(value.trim());
-  const token = match?.[1]?.trim();
-  return token == null || token === '' ? undefined : token;
 }
 
 function getAuthorizationToken(

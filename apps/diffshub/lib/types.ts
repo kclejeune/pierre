@@ -8,10 +8,19 @@ export type ViewerLoadState =
   | 'ready'
   | 'error';
 
+// Comment authorship as displayed on cards and in the sidebar. `login` is the
+// GitHub login when the author is a real signed-in user or reviewer, or a demo
+// persona name otherwise; `avatarUrl` is either a GitHub avatar URL or an
+// app-relative persona image.
+export interface CommentAuthor {
+  avatarUrl: string;
+  login: string;
+}
+
 export interface SavedCommentMetadata {
   kind: 'saved';
   key: string;
-  author: string;
+  author: CommentAuthor;
   message: string;
   range: SelectedLineRange;
 }
@@ -23,7 +32,62 @@ export interface DraftCommentMetadata {
   range: SelectedLineRange;
 }
 
-export type CommentMetadata = SavedCommentMetadata | DraftCommentMetadata;
+// Which side of the pull-request diff a GitHub review comment anchors to,
+// in GitHub API terms: LEFT is the base (deletions), RIGHT the head
+// (additions).
+export type GitHubDiffSide = 'LEFT' | 'RIGHT';
+
+// A single pull-request review comment, normalized from the GitHub API shape
+// by the /api/pull-comments route. `line`/`side` are null when the comment is
+// outdated (anchored to a diff revision no longer shown).
+export interface PullReviewComment {
+  author: CommentAuthor;
+  body: string;
+  createdAt: string;
+  htmlUrl: string;
+  id: number;
+  inReplyToId: number | null;
+  line: number | null;
+  path: string;
+  side: GitHubDiffSide | null;
+  startLine: number | null;
+  startSide: GitHubDiffSide | null;
+}
+
+// A review conversation: the root comment plus its replies in creation order,
+// anchored to a line range in one file of the pull-request diff.
+export interface PullReviewThread {
+  comments: PullReviewComment[];
+  key: string;
+  lineNumber: number;
+  path: string;
+  range: SelectedLineRange;
+  rootId: number;
+  side: AnnotationSide;
+}
+
+// Annotation payload for a GitHub-backed review thread rendered in the diff.
+export interface ThreadCommentMetadata {
+  kind: 'thread';
+  key: string;
+  range: SelectedLineRange;
+  thread: PullReviewThread;
+}
+
+// Annotation payload for the rendered-markdown document view. Attached as a
+// file-level annotation (lineNumber 0) on markdown diff items when the user
+// toggles the rendered view; carries no data of its own — the renderer reads
+// contents from the owning item's fileDiff.
+export interface DocPreviewMetadata {
+  kind: 'doc';
+  key: string;
+}
+
+export type CommentMetadata =
+  | SavedCommentMetadata
+  | DraftCommentMetadata
+  | ThreadCommentMetadata
+  | DocPreviewMetadata;
 
 export interface DiffsHubCommentSidebarFile {
   fileOrder: number;
@@ -41,7 +105,7 @@ export type DiffsHubCommentFileByItemId = ReadonlyMap<
 export type CommentLineType = 'change' | 'context';
 
 export interface DiffsHubSavedCommentEvent {
-  author: string;
+  author: CommentAuthor;
   itemId: string;
   key: string;
   lineNumber: number;
@@ -57,7 +121,7 @@ export interface DiffsHubDeletedCommentEvent {
 }
 
 export interface DiffsHubSavedCommentEntry {
-  author: string;
+  author: CommentAuthor;
   itemId: string;
   key: string;
   lineNumber: number;

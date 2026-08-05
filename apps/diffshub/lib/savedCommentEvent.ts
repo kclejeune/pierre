@@ -12,13 +12,22 @@ import type {
 // the same line classification) instead of assembling the event by hand.
 
 // The sidebar row for a GitHub-backed thread mirrors the thread's first
-// comment.
+// comment, plus the participant set and reply count so the row can convey
+// the conversation behind it.
 export function createThreadSavedCommentEvent(
   fileDiff: FileDiffMetadata,
   itemId: string,
   thread: PullReviewThread
 ): DiffsHubSavedCommentEvent {
   const root = thread.comments[0];
+  const participants: DiffsHubSavedCommentEvent['participants'] = [];
+  const seenLogins = new Set<string>();
+  for (const comment of thread.comments) {
+    if (!seenLogins.has(comment.author.login)) {
+      seenLogins.add(comment.author.login);
+      participants.push(comment.author);
+    }
+  }
   return {
     author: root.author,
     itemId,
@@ -26,7 +35,9 @@ export function createThreadSavedCommentEvent(
     lineNumber: thread.lineNumber,
     lineType: classifyCommentLineType(fileDiff, thread.side, thread.lineNumber),
     message: root.body,
+    participants,
     range: thread.range,
+    replyCount: thread.comments.length - 1,
     side: thread.side,
   };
 }
@@ -48,7 +59,9 @@ export function createLocalSavedCommentEvent(
       annotation.lineNumber
     ),
     message,
+    participants: [author],
     range,
+    replyCount: 0,
     side: annotation.side,
   };
 }

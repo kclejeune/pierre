@@ -3,13 +3,17 @@
 import type { CodeViewHandle } from '@pierre/diffs/react';
 import { type RefObject, useEffect, useRef, useState } from 'react';
 
-import { classifyCommentLineType } from '@/lib/classifyCommentLineType';
+import { incrementItemVersion } from '@/lib/incrementItemVersion';
 import { isDiffItem } from '@/lib/isDiffItem';
 import {
   fetchPullReviewComments,
   type PullRequestRef,
 } from '@/lib/pullCommentsClient';
-import { groupPullReviewThreads } from '@/lib/pullReviewThreads';
+import {
+  createThreadAnnotation,
+  groupPullReviewThreads,
+} from '@/lib/pullReviewThreads';
+import { createThreadSavedCommentEvent } from '@/lib/savedCommentEvent';
 import type {
   CommentMetadata,
   DiffsHubSavedCommentEvent,
@@ -18,12 +22,11 @@ import type {
 } from '@/lib/types';
 
 interface UsePullReviewThreadsOptions {
-  getToken(): string | undefined;
   loadState: ViewerLoadState;
   onThreadApplied(event: DiffsHubSavedCommentEvent): void;
   pathToItemId: ReadonlyMap<string, string> | null;
-  pullRequest: PullRequestRef | null;
-  tokenVersion: number | string;
+  pullRequest: PullRequestRef | undefined;
+  token: string;
   viewerKey: number;
   // Bumped by the parent whenever the CodeView handle mounts, so application
   // can retry once the viewer exists.
@@ -36,12 +39,11 @@ interface UsePullReviewThreadsOptions {
 // viewer has finished loading. Threads apply exactly once per viewer
 // generation (viewerKey); a reload rebuilds the items and re-applies.
 export function usePullReviewThreads({
-  getToken,
   loadState,
   onThreadApplied,
   pathToItemId,
   pullRequest,
-  tokenVersion,
+  token,
   viewerKey,
   viewerReadyTick,
   viewerRef,
@@ -50,8 +52,6 @@ export function usePullReviewThreads({
   const appliedViewerKeyRef = useRef<number | null>(null);
   const onThreadAppliedRef = useRef(onThreadApplied);
   onThreadAppliedRef.current = onThreadApplied;
-  const getTokenRef = useRef(getToken);
-  getTokenRef.current = getToken;
 
   useEffect(() => {
     setThreads(null);
@@ -60,10 +60,10 @@ export function usePullReviewThreads({
       return;
     }
 
-    let cancelled = false;
-    void fetchPullReviewComments(pullRequest, getTokenRef.current()).then(
+    const controller = new AbortController();
+    void fetchPullReviewComments(pullRequest, token, controller.signal).then(
       (comments) => {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setThreads(groupPullReviewThreads(comments));
         }
       },
@@ -73,11 +73,11 @@ export function usePullReviewThreads({
       }
     );
     return () => {
-      cancelled = true;
+      controller.abort();
     };
-    // tokenVersion re-runs the fetch when the user signs in/out; viewerKey
-    // re-runs it on reload so re-applied annotations are fresh.
-  }, [pullRequest, tokenVersion, viewerKey]);
+    // token re-runs the fetch when the user signs in/out; viewerKey re-runs
+    // it on reload so re-applied annotations are fresh.
+  }, [pullRequest, token, viewerKey]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -93,54 +93,51 @@ export function usePullReviewThreads({
     }
     appliedViewerKeyRef.current = viewerKey;
 
+    // Batch per file: each updateItem call is a synchronous layout/render
+    // pass, so append all of an item's threads in one update.
+    const threadsByItemId = new Map<string, PullReviewThread[]>();
     for (const thread of threads) {
       const itemId = pathToItemId.get(thread.path);
       if (itemId == null) {
         continue;
       }
+      const itemThreads = threadsByItemId.get(itemId);
+      if (itemThreads == null) {
+        threadsByItemId.set(itemId, [thread]);
+      } else {
+        itemThreads.push(thread);
+      }
+    }
+
+    for (const [itemId, itemThreads] of threadsByItemId) {
       const item = viewer.getItem(itemId);
       if (item == null || !isDiffItem(item)) {
         continue;
       }
       const annotations = item.annotations ?? [];
-      if (
-        annotations.some((annotation) => annotation.metadata.key === thread.key)
-      ) {
+      const existingKeys = new Set(
+        annotations.map((annotation) => annotation.metadata.key)
+      );
+      const freshThreads = itemThreads.filter(
+        (thread) => !existingKeys.has(thread.key)
+      );
+      if (freshThreads.length === 0) {
         continue;
       }
       item.annotations = [
         ...annotations,
-        {
-          side: thread.side,
-          lineNumber: thread.lineNumber,
-          metadata: {
-            kind: 'thread',
-            key: thread.key,
-            range: thread.range,
-            thread,
-          },
-        },
+        ...freshThreads.map(createThreadAnnotation),
       ];
-      item.version = typeof item.version === 'number' ? item.version + 1 : 1;
+      incrementItemVersion(item);
       if (!viewer.updateItem(item)) {
         continue;
       }
 
-      const root = thread.comments[0];
-      onThreadAppliedRef.current({
-        author: root.author,
-        itemId,
-        key: thread.key,
-        lineNumber: thread.lineNumber,
-        lineType: classifyCommentLineType(
-          item.fileDiff,
-          thread.side,
-          thread.lineNumber
-        ),
-        message: root.body,
-        range: thread.range,
-        side: thread.side,
-      });
+      for (const thread of freshThreads) {
+        onThreadAppliedRef.current(
+          createThreadSavedCommentEvent(item.fileDiff, itemId, thread)
+        );
+      }
     }
   }, [loadState, pathToItemId, threads, viewerKey, viewerReadyTick, viewerRef]);
 }

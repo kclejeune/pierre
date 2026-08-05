@@ -15,7 +15,6 @@ function createComment(
     author: { avatarUrl: 'https://avatars.example/u/1', login: 'octocat' },
     body: 'Looks good',
     createdAt: '2026-08-01T12:00:00Z',
-    htmlUrl: 'https://github.com/o/r/pull/1#discussion_r1',
     inReplyToId: null,
     line: 10,
     path: 'src/index.ts',

@@ -2,11 +2,12 @@ import { type NextRequest } from 'next/server';
 
 import {
   createGitHubAPIURL,
+  createGitHubJSONHeaders,
+  getFallbackGitHubToken,
   getGitHubEnvironment,
-  GITHUB_API_VERSION,
-  GITHUB_USER_AGENT,
   type GitHubEnvironment,
 } from '@/lib/githubEnvironment';
+import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
 import type { GitHubDiffSide, PullReviewComment } from '@/lib/types';
 
@@ -39,32 +40,55 @@ export async function GET(request: NextRequest) {
 
   const token =
     parseBearerToken(request.headers.get('authorization')) ??
-    getFallbackToken();
+    getFallbackGitHubToken();
   const environment = getGitHubEnvironment();
+  // request.signal aborts the GitHub calls when the browser abandons this
+  // request (e.g. a superseded thread fetch), instead of paginating to
+  // completion against a dead client.
+  const fetchPage = (page: number) =>
+    fetch(
+      createGitHubAPIURL(
+        environment,
+        `/repos/${owner}/${repo}/pulls/${pull}/comments`,
+        { page: String(page), per_page: String(PER_PAGE) }
+      ),
+      {
+        cache: 'no-store',
+        headers: buildGitHubHeaders(token),
+        signal: request.signal,
+      }
+    );
+
   const comments: PullReviewComment[] = [];
   try {
-    for (let page = 1; page <= MAX_COMMENT_PAGES; page++) {
-      const response = await fetch(
-        createGitHubAPIURL(
-          environment,
-          `/repos/${owner}/${repo}/pulls/${pull}/comments`,
-          { page: String(page), per_page: String(PER_PAGE) }
-        ),
-        { cache: 'no-store', headers: buildGitHubHeaders(token) }
+    // GitHub reports the total page count on page 1 via the Link header, so
+    // the remaining pages can be fetched in parallel.
+    const firstResponse = await fetchPage(1);
+    if (!firstResponse.ok) {
+      return createGitHubFailureResponse(firstResponse);
+    }
+    const pages = [(await firstResponse.json()) as unknown[]];
+    const lastPage = Math.min(
+      parseLastPage(firstResponse.headers.get('link')),
+      MAX_COMMENT_PAGES
+    );
+    if (lastPage > 1) {
+      const restResponses = await Promise.all(
+        Array.from({ length: lastPage - 1 }, (_, index) => fetchPage(index + 2))
       );
-      if (!response.ok) {
-        return createGitHubFailureResponse(response);
+      for (const response of restResponses) {
+        if (!response.ok) {
+          return createGitHubFailureResponse(response);
+        }
+        pages.push((await response.json()) as unknown[]);
       }
-
-      const pageComments = (await response.json()) as unknown[];
+    }
+    for (const pageComments of pages) {
       for (const comment of pageComments) {
         const normalized = normalizeReviewComment(comment);
         if (normalized != null) {
           comments.push(normalized);
         }
-      }
-      if (pageComments.length < PER_PAGE) {
-        break;
       }
     }
   } catch {
@@ -303,7 +327,6 @@ function normalizeReviewComment(comment: unknown): PullReviewComment | null {
     },
     body: record.body,
     createdAt: record.created_at,
-    htmlUrl: typeof record.html_url === 'string' ? record.html_url : '',
     id: record.id,
     inReplyToId:
       typeof record.in_reply_to_id === 'number' ? record.in_reply_to_id : null,
@@ -364,24 +387,17 @@ function createUnreachableResponse(environment: GitHubEnvironment): Response {
 }
 
 function buildGitHubHeaders(token: string | undefined): HeadersInit {
-  const headers: Record<string, string> = {
-    Accept: 'application/vnd.github+json',
+  return {
+    ...createGitHubJSONHeaders(token),
     'Content-Type': 'application/json',
-    'User-Agent': GITHUB_USER_AGENT,
-    'X-GitHub-Api-Version': GITHUB_API_VERSION,
   };
-  if (token != null) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  return headers;
 }
 
-function getFallbackToken(): string | undefined {
-  return (
-    process.env.DIFFSHUB_GITHUB_TOKEN ??
-    process.env.GITHUB_TOKEN ??
-    process.env.GH_TOKEN
-  );
+// Extracts the last page number from GitHub's pagination Link header;
+// a missing rel="last" means the response was the only (or final) page.
+function parseLastPage(linkHeader: string | null): number {
+  const match = linkHeader?.match(/[?&]page=(\d+)[^>]*>;\s*rel="last"/);
+  return match != null ? Number(match[1]) : 1;
 }
 
 async function parseJSONBody(
@@ -407,17 +423,4 @@ function isValidSegment(value: unknown): value is string {
 
 function isValidNumber(value: unknown): value is string {
   return typeof value === 'string' && /^\d+$/.test(value);
-}
-
-function createJSONResponse(
-  body: unknown,
-  options: { status?: number } = {}
-): Response {
-  return Response.json(body, {
-    status: options.status ?? 200,
-    headers: {
-      'Cache-Control': 'no-store',
-      Vary: 'Authorization',
-    },
-  });
 }

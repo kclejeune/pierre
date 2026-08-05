@@ -24,6 +24,34 @@ const GITHUB_DOTCOM_RAW_URL = 'https://raw.githubusercontent.com';
 export const GITHUB_API_VERSION = '2022-11-28';
 export const GITHUB_USER_AGENT = 'pierre-diffshub';
 
+// The standard header set for JSON REST calls against the configured GitHub
+// instance, with a bearer token when one is available.
+export function createGitHubJSONHeaders(
+  token: string | undefined
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': GITHUB_USER_AGENT,
+    'X-GitHub-Api-Version': GITHUB_API_VERSION,
+  };
+  if (token != null && token !== '') {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+// Server-side fallback token for requests that carry no user token (raw file
+// hydration, public-repo comment reads). Never used to author, edit, or
+// delete anything on a visitor's behalf — writes always require the
+// requester's own token.
+export function getFallbackGitHubToken(): string | undefined {
+  return (
+    process.env.DIFFSHUB_GITHUB_TOKEN ??
+    process.env.GITHUB_TOKEN ??
+    process.env.GH_TOKEN
+  );
+}
+
 export interface GitHubEnvironment {
   // REST API root without a trailing slash, e.g. https://github.example.com/api/v3
   apiURL: string;

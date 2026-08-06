@@ -88,7 +88,10 @@ export const GitHubTokenControl = memo(function GitHubTokenControl({
         <>
           {githubUser != null && (
             <div className="mt-2 flex items-center gap-2 text-[13px]">
-              <CommentAuthorAvatar author={githubUser} className="size-5" />
+              <CommentAuthorAvatar
+                author={githubUser}
+                className="size-5 self-center"
+              />
               <span className="min-w-0 truncate font-medium">
                 {githubUser.login}
               </span>

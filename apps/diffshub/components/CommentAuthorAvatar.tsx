@@ -41,7 +41,9 @@ function initialsFor(name: string | null, login: string): string {
 // avatar URL is fetched from the author's API profile and tried next; only
 // when that fails too do the author's initials (resolved from the same
 // profile's display name) render instead of a broken-image glyph.
-// Defaults to 32px (size-8); pass className to override for other sizes.
+// Defaults to 32px (size-8) aligned to the top of the row (comment-card
+// layout); className lands on the outer element in both branches, so callers
+// can override size and alignment (e.g. `size-6 self-center`).
 export function CommentAuthorAvatar({
   author,
   className,
@@ -87,14 +89,19 @@ export function CommentAuthorAvatar({
   const proxied = createGitHubWebAssetProxyURL(src, webURL);
   const imageProps = {
     alt: author.login,
-    className: cn('block size-8 rounded-full object-cover', className),
+    className: 'block size-full rounded-full object-cover',
     onError: () => {
       failedAvatarSrcs.add(src);
       setFailCount((count) => count + 1);
     },
   };
   return (
-    <div className="relative shrink-0 self-start after:absolute after:inset-0 after:z-10 after:block after:rounded-full after:border after:border-[rgb(0_0_0_/_0.1)] after:content-[''] dark:after:border-[rgb(255_255_255_/_0.1)]">
+    <div
+      className={cn(
+        "relative size-8 shrink-0 self-start after:absolute after:inset-0 after:z-10 after:block after:rounded-full after:border after:border-[rgb(0_0_0_/_0.1)] after:content-[''] dark:after:border-[rgb(255_255_255_/_0.1)]",
+        className
+      )}
+    >
       {proxied != null ? (
         <GitHubAssetImage {...imageProps} src={proxied} />
       ) : (

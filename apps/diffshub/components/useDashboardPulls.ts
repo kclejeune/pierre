@@ -14,7 +14,8 @@ export interface DashboardPullsState {
 
 export type DashboardPullsSource =
   | { kind: 'bucket'; bucket: PullBucket }
-  | { kind: 'repo'; repo: string };
+  // A pinned repo's card, scoped to the dashboard's active bucket tab.
+  | { kind: 'repo'; repo: string; bucket: PullBucket };
 
 interface PullsPayload {
   pulls: PullSummary[];
@@ -70,7 +71,7 @@ export function useDashboardPulls(
   const sourceKey =
     source.kind === 'bucket'
       ? `bucket=${encodeURIComponent(source.bucket)}`
-      : `repo=${encodeURIComponent(source.repo)}`;
+      : `bucket=${encodeURIComponent(source.bucket)}&repo=${encodeURIComponent(source.repo)}`;
 
   useEffect(() => {
     let cancelled = false;

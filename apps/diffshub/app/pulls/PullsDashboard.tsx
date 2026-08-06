@@ -1,6 +1,6 @@
 'use client';
 
-import { IconBranch, IconClockArrow, IconPin, IconX } from '@pierre/icons';
+import { IconClockArrow, IconPin, IconX } from '@pierre/icons';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
@@ -88,13 +88,7 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   const [bucket, setBucket] = useState<PullBucket>('created');
   return (
     <div className="space-y-6">
-      <RecentDiffsSection />
-      <PinnedReposSection tokenVersion={tokenVersion} />
       <section className="space-y-3">
-        <h3 className="flex items-center gap-1.5 text-sm font-medium">
-          <IconBranch className="size-4" />
-          Pull requests
-        </h3>
         <ButtonGroup
           size="sm"
           value={bucket}
@@ -108,6 +102,8 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
         </ButtonGroup>
         <BucketSection bucket={bucket} tokenVersion={tokenVersion} />
       </section>
+      <PinnedReposSection bucket={bucket} tokenVersion={tokenVersion} />
+      <RecentDiffsSection />
     </div>
   );
 }
@@ -141,7 +137,13 @@ function BucketSection({
   );
 }
 
-function PinnedReposSection({ tokenVersion }: { tokenVersion: number }) {
+function PinnedReposSection({
+  bucket,
+  tokenVersion,
+}: {
+  bucket: PullBucket;
+  tokenVersion: number;
+}) {
   const { hydrated, pinned, toggle } = usePinnedRepos();
   if (!hydrated) {
     return null;
@@ -152,14 +154,6 @@ function PinnedReposSection({ tokenVersion }: { tokenVersion: number }) {
         <IconPin className="size-4" />
         Pinned repositories
       </h3>
-      {pinned.map((repo) => (
-        <PinnedRepoCard
-          key={repo}
-          repo={repo}
-          tokenVersion={tokenVersion}
-          onUnpin={() => toggle(repo)}
-        />
-      ))}
       {pinned.length < MAX_PINNED_REPOS && (
         <AddPinnedRepoInput
           onPin={(repo) => {
@@ -169,21 +163,32 @@ function PinnedReposSection({ tokenVersion }: { tokenVersion: number }) {
           }}
         />
       )}
+      {pinned.map((repo) => (
+        <PinnedRepoCard
+          key={repo}
+          bucket={bucket}
+          repo={repo}
+          tokenVersion={tokenVersion}
+          onUnpin={() => toggle(repo)}
+        />
+      ))}
     </section>
   );
 }
 
 function PinnedRepoCard({
+  bucket,
   onUnpin,
   repo,
   tokenVersion,
 }: {
+  bucket: PullBucket;
   onUnpin: () => void;
   repo: string;
   tokenVersion: number;
 }) {
   const { error, loading, pulls } = useDashboardPulls(
-    { kind: 'repo', repo },
+    { kind: 'repo', repo, bucket },
     tokenVersion
   );
   return (
@@ -200,7 +205,7 @@ function PinnedRepoCard({
         </Button>
       </div>
       <SectionRows
-        emptyLabel="No open pull requests."
+        emptyLabel={`No open pull requests ${BUCKET_COPY[bucket].empty}.`}
         error={error}
         loading={loading}
         pulls={pulls}

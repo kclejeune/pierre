@@ -8,7 +8,7 @@ import Link from 'next/link';
 
 import { HomeFetchForm } from './HomeFetchForm';
 import { HomeGitHubTokenForm } from './HomeGitHubTokenForm';
-import { CommandPaletteTrigger } from '@/components/CommandPaletteTrigger';
+import { AppNavbar } from '@/components/AppNavbar';
 import { DiffsHubLogo } from '@/components/DiffsHubLogo';
 import { getGitHubPath } from '@/lib/getGitHubPath';
 import { getGitHubEnvironment } from '@/lib/githubEnvironment';
@@ -49,18 +49,7 @@ export function HomePage() {
   const githubEnvironment = getGitHubEnvironment();
   return (
     <div className="relative flex min-h-[100svh] min-w-screen flex-col items-center justify-center md:bg-[var(--diffshub-sidebar-bg)] md:py-12">
-      <nav
-        aria-label="Site"
-        className="absolute inset-x-0 top-0 z-10 flex items-center justify-end gap-2 px-4 py-3"
-      >
-        <CommandPaletteTrigger className="w-52 min-[420px]:w-64 sm:w-80" />
-        <Link
-          href="/pulls"
-          className="bg-background hover:bg-accent inline-flex h-9 items-center rounded-md border px-3.5 text-sm font-medium shadow-xs transition-colors"
-        >
-          Pulls
-        </Link>
-      </nav>
+      <AppNavbar className="absolute inset-x-0 top-0 z-10" />
       <section className="relative flex min-h-[100svh] w-2xl max-w-[100vw] flex-col justify-center space-y-4 px-6 pt-8 text-sm min-[340px]:text-base md:block md:min-h-0">
         <h2 className="flex items-center gap-1.5 text-2xl font-semibold tracking-tight">
           <DiffsHubLogo />

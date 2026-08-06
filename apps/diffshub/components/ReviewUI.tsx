@@ -12,7 +12,9 @@ import {
   useRef,
   useState,
 } from 'react';
+import { toast } from 'sonner';
 
+import type { DiscussionActions } from './DiffsHubCommentsList';
 import { DiffsHubHeader } from './DiffsHubHeader';
 import { DiffsHubSidebar } from './DiffsHubSidebar';
 import { DiffsHubStatusPanel } from './DiffsHubStatusPanel';
@@ -29,7 +31,12 @@ import {
 import { preloadAvatars } from '@/lib/annotation';
 import { createGitHubDiffFileLoader } from '@/lib/githubDiffFileLoader';
 import { parseGitHubDiffSource } from '@/lib/githubDiffSource';
-import type { PullRequestRef } from '@/lib/pullCommentsClient';
+import {
+  deletePullDiscussionComment,
+  editPullDiscussionComment,
+  postPullDiscussionComment,
+  type PullRequestRef,
+} from '@/lib/pullCommentsClient';
 import { removeSavedCommentSidebarEntry } from '@/lib/removeSavedCommentSidebarEntry';
 import type { DarkThemeName, LightThemeName } from '@/lib/themeNames';
 import type {
@@ -262,6 +269,108 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     viewerReadyTick,
     viewerRef,
   });
+  // PR-level conversation writes (issue comments on the pull request). Each
+  // handler posts through the API proxy, surfaces failures as a toast, and
+  // rethrows so the composer keeps the draft; on success the discussion state
+  // updates in place. New comments append — the list is sorted by creation
+  // time, and a fresh comment is always newest.
+  const requireDiscussionContext = useCallback(() => {
+    const token = githubTokenRef.current;
+    if (pullRequest == null || token === '') {
+      throw new Error('Commenting requires signing in or saving a token.');
+    }
+    return { pullRequest, token };
+  }, [pullRequest]);
+  const handleDiscussionPost = useCallback(
+    async (body: string) => {
+      const context = requireDiscussionContext();
+      let comment: PullDiscussionComment;
+      try {
+        comment = await postPullDiscussionComment(
+          context.pullRequest,
+          context.token,
+          body
+        );
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : 'Posting the comment failed.'
+        );
+        throw error;
+      }
+      setDiscussion((prev) => [...prev, comment]);
+    },
+    [requireDiscussionContext]
+  );
+  const handleDiscussionEdit = useCallback(
+    async (commentId: number, body: string) => {
+      const context = requireDiscussionContext();
+      let edited: PullDiscussionComment;
+      try {
+        edited = await editPullDiscussionComment(
+          context.pullRequest,
+          context.token,
+          commentId,
+          body
+        );
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : 'Editing the comment failed.'
+        );
+        throw error;
+      }
+      setDiscussion((prev) =>
+        prev.map((comment) =>
+          comment.kind === 'comment' && comment.id === commentId
+            ? { ...comment, body: edited.body }
+            : comment
+        )
+      );
+    },
+    [requireDiscussionContext]
+  );
+  const handleDiscussionDelete = useCallback(
+    async (commentId: number) => {
+      const context = requireDiscussionContext();
+      try {
+        await deletePullDiscussionComment(
+          context.pullRequest,
+          context.token,
+          commentId
+        );
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : 'Deleting the comment failed.'
+        );
+        throw error;
+      }
+      setDiscussion((prev) =>
+        prev.filter(
+          (comment) => comment.kind !== 'comment' || comment.id !== commentId
+        )
+      );
+    },
+    [requireDiscussionContext]
+  );
+  const discussionActions = useMemo<DiscussionActions | undefined>(
+    () =>
+      pullRequest == null
+        ? undefined
+        : {
+            canWrite: hasGitHubToken,
+            onDelete: handleDiscussionDelete,
+            onEdit: handleDiscussionEdit,
+            onPost: handleDiscussionPost,
+          },
+    [
+      handleDiscussionDelete,
+      handleDiscussionEdit,
+      handleDiscussionPost,
+      hasGitHubToken,
+      pullRequest,
+    ]
+  );
   const handleCommentDeleted = useCallback(
     (comment: DiffsHubDeletedCommentEvent) => {
       setCommentSections((prev) =>
@@ -366,6 +475,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
             commentSections={commentSections}
             diffStats={diffStats}
             discussion={discussion}
+            discussionActions={discussionActions}
             mobileOverlayOpen={fileTreeOverlayOpen}
             onMobileClose={handleCloseFileTreeOverlay}
             onSelectComment={handleSelectComment}

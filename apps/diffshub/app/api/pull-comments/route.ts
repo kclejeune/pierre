@@ -21,8 +21,16 @@ import type {
 //                                        review summaries), normalized
 //   POST   {owner, repo, pull, body, inReplyToId}          → reply to a thread
 //   POST   {owner, repo, pull, body, path, line, side, …}  → new comment
+//   POST   {owner, repo, pull, body, discussion: true}     → new PR-level comment
 //   PATCH  {owner, repo, commentId, body}                  → edit a comment
+//   PATCH  {owner, repo, commentId, body, discussion: true} → edit PR-level
 //   DELETE ?owner&repo&commentId                           → delete a comment
+//   DELETE ?owner&repo&commentId&discussion=true           → delete PR-level
+//
+// "PR-level" writes target the pull request's conversation (GitHub issue
+// comments) rather than diff-anchored review comments. Review summaries are
+// read-only here: GitHub only permits deleting pending reviews, and editing
+// them goes through a different review-scoped endpoint.
 //
 // Reads may fall back to the server-side token (same as diff loading) so
 // public-repo threads render for anonymous visitors. Writes always require
@@ -180,6 +188,22 @@ export async function POST(request: NextRequest) {
   const environment = getGitHubEnvironment();
   const inReplyToId = payload?.inReplyToId;
   try {
+    if (payload?.discussion === true) {
+      return await forwardDiscussionCommentResponse(
+        await fetch(
+          createGitHubAPIURL(
+            environment,
+            `/repos/${owner}/${repo}/issues/${pull}/comments`
+          ),
+          {
+            method: 'POST',
+            headers: buildGitHubHeaders(token),
+            body: JSON.stringify({ body }),
+          }
+        )
+      );
+    }
+
     if (typeof inReplyToId === 'number') {
       return await forwardCommentResponse(
         await fetch(
@@ -293,20 +317,22 @@ export async function PATCH(request: NextRequest) {
   }
 
   const environment = getGitHubEnvironment();
+  const isDiscussion = payload?.discussion === true;
+  const editPathname = isDiscussion
+    ? `/repos/${owner}/${repo}/issues/comments/${commentId}`
+    : `/repos/${owner}/${repo}/pulls/comments/${commentId}`;
   try {
-    return await forwardCommentResponse(
-      await fetch(
-        createGitHubAPIURL(
-          environment,
-          `/repos/${owner}/${repo}/pulls/comments/${commentId}`
-        ),
-        {
-          method: 'PATCH',
-          headers: buildGitHubHeaders(token),
-          body: JSON.stringify({ body }),
-        }
-      )
+    const response = await fetch(
+      createGitHubAPIURL(environment, editPathname),
+      {
+        method: 'PATCH',
+        headers: buildGitHubHeaders(token),
+        body: JSON.stringify({ body }),
+      }
     );
+    return isDiscussion
+      ? await forwardDiscussionCommentResponse(response)
+      : await forwardCommentResponse(response);
   } catch {
     return createUnreachableResponse(environment);
   }
@@ -337,12 +363,13 @@ export async function DELETE(request: NextRequest) {
   }
 
   const environment = getGitHubEnvironment();
+  const deletePathname =
+    params.get('discussion') === 'true'
+      ? `/repos/${owner}/${repo}/issues/comments/${commentId}`
+      : `/repos/${owner}/${repo}/pulls/comments/${commentId}`;
   try {
     const response = await fetch(
-      createGitHubAPIURL(
-        environment,
-        `/repos/${owner}/${repo}/pulls/comments/${commentId}`
-      ),
+      createGitHubAPIURL(environment, deletePathname),
       { method: 'DELETE', headers: buildGitHubHeaders(token) }
     );
     if (!response.ok) {
@@ -467,6 +494,23 @@ async function forwardCommentResponse(response: Response): Promise<Response> {
     return createGitHubFailureResponse(response);
   }
   const comment = normalizeReviewComment(await response.json());
+  if (comment == null) {
+    return createJSONResponse(
+      { error: 'GitHub returned an unexpected comment payload.' },
+      { status: 502 }
+    );
+  }
+  return createJSONResponse({ comment });
+}
+
+// Same relay as forwardCommentResponse, for PR-level (issue) comment writes.
+async function forwardDiscussionCommentResponse(
+  response: Response
+): Promise<Response> {
+  if (!response.ok) {
+    return createGitHubFailureResponse(response);
+  }
+  const comment = normalizeDiscussionComment(await response.json());
   if (comment == null) {
     return createJSONResponse(
       { error: 'GitHub returned an unexpected comment payload.' },

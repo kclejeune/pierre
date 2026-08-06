@@ -1,10 +1,21 @@
 'use client';
 
 import type { AnnotationSide } from '@pierre/diffs';
-import { IconArrowUpRight, IconConvoFill, IconPlus } from '@pierre/icons';
+import {
+  IconArrowUpRight,
+  IconConvoFill,
+  IconPencil,
+  IconPlus,
+  IconTrash,
+} from '@pierre/icons';
 import { memo, type MouseEvent, useState } from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
+import { CommentComposer } from './CommentComposer';
+import { InlineConfirm } from './InlineConfirm';
+import { MarkdownContent } from './MarkdownContent';
+import { useGitHubUser } from './useGitHubUser';
+import { Button } from '@/components/Button';
 import { cn } from '@/lib/cn';
 import { createCommentSidebarPreview } from '@/lib/commentSidebarPreview';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
@@ -15,11 +26,23 @@ import type {
   PullDiscussionComment,
 } from '@/lib/types';
 
+// Write access to the PR-level conversation, provided only on pull-request
+// views. `canWrite` mirrors the thread cards' meaning: a token is saved, so
+// writes can be attempted at all. Edit/delete only apply to issue comments
+// (kind 'comment'); review summaries are read-only.
+export interface DiscussionActions {
+  canWrite: boolean;
+  onDelete(commentId: number): Promise<void>;
+  onEdit(commentId: number, body: string): Promise<void>;
+  onPost(body: string): Promise<void>;
+}
+
 interface DiffsHubCommentsListProps {
   commentSections: readonly DiffsHubSavedCommentItem[];
   // PR-level conversation (issue comments, review summaries) shown in its own
   // section above the per-file threads.
   discussion?: readonly PullDiscussionComment[];
+  discussionActions?: DiscussionActions;
   onSelectComment?(comment: DiffsHubSavedCommentEntry): void;
   onSelectItem?(itemId: string): void;
 }
@@ -113,25 +136,63 @@ function handleRowClick(event: MouseEvent<HTMLElement>, run: () => void): void {
 }
 
 // A PR-level conversation entry. There is no diff anchor to scroll to, so the
-// row's default click expands the clamped body in place — reading the comment
-// stays in-app. The upstream GitHub permalink is an explicit arrow affordance,
-// matching the embedded thread cards, rather than the whole-row default.
-function DiscussionRow({ comment }: { comment: PullDiscussionComment }) {
+// row's default click expands the body in place — collapsed rows show a
+// clamped plain-text preview, expanded rows render the full markdown — so
+// reading the comment stays in-app. The upstream GitHub permalink is an
+// explicit arrow affordance, matching the embedded thread cards, rather than
+// the whole-row default. Signed-in authors get edit/delete on their own
+// conversation comments (never on review summaries — see DiscussionActions).
+function DiscussionRow({
+  actions,
+  comment,
+}: {
+  actions?: DiscussionActions;
+  comment: PullDiscussionComment;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const githubUser = useGitHubUser();
+  const canModify =
+    actions != null &&
+    actions.canWrite &&
+    comment.kind === 'comment' &&
+    githubUser?.login === comment.author.login;
   const preview = createCommentSidebarPreview(comment.body);
+
+  const toggleExpanded = () => {
+    if (!isEditing && !isConfirmingDelete) {
+      setExpanded((prev) => !prev);
+    }
+  };
+
   return (
     <div
       role="button"
       tabIndex={0}
       aria-expanded={expanded}
-      className="focus-visible:ring-ring flex w-full cursor-pointer items-start gap-2 border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] p-3 text-left text-sm outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]"
-      onClick={(event) =>
-        handleRowClick(event, () => setExpanded((prev) => !prev))
-      }
+      className="group/discussion focus-visible:ring-ring flex w-full cursor-pointer items-start gap-2 border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] p-3 text-left text-sm outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]"
+      onClick={(event) => {
+        // Interactive descendants — markdown links, the edit composer, the
+        // action buttons — handle their own clicks; only clicks on the row
+        // itself (or inert text) toggle expansion.
+        const target = event.target as HTMLElement;
+        if (
+          target !== event.currentTarget &&
+          target.closest('a, button, form') != null
+        ) {
+          return;
+        }
+        handleRowClick(event, toggleExpanded);
+      }}
       onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
+        if (
+          (event.key === 'Enter' || event.key === ' ') &&
+          event.target === event.currentTarget
+        ) {
           event.preventDefault();
-          setExpanded((prev) => !prev);
+          toggleExpanded();
         }
       }}
     >
@@ -145,32 +206,130 @@ function DiscussionRow({ comment }: { comment: PullDiscussionComment }) {
             {getDiscussionVerb(comment)}
           </span>
           <span>· {formatRelativeTime(comment.createdAt)}</span>
-          {comment.htmlUrl != null && (
-            <a
-              className="hover:text-foreground ml-auto shrink-0"
-              aria-label="Open comment on GitHub"
-              title="Open comment on GitHub"
-              href={comment.htmlUrl}
-              rel="noreferrer noopener"
-              target="_blank"
-              // Keep the anchor's navigation from also toggling the row.
-              onClick={(event) => event.stopPropagation()}
-            >
-              <IconArrowUpRight size={14} />
-            </a>
-          )}
-        </div>
-        {preview !== '' && (
-          <p
-            className={cn(
-              'text-foreground w-full break-words whitespace-pre-wrap',
-              !expanded && 'line-clamp-6'
+          <span className="ml-auto flex shrink-0 items-center gap-1">
+            {canModify && !isEditing && (
+              <span className="flex gap-1 opacity-0 transition-opacity duration-100 group-focus-within/discussion:opacity-100 group-hover/discussion:opacity-100">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Edit comment"
+                  title="Edit comment"
+                  disabled={isDeleting}
+                  onClick={() => {
+                    setExpanded(true);
+                    setIsConfirmingDelete(false);
+                    setIsEditing(true);
+                  }}
+                >
+                  <IconPencil size={12} />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Delete comment"
+                  title="Delete comment"
+                  disabled={isDeleting}
+                  onClick={() => setIsConfirmingDelete(true)}
+                >
+                  <IconTrash size={12} />
+                </Button>
+              </span>
             )}
-          >
-            {preview}
-          </p>
+            {comment.htmlUrl != null && (
+              <a
+                className="hover:text-foreground"
+                aria-label="Open comment on GitHub"
+                title="Open comment on GitHub"
+                href={comment.htmlUrl}
+                rel="noreferrer noopener"
+                target="_blank"
+              >
+                <IconArrowUpRight size={14} />
+              </a>
+            )}
+          </span>
+        </div>
+        {isEditing && actions != null ? (
+          <div className="w-full pt-1">
+            <CommentComposer
+              autoFocus
+              initialBody={comment.body}
+              submitLabel="Save"
+              onCancel={() => setIsEditing(false)}
+              onSubmit={async (body) => {
+                await actions.onEdit(comment.id, body);
+                setIsEditing(false);
+              }}
+            />
+          </div>
+        ) : expanded ? (
+          <MarkdownContent className="w-full" markdown={comment.body} />
+        ) : (
+          preview !== '' && (
+            <p className="text-foreground line-clamp-6 w-full break-words whitespace-pre-wrap">
+              {preview}
+            </p>
+          )
+        )}
+        {isConfirmingDelete && actions != null && (
+          <div className="w-full pt-1">
+            <InlineConfirm
+              confirmLabel="Delete"
+              disabled={isDeleting}
+              message="Delete this comment on GitHub?"
+              onCancel={() => setIsConfirmingDelete(false)}
+              onConfirm={() => {
+                setIsDeleting(true);
+                actions.onDelete(comment.id).catch(() => {
+                  // Failure already surfaced; re-enable the controls.
+                  setIsDeleting(false);
+                });
+              }}
+            />
+          </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// The Conversation section's trailing row: opens a composer that posts a new
+// PR-level comment. Anonymous sessions get the same sign-in nudge as thread
+// replies instead of a composer they could not submit.
+function DiscussionComposerRow({ actions }: { actions: DiscussionActions }) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  if (!actions.canWrite) {
+    return (
+      <div className="text-muted-foreground border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] p-3 text-[13px] first:rounded-t-lg last:rounded-b-lg last:border-b-0 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]">
+        Sign in with GitHub or save a token to comment.
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] p-3 first:rounded-t-lg last:rounded-b-lg last:border-b-0 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]">
+      {isOpen ? (
+        <CommentComposer
+          autoFocus
+          submitLabel="Comment"
+          onCancel={() => setIsOpen(false)}
+          onSubmit={async (body) => {
+            await actions.onPost(body);
+            setIsOpen(false);
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          className="text-muted-foreground hover:border-foreground/30 hover:text-foreground w-full cursor-text rounded-md border border-[var(--diffshub-card-border,var(--color-border))] px-3 py-1.5 text-left text-[13px] transition-colors"
+          onClick={() => setIsOpen(true)}
+        >
+          Add a comment…
+        </button>
+      )}
     </div>
   );
 }
@@ -178,10 +337,15 @@ function DiscussionRow({ comment }: { comment: PullDiscussionComment }) {
 export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
   commentSections,
   discussion = [],
+  discussionActions,
   onSelectComment,
   onSelectItem,
 }: DiffsHubCommentsListProps) {
-  if (commentSections.length === 0 && discussion.length === 0) {
+  // On pull-request views the Conversation section always renders (its
+  // composer is how PR-level comments get written), so the empty state only
+  // applies when there is nothing to show AND nothing to write.
+  const showConversation = discussion.length > 0 || discussionActions != null;
+  if (commentSections.length === 0 && !showConversation) {
     return (
       <div className="text-muted-foreground flex h-full min-h-0 flex-col items-center justify-center gap-2 px-7 text-center text-sm">
         <IconConvoFill size={24} className="mb-2" />
@@ -206,7 +370,7 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
         'h-full min-h-0 overflow-auto overscroll-contain pl-3 pb-3 pr-[max(0px,calc(12px-var(--cv-mini-gutter-vertical)))]'
       )}
     >
-      {discussion.length > 0 && (
+      {showConversation && (
         <section>
           <div className="text-muted-foreground p-3 pb-2 text-sm font-medium">
             Conversation
@@ -215,9 +379,13 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
             {discussion.map((comment) => (
               <DiscussionRow
                 key={`${comment.kind}-${comment.id}`}
+                actions={discussionActions}
                 comment={comment}
               />
             ))}
+            {discussionActions != null && (
+              <DiscussionComposerRow actions={discussionActions} />
+            )}
           </div>
         </section>
       )}

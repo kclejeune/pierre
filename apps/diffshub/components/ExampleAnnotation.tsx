@@ -90,8 +90,16 @@ export const ExampleAnnotation = memo(function ExampleAnnotation({
         </Button>
       </span>
       <div className="flex flex-col">
-        <strong className="mt-1 block text-[14px]">
+        <strong className="mt-1 flex items-center gap-2 text-[14px]">
           {annotation.metadata.author.login}
+          {annotation.metadata.pending === true && (
+            <span
+              className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-amber-600 uppercase dark:text-amber-400"
+              title="Part of your unsubmitted review"
+            >
+              Pending
+            </span>
+          )}
         </strong>
         <p className="m-0 text-[14px] whitespace-pre-wrap">
           {annotation.metadata.message}

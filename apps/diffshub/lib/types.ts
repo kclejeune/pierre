@@ -23,12 +23,25 @@ export interface SavedCommentMetadata {
   author: CommentAuthor;
   message: string;
   range: SelectedLineRange;
+  // Part of an in-progress batched review: held locally until the review is
+  // submitted to GitHub, and rendered with a "Pending" badge.
+  pending?: boolean;
 }
 
 export interface DraftCommentMetadata {
   kind: 'draft';
   key: string;
   message: string;
+  range: SelectedLineRange;
+}
+
+// One comment in the in-progress batched review: enough to rebuild the
+// GitHub anchor at submit time and to locate the pending annotation card.
+export interface PendingReviewComment {
+  itemId: string;
+  key: string;
+  message: string;
+  path: string;
   range: SelectedLineRange;
 }
 

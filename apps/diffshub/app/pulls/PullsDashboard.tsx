@@ -1,6 +1,6 @@
 'use client';
 
-import { IconClockArrow, IconPin, IconX } from '@pierre/icons';
+import { IconBranch, IconClockArrow, IconPin, IconX } from '@pierre/icons';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
@@ -88,7 +88,13 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   const [bucket, setBucket] = useState<PullBucket>('created');
   return (
     <div className="space-y-6">
+      <RecentDiffsSection />
+      <PinnedReposSection tokenVersion={tokenVersion} />
       <section className="space-y-3">
+        <h3 className="flex items-center gap-1.5 text-sm font-medium">
+          <IconBranch className="size-4" />
+          Pull requests
+        </h3>
         <ButtonGroup
           size="sm"
           value={bucket}
@@ -102,8 +108,6 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
         </ButtonGroup>
         <BucketSection bucket={bucket} tokenVersion={tokenVersion} />
       </section>
-      <PinnedReposSection tokenVersion={tokenVersion} />
-      <RecentDiffsSection />
     </div>
   );
 }
@@ -309,23 +313,27 @@ function RecentDiffsSection() {
         Recently viewed
       </h3>
       <div className={SECTION_CARD_CLASS}>
-        {recents.slice(0, 8).map((recent) => (
-          <Link
-            key={recent.path}
-            href={recent.path}
-            className="hover:bg-accent/60 flex items-center gap-3 border-b p-3 transition-colors last:border-b-0"
-          >
-            <span className="min-w-0 flex-1 truncate text-sm">
-              {recent.title ?? recent.path}
-            </span>
-            <span className="text-muted-foreground shrink-0 truncate text-xs">
-              {recent.title != null ? recent.path : ''}
-            </span>
-            <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
-              {formatRelativeTime(new Date(recent.viewedAt).toISOString())}
-            </span>
-          </Link>
-        ))}
+        {/* Every stored entry renders; the height cap (~7 rows) keeps the
+            section compact while the rest stays reachable by scrolling. */}
+        <div className="max-h-80 overflow-y-auto">
+          {recents.map((recent) => (
+            <Link
+              key={recent.path}
+              href={recent.path}
+              className="hover:bg-accent/60 flex items-center gap-3 border-b p-3 transition-colors last:border-b-0"
+            >
+              <span className="min-w-0 flex-1 truncate text-sm">
+                {recent.title ?? recent.path}
+              </span>
+              <span className="text-muted-foreground shrink-0 truncate text-xs">
+                {recent.title != null ? recent.path : ''}
+              </span>
+              <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                {formatRelativeTime(new Date(recent.viewedAt).toISOString())}
+              </span>
+            </Link>
+          ))}
+        </div>
       </div>
     </section>
   );

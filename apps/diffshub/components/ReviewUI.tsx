@@ -178,6 +178,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     loadState,
     onLineLinkChange,
     onViewerReady,
+    recordViewTarget,
     retryLoad,
     setCommentSections,
     treeSource,
@@ -206,25 +207,29 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     mediaQuery.addEventListener('change', handleChange);
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
-  const handleSelectTreeItem = useCallback((itemId: string) => {
-    setFileTreeOverlayOpen(false);
-    const viewer = viewerRef.current;
-    if (viewer == null) {
-      return;
-    }
-    const item = viewer.getItem(itemId);
-    if (item != null && item.collapsed === true) {
-      item.collapsed = false;
-      item.version = typeof item.version === 'number' ? item.version + 1 : 1;
-      viewer.updateItem(item);
-    }
-    viewer.scrollTo({
-      type: 'item',
-      id: itemId,
-      align: 'start',
-      behavior: 'smooth',
-    });
-  }, []);
+  const handleSelectTreeItem = useCallback(
+    (itemId: string) => {
+      setFileTreeOverlayOpen(false);
+      const viewer = viewerRef.current;
+      if (viewer == null) {
+        return;
+      }
+      const item = viewer.getItem(itemId);
+      if (item != null && item.collapsed === true) {
+        item.collapsed = false;
+        item.version = typeof item.version === 'number' ? item.version + 1 : 1;
+        viewer.updateItem(item);
+      }
+      viewer.scrollTo({
+        type: 'item',
+        id: itemId,
+        align: 'start',
+        behavior: 'smooth',
+      });
+      recordViewTarget(itemId);
+    },
+    [recordViewTarget]
+  );
   const handleToggleCollapseMode = useCallback(() => {
     const next = collapseMode === 'expanded' ? 'collapsed' : 'expanded';
     setCollapseMode(next);
@@ -282,6 +287,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
         id: comment.itemId,
         range: comment.range,
       });
+      recordViewTarget(comment.itemId, comment.range);
       // When the item's rendered-document view is open, the diff lines the
       // comment anchors to are hidden, so a line-target scroll would land in
       // collapsed space. Scroll to the item instead and then center the
@@ -310,7 +316,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
         behavior: 'smooth-auto',
       });
     },
-    []
+    [recordViewTarget]
   );
   // Withhold the viewer until the persisted themes have been read from
   // localStorage. Otherwise on client-side navigation back into a diff the

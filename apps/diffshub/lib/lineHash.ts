@@ -11,7 +11,9 @@ interface LineHashPoint {
 
 export interface DiffsHubLineHashTarget {
   itemId: string;
-  range: SelectedLineRange;
+  // Null when the hash names a file without a line anchor (a file-tree
+  // selection): restoring scrolls the file into view but selects nothing.
+  range: SelectedLineRange | null;
 }
 
 const LINE_POINT_PATTERN = /^([AD])(\d+)$/;
@@ -26,8 +28,16 @@ export function parseDiffsHubLineHash(
 
   const params = new URLSearchParams(text);
   const itemId = params.get('target');
-  const startPoint = parseLineHashPoint(params.get('start'));
-  if (itemId == null || itemId.length === 0 || startPoint == null) {
+  if (itemId == null || itemId.length === 0) {
+    return null;
+  }
+
+  const startParam = params.get('start');
+  if (startParam == null) {
+    return { itemId, range: null };
+  }
+  const startPoint = parseLineHashPoint(startParam);
+  if (startPoint == null) {
     return null;
   }
 
@@ -41,6 +51,13 @@ export function parseDiffsHubLineHash(
     itemId,
     range: createSelectedLineRange(startPoint, endPoint),
   };
+}
+
+export function formatDiffsHubItemHash(itemId: string): string | null {
+  if (itemId.length === 0) {
+    return null;
+  }
+  return `#target=${encodeHashValue(itemId)}`;
 }
 
 export function formatDiffsHubLineHash(

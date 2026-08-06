@@ -38,7 +38,9 @@ function fetchSuggestPayload(params: Record<string, string>): Promise<unknown> {
   return pending;
 }
 
-async function loadSuggestions(
+// Exported for the command palette, which shares the URL bar's progressive
+// repo → pull-request suggestion flow (and its request cache).
+export async function loadSuggestions(
   query: SuggestQuery
 ): Promise<DiffUrlSuggestion[]> {
   if (query.kind === 'repos') {

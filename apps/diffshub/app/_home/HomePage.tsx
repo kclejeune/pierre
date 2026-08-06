@@ -6,6 +6,7 @@ import {
 } from '@pierre/icons';
 import Link from 'next/link';
 
+import { HomeDashboardLink } from './HomeDashboardLink';
 import { HomeFetchForm } from './HomeFetchForm';
 import { HomeGitHubTokenForm } from './HomeGitHubTokenForm';
 import { DiffsHubLogo } from '@/components/DiffsHubLogo';
@@ -88,6 +89,7 @@ export function HomePage() {
           <HomeFetchForm />
           <HomeGitHubTokenForm />
         </div>
+        <HomeDashboardLink />
         {githubEnvironment.isGitHubDotCom && (
           <div className="space-y-2">
             <h3 className="text-muted-foreground text-sm font-normal">

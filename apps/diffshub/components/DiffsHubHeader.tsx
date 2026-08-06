@@ -14,6 +14,7 @@ import {
   IconEyeSlash,
   IconFileTreeFill,
   IconGearFill,
+  IconPin,
   IconShare,
   IconSymbolDiffstat,
 } from '@pierre/icons';
@@ -35,6 +36,7 @@ import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
 import { DiffsHubLogo } from './DiffsHubLogo';
 import { DiffUrlForm } from './DiffUrlForm';
 import { useChromeThemeProps } from './useChromeThemeProps';
+import { usePinnedRepos } from './usePinnedRepos';
 import { Button } from '@/components/Button';
 import { ButtonGroup, ButtonGroupItem } from '@/components/ButtonGroup';
 import {
@@ -47,6 +49,7 @@ import { GitHubTokenControl } from '@/components/GitHubTokenControl';
 import { Switch } from '@/components/Switch';
 import { docsThemeCatalog } from '@/components/themeCatalog';
 import { cn } from '@/lib/cn';
+import { isRepoPinned } from '@/lib/pinnedRepos';
 import { diffshubChromeMapping } from '@/lib/theme/diffshubChromeMapping';
 import { getDropdownThemeStyle } from '@/lib/theme/dropdownChromeStyle';
 
@@ -72,6 +75,9 @@ interface HeaderProps {
   lineNumbers: boolean;
   markdownView: 'rendered' | 'raw';
   overflow: 'wrap' | 'scroll';
+  // "owner/name" of the GitHub repo being viewed, when there is one; enables
+  // the pin-to-dashboard toggle. Absent for arbitrary-domain patch URLs.
+  pinnableRepo?: string;
   // PR-only review submission control (pending-count badge + verdict panel),
   // provided by the parent so the header stays source-agnostic.
   reviewControl?: ReactNode;
@@ -108,6 +114,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
   lineNumbers,
   markdownView,
   overflow,
+  pinnableRepo,
   reviewControl,
   onClearGitHubToken,
   onCollapsePatternsChange,
@@ -142,6 +149,9 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
     () => getDropdownThemeStyle(themeChromeStyle),
     [themeChromeStyle]
   );
+  const pinnedRepos = usePinnedRepos();
+  const isPinned =
+    pinnableRepo != null && isRepoPinned(pinnedRepos.pinned, pinnableRepo);
   return (
     <div
       className={cn(
@@ -178,6 +188,27 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
           <IconFileTreeFill className="size-4 md:size-3" />
         </Button>
         <div className="flex items-center gap-2">
+          {pinnableRepo != null && pinnedRepos.hydrated && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-md"
+              aria-pressed={isPinned}
+              title={
+                isPinned
+                  ? `Unpin ${pinnableRepo} from your dashboard`
+                  : `Pin ${pinnableRepo} to your dashboard`
+              }
+              className={cn(
+                CHROME_ICON_BUTTON_CLASS,
+                'hidden md:flex',
+                isPinned && 'text-foreground bg-muted'
+              )}
+              onClick={() => pinnedRepos.toggle(pinnableRepo)}
+            >
+              <IconPin className="size-4 md:size-3" />
+            </Button>
+          )}
           {showExternalLink && (
             <>
               <Button

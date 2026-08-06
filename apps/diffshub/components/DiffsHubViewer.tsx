@@ -6,6 +6,7 @@ import {
   type CodeViewOptions,
   type DiffIndicators,
   type DiffLineAnnotation,
+  type FileContents,
   type FileDiffContentsLoader,
   isDiffAnnotation,
   type LineAnnotation,
@@ -13,7 +14,7 @@ import {
   type ThemeTypes,
 } from '@pierre/diffs';
 import { type CodeViewHandle, useStableCallback } from '@pierre/diffs/react';
-import { IconBook, IconChevronSm } from '@pierre/icons';
+import { IconBook, IconChevronSm, IconPencil } from '@pierre/icons';
 import {
   memo,
   type RefObject,
@@ -22,6 +23,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { toast } from 'sonner';
 
 import { DraftAnnotation } from './DraftAnnotation';
 import { ExampleAnnotation } from './ExampleAnnotation';
@@ -110,6 +112,24 @@ interface ActiveDraftComment {
   key: string;
 }
 
+// The slice of the pull edit session the viewer needs: gating the per-file
+// pencil toggle, blocking new comments on files with shifted lines, and the
+// editor change/complete callbacks CodeView delivers.
+export interface ViewerEditSession {
+  canEdit(item: CodeViewItem<CommentMetadata>): boolean;
+  isEditing(itemId: string): boolean;
+  isFileLocked(itemId: string): boolean;
+  onItemEditChange(
+    item: CodeViewItem<CommentMetadata>,
+    file: FileContents
+  ): void;
+  onItemEditComplete(
+    item: CodeViewItem<CommentMetadata>,
+    file: FileContents
+  ): void;
+  toggleEdit(itemId: string): void;
+}
+
 interface DiffsHubViewerProps {
   className?: string;
   diffStyle: 'split' | 'unified';
@@ -120,6 +140,9 @@ interface DiffsHubViewerProps {
   // instance; lets the rendered-document view proxy relative image
   // references. Unset for arbitrary-domain patch URLs.
   sourcePath?: string;
+  // Inline-edit integration. Always present — the session itself gates via
+  // canEdit/canCommit when the source cannot take commits.
+  editSession: ViewerEditSession;
   getGitHubToken?(): string | undefined;
   // Reviewed-file marks: read for the header checkbox state, write on toggle.
   isFileReviewed(item: CodeViewItem<CommentMetadata>): boolean;
@@ -153,6 +176,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
   diffStyle,
   pullRequest,
   sourcePath,
+  editSession,
   getGitHubToken,
   isFileReviewed,
   onSetFileReviewed,
@@ -947,6 +971,8 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
 
       const docShown = item.annotations?.some(isDocAnnotation) === true;
       const reviewed = isFileReviewed(item);
+      const editable = editSession.canEdit(item);
+      const editing = editable && editSession.isEditing(item.id);
       return (
         // The data attribute lets the header-click listener above map a
         // shadow-DOM header back to its item id.
@@ -954,6 +980,28 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
           className="flex items-center gap-1.5"
           data-diffshub-item-id={item.id}
         >
+          {editable && (
+            <button
+              type="button"
+              aria-pressed={editing}
+              title={
+                editing
+                  ? 'Stop editing this file'
+                  : 'Edit this file and commit to the pull request branch'
+              }
+              className={cn(
+                'text-muted-foreground hover:bg-muted hover:text-foreground inline-flex size-6 cursor-pointer items-center justify-center rounded-md transition',
+                editing && 'text-foreground bg-muted'
+              )}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                editSession.toggleEdit(item.id);
+              }}
+            >
+              <IconPencil aria-hidden="true" className="size-4" />
+            </button>
+          )}
           {isMarkdownFileName(item.fileDiff.name) && (
             <button
               type="button"
@@ -994,6 +1042,12 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
     }
   );
 
+  // Stable so the options memo below doesn't rebuild every time edit-session
+  // state changes; it always reads the latest prop.
+  const isEditLocked = useStableCallback((itemId: string) =>
+    editSession.isFileLocked(itemId)
+  );
+
   // NOTE(amadeus): For some insane reason, the react compiler did not know how
   // to properly memoize this, so we pulled it into a `useMemo` for safety...
   const options: CodeViewOptions<CommentMetadata> = useMemo(
@@ -1020,6 +1074,12 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
           if (context.item.type !== 'diff') {
             return;
           }
+          if (isEditLocked(context.item.id)) {
+            toast(
+              'Commit or discard your edits before commenting on this file.'
+            );
+            return;
+          }
           handleCreateDraftComment(range, context.item.id);
         },
         onLineSelectionEnd(range, context) {
@@ -1031,6 +1091,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       diffStyle,
       handleCreateDraftComment,
       handleLineSelectionEnd,
+      isEditLocked,
       lineNumbers,
       loadDiffFiles,
       overflow,
@@ -1050,6 +1111,8 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       options={options}
       style={annotationThemeStyle}
       selectedLines={selectedLines}
+      onItemEditChange={editSession.onItemEditChange}
+      onItemEditComplete={editSession.onItemEditComplete}
       onSelectedLinesChange={handleSetSelection}
       renderAnnotation={renderCommentAnnotation}
       renderHeaderPrefix={renderHeaderPrefix}

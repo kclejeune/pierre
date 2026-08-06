@@ -116,6 +116,7 @@ catalog:
   'mitata': '1.0.34'
   'next': '16.2.9'
   'next-mdx-remote': '6.0.0'
+  'node-diff3': '3.2.1'
   'ovsx': '1.0.0'
   'oxfmt': '0.55.0'
   'oxlint': '1.70.0'

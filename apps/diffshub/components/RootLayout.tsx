@@ -3,6 +3,8 @@ import localFont from 'next/font/local';
 import { connection } from 'next/server';
 import type { ReactNode } from 'react';
 
+import { AppEditProvider } from '@/components/AppEditProvider';
+import { CommandPalette } from '@/components/CommandPalette';
 import { GitHubEnvironmentProvider } from '@/components/GitHubEnvironmentProvider';
 import { PreloadHighlighter } from '@/components/PreloadHighlighter';
 import { RequireLoginGate } from '@/components/RequireLoginGate';
@@ -94,20 +96,23 @@ export async function RootLayout({
         <ScrollbarGutterVariables />
         <GitHubEnvironmentProvider environment={getGitHubClientEnvironment()}>
           <WorkerPoolContext>
-            <ThemeProvider attribute="class">
-              <RequireLoginGate>{children}</RequireLoginGate>
-              <Toaster />
-              <div
-                id="dark-mode-portal-container"
-                className="dark"
-                data-theme="dark"
-              ></div>
-              <div
-                id="light-mode-portal-container"
-                className="light"
-                data-theme="light"
-              ></div>
-            </ThemeProvider>
+            <AppEditProvider>
+              <ThemeProvider attribute="class">
+                <RequireLoginGate>{children}</RequireLoginGate>
+                <CommandPalette />
+                <Toaster />
+                <div
+                  id="dark-mode-portal-container"
+                  className="dark"
+                  data-theme="dark"
+                ></div>
+                <div
+                  id="light-mode-portal-container"
+                  className="light"
+                  data-theme="light"
+                ></div>
+              </ThemeProvider>
+            </AppEditProvider>
           </WorkerPoolContext>
         </GitHubEnvironmentProvider>
         <PreloadHighlighter />

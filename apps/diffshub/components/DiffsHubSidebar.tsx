@@ -24,7 +24,10 @@ import {
 } from 'react';
 
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
-import { DiffsHubCommentsList } from './DiffsHubCommentsList';
+import {
+  DiffsHubCommentsList,
+  type DiscussionActions,
+} from './DiffsHubCommentsList';
 import { DiffsHubDiffStats } from './DiffsHubDiffStats';
 import { DiffsHubFileTree } from './DiffsHubFileTree';
 import { useChromeThemeProps } from './useChromeThemeProps';
@@ -65,6 +68,7 @@ interface DiffsHubSidebarProps {
   commentSections: readonly DiffsHubSavedCommentItem[];
   diffStats: DiffsHubDiffStatsData | null;
   discussion?: readonly PullDiscussionComment[];
+  discussionActions?: DiscussionActions;
   mobileOverlayOpen?: boolean;
   onMobileClose(): void;
   onSelectComment(comment: DiffsHubSavedCommentEntry): void;
@@ -81,6 +85,7 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
   commentSections,
   diffStats,
   discussion = [],
+  discussionActions,
   mobileOverlayOpen = false,
   onMobileClose,
   onSelectComment,
@@ -308,6 +313,7 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
             <DiffsHubCommentsList
               commentSections={commentSections}
               discussion={discussion}
+              discussionActions={discussionActions}
               onSelectComment={onSelectComment}
               onSelectItem={onSelectItem}
             />

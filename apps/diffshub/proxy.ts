@@ -7,7 +7,7 @@ import { TOKEN_PRESENCE_COOKIE } from '@/lib/tokenPresenceCookie';
 // token lives in client-only localStorage, so the client mirrors a
 // presence-only cookie (see lib/tokenPresenceCookie.ts) that lets the edge
 // branch here without a signed-in flash.
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   if (request.cookies.get(TOKEN_PRESENCE_COOKIE)?.value === '1') {
     return NextResponse.redirect(new URL('/pulls', request.url));
   }

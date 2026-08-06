@@ -12,10 +12,11 @@ import { cn } from '@/lib/cn';
 // when the dialog closes, so a focus-triggered open would immediately reopen.
 export function CommandPaletteTrigger({ className }: { className?: string }) {
   // The shortcut hint depends on the client platform, so the server render
-  // (and first client render) keep it invisible; the effect fills it in.
-  const [shortcut, setShortcut] = useState<string | null>(null);
+  // (and first client render) keep it invisible; the effect fills it in. The
+  // modifier renders separately from the K so the ⌘ glyph can be sized up.
+  const [modifier, setModifier] = useState<string | null>(null);
   useEffect(() => {
-    setShortcut(/mac/i.test(navigator.platform) ? '⌘K' : 'Ctrl K');
+    setModifier(/mac/i.test(navigator.platform) ? '⌘' : 'Ctrl');
   }, []);
 
   return (
@@ -33,11 +34,14 @@ export function CommandPaletteTrigger({ className }: { className?: string }) {
       <kbd
         aria-hidden="true"
         className={cn(
-          'bg-muted pointer-events-none inline-flex h-6 shrink-0 items-center rounded border px-2 font-mono text-xs font-medium',
-          shortcut == null && 'opacity-0'
+          'bg-muted pointer-events-none inline-flex h-6 shrink-0 items-center gap-1 rounded border px-2 font-mono text-xs font-medium',
+          modifier == null && 'opacity-0'
         )}
       >
-        {shortcut ?? '⌘K'}
+        <span className={cn((modifier ?? '⌘') === '⌘' && 'text-sm')}>
+          {modifier ?? '⌘'}
+        </span>
+        K
       </kbd>
     </button>
   );

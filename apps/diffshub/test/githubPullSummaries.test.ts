@@ -31,6 +31,12 @@ describe('buildBucketSearchQuery', () => {
     );
   });
 
+  test('appends a repo qualifier when scoped to a pinned repo', () => {
+    expect(buildBucketSearchQuery('created', 'oven-sh/bun')).toBe(
+      'is:open is:pr archived:false author:@me repo:oven-sh/bun'
+    );
+  });
+
   test('isPullBucket rejects unknown values', () => {
     expect(isPullBucket('created')).toBe(true);
     expect(isPullBucket('closed')).toBe(false);

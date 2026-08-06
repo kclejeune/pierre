@@ -8,7 +8,7 @@ const RECENTS = [
 ];
 
 describe('buildPaletteItems', () => {
-  test('empty query lists recents, pins, and actions in order', () => {
+  test('empty query leads with actions so /pulls is the default', () => {
     const sections = buildPaletteItems({
       query: '',
       recents: RECENTS,
@@ -16,22 +16,22 @@ describe('buildPaletteItems', () => {
       suggestions: [],
     });
     expect(sections.map((section) => section.heading)).toEqual([
+      'Actions',
       'Recent diffs',
       'Pinned repositories',
-      'Actions',
     ]);
-    expect(sections[0]?.items[0]).toMatchObject({
+    expect(sections[0]?.items[0]?.action).toEqual({
+      type: 'navigate',
+      path: '/pulls',
+    });
+    expect(sections[1]?.items[0]).toMatchObject({
       label: 'Fix leak',
       detail: '/oven-sh/bun/pull/1',
       action: { type: 'navigate', path: '/oven-sh/bun/pull/1' },
     });
-    expect(sections[1]?.items[0]?.action).toEqual({
+    expect(sections[2]?.items[0]?.action).toEqual({
       type: 'fill',
       value: 'ziglang/zig#',
-    });
-    expect(sections[2]?.items[0]?.action).toEqual({
-      type: 'navigate',
-      path: '/pulls',
     });
   });
 

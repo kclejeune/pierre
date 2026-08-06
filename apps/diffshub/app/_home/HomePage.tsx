@@ -53,10 +53,10 @@ export function HomePage() {
         aria-label="Site"
         className="absolute inset-x-0 top-0 z-10 flex items-center justify-end gap-2 px-4 py-3"
       >
-        <CommandPaletteTrigger />
+        <CommandPaletteTrigger className="w-52 min-[420px]:w-64 sm:w-80" />
         <Link
           href="/pulls"
-          className="text-muted-foreground hover:text-foreground hover:bg-accent/60 inline-flex h-8 items-center rounded-md px-2.5 text-sm font-medium transition-colors"
+          className="bg-background hover:bg-accent inline-flex h-9 items-center rounded-md border px-3.5 text-sm font-medium shadow-xs transition-colors"
         >
           Pulls
         </Link>

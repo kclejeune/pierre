@@ -23,7 +23,7 @@ export function CommandPaletteTrigger({ className }: { className?: string }) {
       type="button"
       aria-label="Search repositories and pull requests"
       className={cn(
-        'bg-background text-muted-foreground hover:bg-accent/60 inline-flex h-8 cursor-pointer items-center gap-2 rounded-md border px-2.5 text-sm transition-colors',
+        'bg-background text-muted-foreground hover:border-foreground/25 inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm shadow-xs transition-colors',
         className
       )}
       onClick={openCommandPalette}

@@ -19,10 +19,16 @@ import { DiffsHubHeader } from './DiffsHubHeader';
 import { DiffsHubSidebar } from './DiffsHubSidebar';
 import { DiffsHubStatusPanel } from './DiffsHubStatusPanel';
 import { DiffsHubViewer } from './DiffsHubViewer';
+import { PullCommitPanel } from './PullCommitPanel';
+import {
+  PullConflictControl,
+  PullConflictResolver,
+} from './PullConflictResolver';
 import { ReviewSubmitControl } from './ReviewSubmitControl';
 import { ThemeSourceProvider } from './ThemeSourceProvider';
 import { useGitHubToken } from './useGitHubToken';
 import { usePatchLoader } from './usePatchLoader';
+import { usePullEditSession } from './usePullEditSession';
 import { usePullReviewThreads } from './usePullReviewThreads';
 import { useThemeCycle } from './useThemeCycle';
 import {
@@ -53,6 +59,11 @@ import {
   type PullReviewEvent,
   submitPullReview,
 } from '@/lib/pullCommentsClient';
+import {
+  fetchPullConflicts,
+  type PullConflictsResult,
+} from '@/lib/pullConflictsClient';
+import { recordRecentDiff } from '@/lib/recentDiffs';
 import { removeSavedCommentSidebarEntry } from '@/lib/removeSavedCommentSidebarEntry';
 import type { DarkThemeName, LightThemeName } from '@/lib/themeNames';
 import { toastRequestError } from '@/lib/toastRequestError';
@@ -185,20 +196,38 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<CodeViewHandle<CommentMetadata> | null>(null);
-  // Review threads and comment publishing only exist for pull requests on
-  // the configured GitHub instance (never for arbitrary-domain patch URLs).
-  const pullRequest = useMemo<PullRequestRef | undefined>(() => {
-    if (domain != null && domain !== '') {
-      return undefined;
+  // GitHub-instance sources (pull, commit, compare) drive review threads,
+  // pinning, and the edit flows; arbitrary-domain patch URLs get none of
+  // these.
+  const githubSource = useMemo(
+    () =>
+      domain != null && domain !== '' ? undefined : parseGitHubDiffSource(path),
+    [domain, path]
+  );
+  // Review threads and comment publishing only exist for pull requests.
+  const pullRequest = useMemo<PullRequestRef | undefined>(
+    () =>
+      githubSource?.kind === 'pull'
+        ? {
+            number: githubSource.number,
+            owner: githubSource.repo.owner,
+            repo: githubSource.repo.repo,
+          }
+        : undefined,
+    [githubSource]
+  );
+  // Any GitHub-instance view can be pinned to the /pulls dashboard.
+  const pinnableRepo =
+    githubSource == null
+      ? undefined
+      : `${githubSource.repo.owner}/${githubSource.repo.repo}`;
+  // Record the visit for the recents list (dashboard + command palette). The
+  // patch stream has no PR title, so this records path-only; entries clicked
+  // from surfaces that know the title merge it in without clobbering.
+  useEffect(() => {
+    if (domain == null || domain === '') {
+      recordRecentDiff({ path });
     }
-    const source = parseGitHubDiffSource(path);
-    return source?.kind === 'pull'
-      ? {
-          number: source.number,
-          owner: source.repo.owner,
-          repo: source.repo.repo,
-        }
-      : undefined;
   }, [domain, path]);
   const loadDiffFiles = useMemo(
     () =>
@@ -243,6 +272,60 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     path,
     viewerRef,
   });
+
+  const editSession = usePullEditSession({
+    getGitHubToken,
+    githubTokenVersion,
+    hasDiffFileLoader: loadDiffFiles != null,
+    hasGitHubToken,
+    pullRequest,
+    retryLoad,
+    viewerRef,
+  });
+  // Warn before navigating away while edits are uncommitted; closing the tab
+  // is the one way to silently lose an edit session.
+  useEffect(() => {
+    if (editSession.dirtyFiles.length === 0) {
+      return;
+    }
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [editSession.dirtyFiles.length]);
+
+  // Conflict detection: once the pull's diff has loaded, ask the server
+  // whether the branch conflicts with its base. Best-effort — a failed check
+  // just hides the resolve affordance.
+  const [conflicts, setConflicts] = useState<PullConflictsResult | null>(null);
+  const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
+  useEffect(() => {
+    setConflicts(null);
+    setConflictResolverOpen(false);
+    if (pullRequest == null || !hasGitHubToken || loadState !== 'ready') {
+      return;
+    }
+    const controller = new AbortController();
+    fetchPullConflicts(pullRequest, getGitHubToken(), controller.signal)
+      .then(setConflicts)
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [
+    getGitHubToken,
+    githubTokenVersion,
+    hasGitHubToken,
+    loadState,
+    pullRequest,
+  ]);
+  // Close and reload — used both when the merge commit lands and when a
+  // branch tip moved mid-resolution: either way the loaded diff is stale, and
+  // the detection effect refires on the loadState cycle with fresh tips.
+  const handleConflictsSettled = useCallback(() => {
+    setConflictResolverOpen(false);
+    setConflicts(null);
+    retryLoad();
+  }, [retryLoad]);
 
   // Restore persisted display settings after mount (the server render uses
   // the defaults, so hydrating in an effect keeps SSR markup deterministic —
@@ -664,102 +747,135 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
       (loadState === 'streaming' && initialItems.length > 0));
 
   return (
-    <ReviewGrid>
-      <DiffsHubHeader
-        className="[grid-area:header]"
-        collapseMode={collapseMode}
-        collapsePatternsText={collapsePatternsText}
-        colorMode={colorMode}
-        darkThemeName={darkThemeName}
-        diffIndicators={diffIndicators}
-        diffStyle={diffStyle}
-        initialUrl={initialUrl}
-        lightThemeName={lightThemeName}
-        lineNumbers={lineNumbers}
-        markdownView={markdownView}
-        overflow={overflow}
-        reviewControl={
-          pullRequest != null ? (
-            <ReviewSubmitControl
-              canWrite={hasGitHubToken}
-              pendingCount={pendingReviewComments.size}
-              onSubmit={handleSubmitReview}
-            />
-          ) : undefined
-        }
-        fileTreeOverlayOpen={fileTreeOverlayOpen}
-        fileTreeAvailable={treeSource != null}
-        githubTokenActive={hasGitHubToken}
-        onClearGitHubToken={clearGitHubToken}
-        onCollapsePatternsChange={handleCollapsePatternsChange}
-        onSaveGitHubToken={setGitHubToken}
-        onToggleCollapseMode={handleToggleCollapseMode}
-        onToggleFileTreeOverlay={handleToggleFileTreeOverlay}
-        onToggleMarkdownView={handleToggleMarkdownView}
-        setColorMode={setColorMode}
-        setDarkThemeName={setDarkThemeName}
-        setDiffIndicators={setDiffIndicators}
-        setDiffStyle={handleSetDiffStyle}
-        setLightThemeName={setLightThemeName}
-        setLineNumbers={setLineNumbers}
-        setOverflow={setOverflow}
-        setShowBackgrounds={setShowBackgrounds}
-        showBackgrounds={showBackgrounds}
-      />
-      {viewerAvailable && treeSource != null ? (
-        <>
-          <DiffsHubSidebar
-            className="[grid-area:viewer] md:[grid-area:tree]"
-            commentSections={commentSections}
-            diffStats={diffStats}
-            discussion={discussion}
-            discussionActions={discussionActions}
-            mobileOverlayOpen={fileTreeOverlayOpen}
-            onMobileClose={handleCloseFileTreeOverlay}
-            onSelectComment={handleSelectComment}
-            scrollRef={scrollRef}
-            source={treeSource}
-            streaming={loadState === 'streaming'}
-            themeCycle={themeCycle}
-            viewerRef={viewerRef}
-            onSelectItem={handleSelectTreeItem}
-          />
-          <DiffsHubViewer
-            key={viewerKey}
-            className="[grid-area:viewer]"
-            diffStyle={diffStyle}
-            overflow={overflow}
-            showBackgrounds={showBackgrounds}
-            diffIndicators={diffIndicators}
-            lineNumbers={lineNumbers}
-            scrollRef={scrollRef}
-            themeType={colorMode}
-            viewerRef={viewerRef}
-            initialItems={initialItems}
-            loadDiffFiles={loadDiffFiles}
-            pullRequest={pullRequest}
-            sourcePath={domain == null ? path : undefined}
-            getGitHubToken={getGitHubToken}
-            isFileReviewed={isFileReviewed}
-            pendingReviewCount={pendingReviewComments.size}
-            onCommentDeleted={handleCommentDeleted}
-            onCommentSaved={handleCommentSaved}
-            onFileHeaderSelect={handleFileHeaderSelect}
-            onLineLinkChange={onLineLinkChange}
-            onPendingReviewCommentRemoved={handlePendingReviewCommentRemoved}
-            onPendingReviewCommentUpserted={handlePendingReviewCommentUpserted}
-            onSetFileReviewed={setFileReviewed}
-            onViewerReady={handleViewerReady}
-          />
-        </>
-      ) : (
-        <DiffsHubStatusPanel
-          errorMessage={errorMessage}
-          onRetry={retryLoad}
-          state={loadState}
+    <>
+      <ReviewGrid>
+        <DiffsHubHeader
+          className="[grid-area:header]"
+          collapseMode={collapseMode}
+          collapsePatternsText={collapsePatternsText}
+          colorMode={colorMode}
+          darkThemeName={darkThemeName}
+          diffIndicators={diffIndicators}
+          diffStyle={diffStyle}
+          initialUrl={initialUrl}
+          lightThemeName={lightThemeName}
+          lineNumbers={lineNumbers}
+          markdownView={markdownView}
+          overflow={overflow}
+          pinnableRepo={pinnableRepo}
+          reviewControl={
+            pullRequest != null ? (
+              <>
+                {conflicts?.conflicted === true && (
+                  <PullConflictControl
+                    conflictedFileCount={
+                      conflicts.files.length + conflicts.unsupported.length
+                    }
+                    onOpen={() => setConflictResolverOpen(true)}
+                  />
+                )}
+                <PullCommitPanel
+                  editSession={editSession}
+                  pendingReviewCount={pendingReviewComments.size}
+                  onSelectFile={recordViewTarget}
+                />
+                <ReviewSubmitControl
+                  canWrite={hasGitHubToken}
+                  pendingCount={pendingReviewComments.size}
+                  onSubmit={handleSubmitReview}
+                />
+              </>
+            ) : undefined
+          }
+          fileTreeOverlayOpen={fileTreeOverlayOpen}
+          fileTreeAvailable={treeSource != null}
+          githubTokenActive={hasGitHubToken}
+          onClearGitHubToken={clearGitHubToken}
+          onCollapsePatternsChange={handleCollapsePatternsChange}
+          onSaveGitHubToken={setGitHubToken}
+          onToggleCollapseMode={handleToggleCollapseMode}
+          onToggleFileTreeOverlay={handleToggleFileTreeOverlay}
+          onToggleMarkdownView={handleToggleMarkdownView}
+          setColorMode={setColorMode}
+          setDarkThemeName={setDarkThemeName}
+          setDiffIndicators={setDiffIndicators}
+          setDiffStyle={handleSetDiffStyle}
+          setLightThemeName={setLightThemeName}
+          setLineNumbers={setLineNumbers}
+          setOverflow={setOverflow}
+          setShowBackgrounds={setShowBackgrounds}
+          showBackgrounds={showBackgrounds}
         />
-      )}
-    </ReviewGrid>
+        {viewerAvailable && treeSource != null ? (
+          <>
+            <DiffsHubSidebar
+              className="[grid-area:viewer] md:[grid-area:tree]"
+              commentSections={commentSections}
+              diffStats={diffStats}
+              discussion={discussion}
+              discussionActions={discussionActions}
+              mobileOverlayOpen={fileTreeOverlayOpen}
+              onMobileClose={handleCloseFileTreeOverlay}
+              onSelectComment={handleSelectComment}
+              scrollRef={scrollRef}
+              source={treeSource}
+              streaming={loadState === 'streaming'}
+              themeCycle={themeCycle}
+              viewerRef={viewerRef}
+              onSelectItem={handleSelectTreeItem}
+            />
+            <DiffsHubViewer
+              key={viewerKey}
+              className="[grid-area:viewer]"
+              diffStyle={diffStyle}
+              overflow={overflow}
+              showBackgrounds={showBackgrounds}
+              diffIndicators={diffIndicators}
+              lineNumbers={lineNumbers}
+              scrollRef={scrollRef}
+              themeType={colorMode}
+              viewerRef={viewerRef}
+              initialItems={initialItems}
+              loadDiffFiles={loadDiffFiles}
+              pullRequest={pullRequest}
+              sourcePath={domain == null ? path : undefined}
+              editSession={editSession}
+              getGitHubToken={getGitHubToken}
+              isFileReviewed={isFileReviewed}
+              pendingReviewCount={pendingReviewComments.size}
+              onCommentDeleted={handleCommentDeleted}
+              onCommentSaved={handleCommentSaved}
+              onFileHeaderSelect={handleFileHeaderSelect}
+              onLineLinkChange={onLineLinkChange}
+              onPendingReviewCommentRemoved={handlePendingReviewCommentRemoved}
+              onPendingReviewCommentUpserted={
+                handlePendingReviewCommentUpserted
+              }
+              onSetFileReviewed={setFileReviewed}
+              onViewerReady={handleViewerReady}
+            />
+          </>
+        ) : (
+          <DiffsHubStatusPanel
+            errorMessage={errorMessage}
+            onRetry={retryLoad}
+            state={loadState}
+          />
+        )}
+      </ReviewGrid>
+      {conflictResolverOpen &&
+        conflicts?.conflicted === true &&
+        pullRequest != null && (
+          <PullConflictResolver
+            conflicts={conflicts}
+            pull={pullRequest}
+            getGitHubToken={getGitHubToken}
+            onClose={() => setConflictResolverOpen(false)}
+            onMerged={handleConflictsSettled}
+            onStale={handleConflictsSettled}
+          />
+        )}
+    </>
   );
 }
 

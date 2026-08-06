@@ -38,12 +38,7 @@ export async function fetchPullComments(
   token: string | undefined,
   signal?: AbortSignal
 ): Promise<PullCommentsPayload> {
-  const params = new URLSearchParams({
-    owner: pull.owner,
-    pull: pull.number,
-    repo: pull.repo,
-  });
-  const payload = await requestJSON(`/api/pull-comments?${params}`, {
+  const payload = await requestJSON(`/api/pull-comments?${pullParams(pull)}`, {
     headers: buildHeaders(token),
     signal,
   });
@@ -255,7 +250,28 @@ async function requestComment<T>(input: string, init: RequestInit): Promise<T> {
   return comment as T;
 }
 
-async function requestJSON(input: string, init: RequestInit): Promise<unknown> {
+// Failure from a DiffsHub API route: the message is user-presentable, and
+// `code` carries the route's machine-readable failure kind (e.g.
+// 'stale-head') when the JSON body included one.
+export class APIRequestError extends Error {
+  code: string | undefined;
+  status: number;
+
+  constructor(message: string, status: number, code: string | undefined) {
+    super(message);
+    this.name = 'APIRequestError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
+// Shared fetch wrapper for DiffsHub API routes: JSON parse, {error}
+// unwrapping (tolerating non-JSON error bodies), and a friendly message for
+// network failures. Also used by the pull-commit and pull-conflicts clients.
+export async function requestJSON(
+  input: string,
+  init: RequestInit
+): Promise<unknown> {
   let response: Response;
   try {
     response = await fetch(input, { cache: 'no-store', ...init });
@@ -269,18 +285,30 @@ async function requestJSON(input: string, init: RequestInit): Promise<unknown> {
     // Some failures have no JSON body; fall through to the status check.
   }
   if (!response.ok) {
-    const error = (payload as { error?: unknown } | null)?.error;
-    throw new Error(
-      typeof error === 'string' && error !== ''
-        ? error
-        : `Request failed (${response.status}).`
+    const record = payload as { code?: unknown; error?: unknown } | null;
+    throw new APIRequestError(
+      typeof record?.error === 'string' && record.error !== ''
+        ? record.error
+        : `Request failed (${response.status}).`,
+      response.status,
+      typeof record?.code === 'string' ? record.code : undefined
     );
   }
   return payload;
 }
 
-function buildHeaders(token: string | undefined): HeadersInit | undefined {
+export function buildHeaders(
+  token: string | undefined
+): HeadersInit | undefined {
   return token == null || token === ''
     ? undefined
     : { Authorization: `Bearer ${token}` };
+}
+
+export function pullParams(pull: PullRequestRef): URLSearchParams {
+  return new URLSearchParams({
+    owner: pull.owner,
+    pull: pull.number,
+    repo: pull.repo,
+  });
 }

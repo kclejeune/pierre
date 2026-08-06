@@ -517,13 +517,20 @@ export function createGitHubRawHeaders(token: string | undefined): HeadersInit {
   return headers;
 }
 
-function createGitHubRawAPIHeaders(token: string): HeadersInit {
-  return {
+// Headers for the contents API's raw media type; also used by the
+// pull-conflicts route to fetch file contents at the three merge refs.
+export function createGitHubRawAPIHeaders(
+  token: string | undefined
+): HeadersInit {
+  const headers: Record<string, string> = {
     Accept: GITHUB_RAW_MEDIA_TYPE,
-    Authorization: `Bearer ${token}`,
     'User-Agent': GITHUB_USER_AGENT,
     'X-GitHub-Api-Version': GITHUB_API_VERSION,
   };
+  if (token != null && token !== '') {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
 }
 
 async function assertGitHubResponseOK(

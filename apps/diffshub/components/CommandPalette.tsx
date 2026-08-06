@@ -38,6 +38,14 @@ const ITEM_ICONS: Record<PaletteItem['kind'], typeof IconBranch> = {
   repo: IconFolder,
 };
 
+// Fired by UI affordances (e.g. the home page's search bar) to open the
+// palette without a keyboard shortcut; the mounted palette listens globally.
+export const OPEN_COMMAND_PALETTE_EVENT = 'diffshub:open-command-palette';
+
+export function openCommandPalette(): void {
+  window.dispatchEvent(new Event(OPEN_COMMAND_PALETTE_EVENT));
+}
+
 // Global cmd+K / ctrl+K switcher: recent diffs and pinned repos when idle,
 // the URL bar's progressive repo → pull-request search once the user types,
 // and a direct "Go to" entry for anything that already resolves to a viewer
@@ -64,8 +72,13 @@ export function CommandPalette() {
         setOpen((wasOpen) => !wasOpen);
       }
     };
+    const onOpenRequest = () => setOpen(true);
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpenRequest);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpenRequest);
+    };
   }, []);
 
   useEffect(() => {

@@ -42,6 +42,20 @@ export function buildPaletteItems(
   const sections: PaletteSection[] = [];
 
   if (query === '') {
+    // Actions lead so the dashboard is the highlighted default — pressing
+    // Enter on an empty palette goes to /pulls.
+    sections.push({
+      heading: 'Actions',
+      items: [
+        {
+          key: 'action:pulls',
+          label: 'Your pull requests',
+          detail: 'Open the /pulls dashboard',
+          kind: 'action',
+          action: { type: 'navigate', path: '/pulls' },
+        },
+      ],
+    });
     if (input.recents.length > 0) {
       sections.push({
         heading: 'Recent diffs',
@@ -66,18 +80,6 @@ export function buildPaletteItems(
         })),
       });
     }
-    sections.push({
-      heading: 'Actions',
-      items: [
-        {
-          key: 'action:pulls',
-          label: 'Your pull requests',
-          detail: 'Open the /pulls dashboard',
-          kind: 'action',
-          action: { type: 'navigate', path: '/pulls' },
-        },
-      ],
-    });
     return sections;
   }
 

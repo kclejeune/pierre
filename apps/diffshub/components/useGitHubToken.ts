@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { syncTokenPresenceCookie } from '@/lib/tokenPresenceCookie';
+
 const GITHUB_TOKEN_STORAGE_KEY = 'diffshub.github.token';
 
 export interface GitHubTokenState {
@@ -33,6 +35,9 @@ export function useGitHubToken(): GitHubTokenState {
       setTokenState(storedToken);
       setTokenVersion((version) => version + 1);
     }
+    // Heal the middleware presence cookie for sessions whose token predates
+    // it (or whose cookie expired while the stored token lives on).
+    syncTokenPresenceCookie(storedToken !== '');
     setHydrated(true);
   }, []);
 
@@ -92,4 +97,5 @@ function writeStoredToken(token: string): void {
   } catch {
     // Browsers can disable storage; in-memory state still works for the page.
   }
+  syncTokenPresenceCookie(token !== '');
 }

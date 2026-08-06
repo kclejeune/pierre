@@ -4,6 +4,7 @@ import { IconClockArrow, IconPin, IconX } from '@pierre/icons';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
+import { AppNavbar } from '@/components/AppNavbar';
 import { Button } from '@/components/Button';
 import { ButtonGroup, ButtonGroupItem } from '@/components/ButtonGroup';
 import { DiffsHubLogo } from '@/components/DiffsHubLogo';
@@ -42,12 +43,13 @@ const BUCKET_COPY: Record<PullBucket, { empty: string; label: string }> = {
 const SECTION_CARD_CLASS = 'bg-background overflow-hidden rounded-lg border';
 
 export function PullsDashboard() {
-  const { clearToken, hasToken, hydrated, setToken, tokenVersion } =
-    useGitHubToken();
+  const tokenState = useGitHubToken();
+  const { clearToken, hasToken, hydrated, setToken, tokenVersion } = tokenState;
 
   return (
     <div className="flex min-h-[100svh] flex-col items-center md:bg-[var(--diffshub-sidebar-bg)]">
-      <div className="w-3xl max-w-[100vw] space-y-6 px-5 py-8 md:py-12">
+      <AppNavbar className="w-full" tokenState={tokenState} />
+      <div className="w-3xl max-w-[100vw] space-y-6 px-5 pt-2 pb-8 md:pt-4 md:pb-12">
         <header className="flex items-center gap-1.5">
           <Link
             href="/"

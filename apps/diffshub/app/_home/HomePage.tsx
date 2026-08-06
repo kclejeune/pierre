@@ -6,9 +6,9 @@ import {
 } from '@pierre/icons';
 import Link from 'next/link';
 
-import { HomeDashboardLink } from './HomeDashboardLink';
 import { HomeFetchForm } from './HomeFetchForm';
 import { HomeGitHubTokenForm } from './HomeGitHubTokenForm';
+import { CommandPaletteTrigger } from '@/components/CommandPaletteTrigger';
 import { DiffsHubLogo } from '@/components/DiffsHubLogo';
 import { getGitHubPath } from '@/lib/getGitHubPath';
 import { getGitHubEnvironment } from '@/lib/githubEnvironment';
@@ -48,7 +48,19 @@ const SOCIAL_LINKS = [
 export function HomePage() {
   const githubEnvironment = getGitHubEnvironment();
   return (
-    <div className="flex min-h-[100svh] min-w-screen flex-col items-center justify-center md:bg-[var(--diffshub-sidebar-bg)] md:py-12">
+    <div className="relative flex min-h-[100svh] min-w-screen flex-col items-center justify-center md:bg-[var(--diffshub-sidebar-bg)] md:py-12">
+      <nav
+        aria-label="Site"
+        className="absolute inset-x-0 top-0 z-10 flex items-center justify-end gap-2 px-4 py-3"
+      >
+        <CommandPaletteTrigger />
+        <Link
+          href="/pulls"
+          className="text-muted-foreground hover:text-foreground hover:bg-accent/60 inline-flex h-8 items-center rounded-md px-2.5 text-sm font-medium transition-colors"
+        >
+          Pulls
+        </Link>
+      </nav>
       <section className="relative flex min-h-[100svh] w-2xl max-w-[100vw] flex-col justify-center space-y-4 px-6 pt-8 text-sm min-[340px]:text-base md:block md:min-h-0">
         <h2 className="flex items-center gap-1.5 text-2xl font-semibold tracking-tight">
           <DiffsHubLogo />
@@ -89,7 +101,6 @@ export function HomePage() {
           <HomeFetchForm />
           <HomeGitHubTokenForm />
         </div>
-        <HomeDashboardLink />
         {githubEnvironment.isGitHubDotCom && (
           <div className="space-y-2">
             <h3 className="text-muted-foreground text-sm font-normal">

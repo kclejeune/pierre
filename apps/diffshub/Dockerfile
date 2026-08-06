@@ -73,6 +73,13 @@ COPY --from=builder /repo/apps/diffshub/.next/standalone ./
 COPY --from=builder /repo/apps/diffshub/.next/static ./apps/diffshub/.next/static
 COPY --from=builder /repo/apps/diffshub/public ./apps/diffshub/public
 
+# The COPYs above are root-owned, but Next writes its incremental fetch cache
+# (routes using `next: { revalidate }`, e.g. profile lookups) to .next/cache
+# at request time. Pre-create it owned by the runtime user; without this every
+# cacheable fetch logs "failed to update prerender cache: EACCES".
+RUN mkdir -p apps/diffshub/.next/cache \
+  && chown node:node apps/diffshub/.next/cache
+
 USER node
 EXPOSE 3000
 CMD ["node", "apps/diffshub/server.js"]

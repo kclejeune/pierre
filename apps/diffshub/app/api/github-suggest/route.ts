@@ -6,6 +6,10 @@ import {
   getGitHubEnvironment,
   resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
+import {
+  createGitHubFailureResponse,
+  createUnreachableResponse,
+} from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
 
 // Autocomplete data for the diff URL bar: repository name search while the
@@ -102,20 +106,10 @@ async function fetchSuggestPayload(
       cache: 'no-store',
     });
   } catch {
-    return {
-      error: createJSONResponse(
-        { error: `Could not reach ${getGitHubEnvironment().host}.` },
-        { status: 502 }
-      ),
-    };
+    return { error: createUnreachableResponse(getGitHubEnvironment()) };
   }
   if (!response.ok) {
-    return {
-      error: createJSONResponse(
-        { error: `GitHub responded with ${response.status}.` },
-        { status: 502 }
-      ),
-    };
+    return { error: await createGitHubFailureResponse(response) };
   }
   return { payload: await response.json() };
 }

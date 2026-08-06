@@ -7,6 +7,10 @@ const GITHUB_TOKEN_STORAGE_KEY = 'diffshub.github.token';
 export interface GitHubTokenState {
   clearToken(): void;
   hasToken: boolean;
+  // False until the stored token has been read from localStorage after mount.
+  // Fetch effects keyed on `token` should skip while false, otherwise they
+  // fire once anonymously and immediately refire when the stored token lands.
+  hydrated: boolean;
   setToken(token: string): void;
   token: string;
   tokenVersion: number;
@@ -14,10 +18,14 @@ export interface GitHubTokenState {
 
 // Owns the optional user-provided GitHub token. The token is persisted only in
 // localStorage for this browser and is not sent anywhere until the loader
-// explicitly reads it.
+// explicitly reads it. The stored token is deliberately read in a post-mount
+// effect rather than a lazy initializer: server HTML is always rendered
+// without a token, so seeding it during the first client render would cause a
+// hydration mismatch in consumers that render differently when signed in.
 export function useGitHubToken(): GitHubTokenState {
   const [token, setTokenState] = useState('');
   const [tokenVersion, setTokenVersion] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     const storedToken = readStoredGitHubToken();
@@ -25,6 +33,7 @@ export function useGitHubToken(): GitHubTokenState {
       setTokenState(storedToken);
       setTokenVersion((version) => version + 1);
     }
+    setHydrated(true);
   }, []);
 
   const setToken = useCallback((nextToken: string) => {
@@ -41,6 +50,7 @@ export function useGitHubToken(): GitHubTokenState {
   return {
     clearToken,
     hasToken: token !== '',
+    hydrated,
     setToken,
     token,
     tokenVersion,

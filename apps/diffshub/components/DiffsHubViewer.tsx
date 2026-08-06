@@ -22,7 +22,6 @@ import {
   useRef,
   useState,
 } from 'react';
-import { toast } from 'sonner';
 
 import { DraftAnnotation } from './DraftAnnotation';
 import { ExampleAnnotation } from './ExampleAnnotation';
@@ -59,6 +58,7 @@ import {
   createThreadSavedCommentEvent,
 } from '@/lib/savedCommentEvent';
 import { diffshubChromeMapping } from '@/lib/theme/diffshubChromeMapping';
+import { toastRequestError } from '@/lib/toastRequestError';
 import type {
   CommentAuthor,
   CommentMetadata,
@@ -370,6 +370,57 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
     onLineLinkChange(null);
   };
 
+  // Shared tail of both draft-save paths: swaps the draft annotation for a
+  // saved card (optionally marked pending for the batched review), clears the
+  // draft state, and notifies the sidebar. Returns null when the draft no
+  // longer exists on the item.
+  const saveDraftLocally = (
+    itemId: string,
+    key: string,
+    message: string,
+    author: CommentAuthor,
+    pending: boolean
+  ) => {
+    const { current: viewer } = viewerRef;
+    if (viewer == null) {
+      return null;
+    }
+    const item = viewer.getItem(itemId);
+    if (item == null || !isDiffItem(item)) {
+      return null;
+    }
+    const draftAnnotation = item.annotations?.find(
+      (annotation) => annotation.metadata.key === key
+    );
+    if (draftAnnotation == null || !isDraftAnnotation(draftAnnotation)) {
+      return null;
+    }
+    const savedAnnotation: DiffLineAnnotation<SavedCommentMetadata> = {
+      ...draftAnnotation,
+      metadata: {
+        kind: 'saved',
+        key,
+        author,
+        message,
+        ...(pending ? { pending: true } : {}),
+        range: draftAnnotation.metadata.range,
+      },
+    };
+    const updatedItem = replaceAnnotation(viewer, itemId, key, savedAnnotation);
+    if (updatedItem == null) {
+      return null;
+    }
+    finishDraft(itemId, key);
+    onCommentSaved(
+      createLocalSavedCommentEvent(
+        updatedItem.fileDiff,
+        itemId,
+        savedAnnotation
+      )
+    );
+    return { savedAnnotation, updatedItem };
+  };
+
   const handleSaveDraftComment = useStableCallback(
     async (
       itemId: string,
@@ -404,22 +455,14 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
           draftAnnotation.metadata.range
         );
         if (anchor != null) {
-          let comment;
-          try {
-            comment = await postPullReviewComment(
-              pullRequest,
-              token,
-              anchor,
-              trimmedMessage
-            );
-          } catch (error) {
-            toast.error(
-              error instanceof Error
-                ? error.message
-                : 'Posting the comment failed.'
-            );
-            throw error;
-          }
+          const comment = await postPullReviewComment(
+            pullRequest,
+            token,
+            anchor,
+            trimmedMessage
+          ).catch((error: unknown) =>
+            toastRequestError(error, 'Posting the comment failed.')
+          );
           const thread = createPullReviewThread(comment);
           if (thread != null) {
             const updatedItem = replaceAnnotation(
@@ -446,34 +489,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
         }
       }
 
-      const savedAnnotation: DiffLineAnnotation<SavedCommentMetadata> = {
-        ...draftAnnotation,
-        metadata: {
-          kind: 'saved',
-          key,
-          author,
-          message: trimmedMessage,
-          range: draftAnnotation.metadata.range,
-        },
-      };
-      const updatedItem = replaceAnnotation(
-        viewer,
-        itemId,
-        key,
-        savedAnnotation
-      );
-      if (updatedItem == null) {
-        return;
-      }
-
-      finishDraft(itemId, key);
-      onCommentSaved(
-        createLocalSavedCommentEvent(
-          updatedItem.fileDiff,
-          itemId,
-          savedAnnotation
-        )
-      );
+      saveDraftLocally(itemId, key, trimmedMessage, author, false);
     }
   );
 
@@ -484,55 +500,19 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
   const handleSaveDraftToReview = useStableCallback(
     (itemId: string, key: string, message: string, author: CommentAuthor) => {
       const trimmedMessage = message.trim();
-      const { current: viewer } = viewerRef;
-      if (trimmedMessage.length === 0 || viewer == null) {
+      if (trimmedMessage.length === 0) {
         return;
       }
-      const item = viewer.getItem(itemId);
-      if (item == null || !isDiffItem(item)) {
+      const saved = saveDraftLocally(itemId, key, trimmedMessage, author, true);
+      if (saved == null) {
         return;
       }
-      const draftAnnotation = item.annotations?.find(
-        (annotation) => annotation.metadata.key === key
-      );
-      if (draftAnnotation == null || !isDraftAnnotation(draftAnnotation)) {
-        return;
-      }
-
-      const pendingAnnotation: DiffLineAnnotation<SavedCommentMetadata> = {
-        ...draftAnnotation,
-        metadata: {
-          kind: 'saved',
-          key,
-          author,
-          message: trimmedMessage,
-          pending: true,
-          range: draftAnnotation.metadata.range,
-        },
-      };
-      const updatedItem = replaceAnnotation(
-        viewer,
-        itemId,
-        key,
-        pendingAnnotation
-      );
-      if (updatedItem == null) {
-        return;
-      }
-      finishDraft(itemId, key);
-      onCommentSaved(
-        createLocalSavedCommentEvent(
-          updatedItem.fileDiff,
-          itemId,
-          pendingAnnotation
-        )
-      );
       onPendingReviewCommentUpserted({
         itemId,
         key,
         message: trimmedMessage,
-        path: updatedItem.fileDiff.name,
-        range: draftAnnotation.metadata.range,
+        path: saved.updatedItem.fileDiff.name,
+        range: saved.savedAnnotation.metadata.range,
       });
     }
   );
@@ -573,20 +553,14 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       }
       const { annotation, token, viewer } = context;
       const { thread } = annotation.metadata;
-      let comment;
-      try {
-        comment = await postPullReviewReply(
-          context.pullRequest,
-          token,
-          thread.rootId,
-          body
-        );
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : 'Posting the reply failed.'
-        );
-        throw error;
-      }
+      const comment = await postPullReviewReply(
+        context.pullRequest,
+        token,
+        thread.rootId,
+        body
+      ).catch((error: unknown) =>
+        toastRequestError(error, 'Posting the reply failed.')
+      );
       replaceAnnotation(viewer, itemId, key, {
         ...annotation,
         metadata: {
@@ -605,20 +579,14 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       }
       const { annotation, item, token, viewer } = context;
       const { thread } = annotation.metadata;
-      let edited;
-      try {
-        edited = await editPullReviewComment(
-          context.pullRequest,
-          token,
-          commentId,
-          body
-        );
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : 'Editing the comment failed.'
-        );
-        throw error;
-      }
+      const edited = await editPullReviewComment(
+        context.pullRequest,
+        token,
+        commentId,
+        body
+      ).catch((error: unknown) =>
+        toastRequestError(error, 'Editing the comment failed.')
+      );
       const nextThread = {
         ...thread,
         comments: thread.comments.map((comment) =>
@@ -646,16 +614,13 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       }
       const { annotation, item, token, viewer } = context;
       const { thread } = annotation.metadata;
-      try {
-        await deletePullReviewComment(context.pullRequest, token, commentId);
-      } catch (error) {
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : 'Deleting the comment failed.'
-        );
-        throw error;
-      }
+      await deletePullReviewComment(
+        context.pullRequest,
+        token,
+        commentId
+      ).catch((error: unknown) =>
+        toastRequestError(error, 'Deleting the comment failed.')
+      );
       const remaining = thread.comments.filter(
         (comment) => comment.id !== commentId
       );
@@ -887,17 +852,15 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
 
   // Returns the comments that belong in an item's doc margin rail, cached by
   // the annotations array's identity so the memoized doc component sees the
-  // same array across unrelated re-renders. `canWrite` joins the cache key
-  // because the rendered cards depend on it (reply/edit affordances).
+  // same array across unrelated re-renders.
   const docRailCommentsCacheRef = useRef(
     new WeakMap<
       DiffLineAnnotation<CommentMetadata>[],
-      { canWrite: boolean; comments: DiffLineAnnotation<CommentMetadata>[] }
+      DiffLineAnnotation<CommentMetadata>[]
     >()
   );
   const getDocRailComments = (
-    item: CodeViewDiffItem<CommentMetadata>,
-    canWrite: boolean
+    item: CodeViewDiffItem<CommentMetadata>
   ): DiffLineAnnotation<CommentMetadata>[] => {
     const { annotations } = item;
     if (annotations == null) {
@@ -905,13 +868,13 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
     }
     const cache = docRailCommentsCacheRef.current;
     const cached = cache.get(annotations);
-    if (cached != null && cached.canWrite === canWrite) {
-      return cached.comments;
+    if (cached != null) {
+      return cached;
     }
     const comments = annotations.filter((candidate) =>
       isDocRailComment(candidate, item)
     );
-    cache.set(annotations, { canWrite, comments });
+    cache.set(annotations, comments);
     return comments;
   };
 
@@ -932,15 +895,13 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       if (isDocAnnotation(annotation)) {
         return (
           <MarkdownDocAnnotation
+            canWrite={getWriteToken() != null}
             fileDiff={item.fileDiff}
             itemId={item.id}
             loadDiffFiles={loadDiffFiles}
             onCommentAtLine={handleCommentAtDocLine}
             sourcePath={sourcePath}
-            commentAnnotations={getDocRailComments(
-              item,
-              getWriteToken() != null
-            )}
+            commentAnnotations={getDocRailComments(item)}
             renderComment={renderCommentCard}
           />
         );

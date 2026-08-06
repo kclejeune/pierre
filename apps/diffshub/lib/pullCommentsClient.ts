@@ -63,7 +63,7 @@ export async function postPullReviewReply(
   inReplyToId: number,
   body: string
 ): Promise<PullReviewComment> {
-  return await requestComment('/api/pull-comments', {
+  return await requestComment<PullReviewComment>('/api/pull-comments', {
     method: 'POST',
     headers: buildHeaders(token),
     body: JSON.stringify({
@@ -82,7 +82,7 @@ export async function postPullReviewComment(
   anchor: NewCommentAnchor,
   body: string
 ): Promise<PullReviewComment> {
-  return await requestComment('/api/pull-comments', {
+  return await requestComment<PullReviewComment>('/api/pull-comments', {
     method: 'POST',
     headers: buildHeaders(token),
     body: JSON.stringify({
@@ -105,7 +105,7 @@ export async function editPullReviewComment(
   commentId: number,
   body: string
 ): Promise<PullReviewComment> {
-  return await requestComment('/api/pull-comments', {
+  return await requestComment<PullReviewComment>('/api/pull-comments', {
     method: 'PATCH',
     headers: buildHeaders(token),
     body: JSON.stringify({
@@ -172,7 +172,7 @@ export async function postPullDiscussionComment(
   token: string,
   body: string
 ): Promise<PullDiscussionComment> {
-  return await requestDiscussionComment('/api/pull-comments', {
+  return await requestComment<PullDiscussionComment>('/api/pull-comments', {
     method: 'POST',
     headers: buildHeaders(token),
     body: JSON.stringify({
@@ -191,7 +191,7 @@ export async function editPullDiscussionComment(
   commentId: number,
   body: string
 ): Promise<PullDiscussionComment> {
-  return await requestDiscussionComment('/api/pull-comments', {
+  return await requestComment<PullDiscussionComment>('/api/pull-comments', {
     method: 'PATCH',
     headers: buildHeaders(token),
     body: JSON.stringify({
@@ -244,28 +244,15 @@ export function createCommentAnchor(
   return anchor;
 }
 
-async function requestComment(
-  input: string,
-  init: RequestInit
-): Promise<PullReviewComment> {
+// Unwraps the route's {comment} envelope; T names the normalized comment
+// shape the endpoint returns (review or PR-level discussion).
+async function requestComment<T>(input: string, init: RequestInit): Promise<T> {
   const payload = await requestJSON(input, init);
   const comment = (payload as { comment?: unknown }).comment;
   if (typeof comment !== 'object' || comment == null) {
     throw new Error('GitHub returned an unexpected comment payload.');
   }
-  return comment as PullReviewComment;
-}
-
-async function requestDiscussionComment(
-  input: string,
-  init: RequestInit
-): Promise<PullDiscussionComment> {
-  const payload = await requestJSON(input, init);
-  const comment = (payload as { comment?: unknown }).comment;
-  if (typeof comment !== 'object' || comment == null) {
-    throw new Error('GitHub returned an unexpected comment payload.');
-  }
-  return comment as PullDiscussionComment;
+  return comment as T;
 }
 
 async function requestJSON(input: string, init: RequestInit): Promise<unknown> {

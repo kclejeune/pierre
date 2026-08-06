@@ -7,6 +7,10 @@ import {
   type GitHubEnvironment,
   resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
+import {
+  createGitHubFailureResponse,
+  createUnreachableResponse,
+} from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
 import type {
@@ -200,7 +204,7 @@ export async function POST(request: NextRequest) {
   const inReplyToId = payload?.inReplyToId;
   try {
     if (payload?.discussion === true) {
-      return await forwardDiscussionCommentResponse(
+      return await forwardNormalizedResponse(
         await fetch(
           createGitHubAPIURL(
             environment,
@@ -211,12 +215,13 @@ export async function POST(request: NextRequest) {
             headers: buildGitHubHeaders(token),
             body: JSON.stringify({ body }),
           }
-        )
+        ),
+        normalizeDiscussionComment
       );
     }
 
     if (typeof inReplyToId === 'number') {
-      return await forwardCommentResponse(
+      return await forwardNormalizedResponse(
         await fetch(
           createGitHubAPIURL(
             environment,
@@ -227,19 +232,13 @@ export async function POST(request: NextRequest) {
             headers: buildGitHubHeaders(token),
             body: JSON.stringify({ body }),
           }
-        )
+        ),
+        normalizeReviewComment
       );
     }
 
-    const path = payload?.path;
-    const line = payload?.line;
-    const side = payload?.side;
-    if (
-      typeof path !== 'string' ||
-      path === '' ||
-      typeof line !== 'number' ||
-      !isGitHubDiffSide(side)
-    ) {
+    const anchor = parseCommentAnchor(payload ?? {});
+    if (anchor == null) {
       return createJSONResponse(
         { error: 'path, line, and side are required for a new comment.' },
         { status: 400 }
@@ -259,23 +258,7 @@ export async function POST(request: NextRequest) {
       return commitId;
     }
 
-    const startLine = payload?.startLine;
-    const startSide = payload?.startSide;
-    const commentBody: Record<string, unknown> = {
-      body,
-      commit_id: commitId,
-      line,
-      path,
-      side,
-    };
-    // GitHub rejects start_line equal to line, so only send a start anchor
-    // for genuinely multi-line comments.
-    if (typeof startLine === 'number' && startLine !== line) {
-      commentBody.start_line = startLine;
-      commentBody.start_side = isGitHubDiffSide(startSide) ? startSide : side;
-    }
-
-    return await forwardCommentResponse(
+    return await forwardNormalizedResponse(
       await fetch(
         createGitHubAPIURL(
           environment,
@@ -284,9 +267,10 @@ export async function POST(request: NextRequest) {
         {
           method: 'POST',
           headers: buildGitHubHeaders(token),
-          body: JSON.stringify(commentBody),
+          body: JSON.stringify({ ...anchor, body, commit_id: commitId }),
         }
-      )
+      ),
+      normalizeReviewComment
     );
   } catch {
     return createUnreachableResponse(environment);
@@ -334,9 +318,10 @@ export async function PATCH(request: NextRequest) {
         body: JSON.stringify({ body }),
       }
     );
-    return isDiscussion
-      ? await forwardDiscussionCommentResponse(response)
-      : await forwardCommentResponse(response);
+    return await forwardNormalizedResponse(
+      response,
+      isDiscussion ? normalizeDiscussionComment : normalizeReviewComment
+    );
   } catch {
     return createUnreachableResponse(environment);
   }
@@ -479,31 +464,43 @@ function normalizeReviewDraftComments(
       return null;
     }
     const record = entry as Record<string, unknown>;
-    const path = record.path;
-    const line = record.line;
-    const side = record.side;
+    const anchor = parseCommentAnchor(record);
     const body = record.body;
-    if (
-      typeof path !== 'string' ||
-      path === '' ||
-      typeof line !== 'number' ||
-      !isGitHubDiffSide(side) ||
-      typeof body !== 'string' ||
-      body.trim() === ''
-    ) {
+    if (anchor == null || typeof body !== 'string' || body.trim() === '') {
       return null;
     }
-    const comment: Record<string, unknown> = { body, line, path, side };
-    // GitHub rejects start_line equal to line (same as single comments).
-    if (typeof record.startLine === 'number' && record.startLine !== line) {
-      comment.start_line = record.startLine;
-      comment.start_side = isGitHubDiffSide(record.startSide)
-        ? record.startSide
-        : side;
-    }
-    comments.push(comment);
+    comments.push({ ...anchor, body });
   }
   return comments;
+}
+
+// Validates the diff-anchor fields GitHub requires of a review comment —
+// path, line, side, and the optional multi-line start anchor — and maps them
+// to GitHub's snake_case request fields. GitHub rejects start_line equal to
+// line, so a start anchor is only emitted for genuinely multi-line comments.
+// Returns null when the anchor is malformed; callers add body / commit_id.
+function parseCommentAnchor(
+  record: Record<string, unknown>
+): Record<string, unknown> | null {
+  const path = record.path;
+  const line = record.line;
+  const side = record.side;
+  if (
+    typeof path !== 'string' ||
+    path === '' ||
+    typeof line !== 'number' ||
+    !isGitHubDiffSide(side)
+  ) {
+    return null;
+  }
+  const anchor: Record<string, unknown> = { line, path, side };
+  if (typeof record.startLine === 'number' && record.startLine !== line) {
+    anchor.start_line = record.startLine;
+    anchor.start_side = isGitHubDiffSide(record.startSide)
+      ? record.startSide
+      : side;
+  }
+  return anchor;
 }
 
 // Resolves the pull's current head commit, or a ready-to-return failure
@@ -642,12 +639,18 @@ function normalizeReviewSummary(review: unknown): PullDiscussionComment | null {
 }
 
 // Relays a GitHub create/edit response back to the browser as a normalized
-// comment, preserving failure details for actionable error messages.
-async function forwardCommentResponse(response: Response): Promise<Response> {
+// comment (review or PR-level, depending on the normalizer), preserving
+// failure details for actionable error messages.
+async function forwardNormalizedResponse(
+  response: Response,
+  normalize: (
+    payload: unknown
+  ) => PullReviewComment | PullDiscussionComment | null
+): Promise<Response> {
   if (!response.ok) {
     return createGitHubFailureResponse(response);
   }
-  const comment = normalizeReviewComment(await response.json());
+  const comment = normalize(await response.json());
   if (comment == null) {
     return createJSONResponse(
       { error: 'GitHub returned an unexpected comment payload.' },
@@ -655,55 +658,6 @@ async function forwardCommentResponse(response: Response): Promise<Response> {
     );
   }
   return createJSONResponse({ comment });
-}
-
-// Same relay as forwardCommentResponse, for PR-level (issue) comment writes.
-async function forwardDiscussionCommentResponse(
-  response: Response
-): Promise<Response> {
-  if (!response.ok) {
-    return createGitHubFailureResponse(response);
-  }
-  const comment = normalizeDiscussionComment(await response.json());
-  if (comment == null) {
-    return createJSONResponse(
-      { error: 'GitHub returned an unexpected comment payload.' },
-      { status: 502 }
-    );
-  }
-  return createJSONResponse({ comment });
-}
-
-async function createGitHubFailureResponse(
-  response: Response
-): Promise<Response> {
-  let detail = '';
-  try {
-    const payload = (await response.json()) as { message?: unknown };
-    if (typeof payload.message === 'string') {
-      detail = payload.message;
-    }
-  } catch {
-    // Non-JSON failure body; the status alone still tells the story.
-  }
-  return createJSONResponse(
-    {
-      error:
-        detail === ''
-          ? `GitHub responded with ${response.status}.`
-          : `GitHub responded with ${response.status}: ${detail}`,
-    },
-    // 401/403/404/422 are actionable for the caller; everything else is a
-    // gateway-style failure.
-    { status: response.status >= 500 ? 502 : response.status }
-  );
-}
-
-function createUnreachableResponse(environment: GitHubEnvironment): Response {
-  return createJSONResponse(
-    { error: `Could not reach ${environment.host}.` },
-    { status: 502 }
-  );
 }
 
 function buildGitHubHeaders(token: string | undefined): HeadersInit {

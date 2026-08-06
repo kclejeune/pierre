@@ -50,6 +50,10 @@ interface MarkdownDocAnnotationProps {
     annotation: DiffLineAnnotation<CommentMetadata>,
     itemId: string
   ): ReactNode;
+  // Whether the session can write to the PR. Unused directly, but the rail's
+  // cards (rendered through `renderComment`) show different affordances, so it
+  // participates in the memo comparison to re-render them when it flips.
+  canWrite?: boolean;
 }
 
 // The rendered-markdown document view, shown as a file-level annotation above

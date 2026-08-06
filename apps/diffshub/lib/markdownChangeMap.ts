@@ -1,5 +1,7 @@
 import type { FileDiffMetadata } from '@pierre/diffs';
 
+import { iterateHunkLineBlocks } from './hunkLineBlocks';
+
 // Change information for a diff expressed in new-file line numbers, used by
 // the rendered-markdown view to mark which document blocks a diff touches.
 export interface NewFileChangeMap {
@@ -10,27 +12,20 @@ export interface NewFileChangeMap {
   deletionAnchors: ReadonlySet<number>;
 }
 
-// Walks each hunk's ordered content blocks tracking the running new-file line
-// number, mirroring the walk in classifyCommentLineType.
 export function buildNewFileChangeMap(
   fileDiff: FileDiffMetadata
 ): NewFileChangeMap {
   const addedLines = new Set<number>();
   const deletionAnchors = new Set<number>();
-  for (const hunk of fileDiff.hunks) {
-    let newLine = hunk.additionStart;
-    for (const content of hunk.hunkContent) {
-      if (content.type === 'context') {
-        newLine += content.lines;
-        continue;
-      }
-      if (content.deletions > 0) {
-        deletionAnchors.add(newLine);
-      }
-      for (let index = 0; index < content.additions; index++) {
-        addedLines.add(newLine + index);
-      }
-      newLine += content.additions;
+  for (const block of iterateHunkLineBlocks(fileDiff, 'additions')) {
+    if (block.type === 'context') {
+      continue;
+    }
+    if (block.deletions > 0) {
+      deletionAnchors.add(block.startLine);
+    }
+    for (let index = 0; index < block.lineCount; index++) {
+      addedLines.add(block.startLine + index);
     }
   }
   return { addedLines, deletionAnchors };
@@ -61,21 +56,14 @@ export function findCommentableNewLine(
   startLine: number,
   endLine: number
 ): number | null {
-  for (const hunk of fileDiff.hunks) {
-    let newLine = hunk.additionStart;
-    for (const content of hunk.hunkContent) {
-      if (content.type === 'context') {
-        newLine += content.lines;
-        continue;
-      }
-      if (content.additions > 0) {
-        const overlapStart = Math.max(newLine, startLine);
-        const overlapEnd = Math.min(newLine + content.additions - 1, endLine);
-        if (overlapStart <= overlapEnd) {
-          return overlapStart;
-        }
-        newLine += content.additions;
-      }
+  for (const block of iterateHunkLineBlocks(fileDiff, 'additions')) {
+    if (block.type === 'context' || block.lineCount === 0) {
+      continue;
+    }
+    const overlapStart = Math.max(block.startLine, startLine);
+    const overlapEnd = Math.min(block.startLine + block.lineCount - 1, endLine);
+    if (overlapStart <= overlapEnd) {
+      return overlapStart;
     }
   }
 

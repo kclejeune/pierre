@@ -6,6 +6,10 @@ import {
   getGitHubEnvironment,
   resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
+import {
+  createGitHubFailureResponse,
+  createUnreachableResponse,
+} from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
 
@@ -26,37 +30,35 @@ export async function GET(request: NextRequest) {
   }
 
   const environment = getGitHubEnvironment();
+
+  // The identity lookup is token-scoped and never cached; public profiles
+  // are near-static, so cache those briefly to spare one upstream call per
+  // comment author per viewer.
+  let url: string;
+  let init: RequestInit;
+  if (login == null) {
+    url = createGitHubAPIURL(environment, '/user');
+    init = { headers: createGitHubJSONHeaders(token), cache: 'no-store' };
+  } else {
+    url = createGitHubAPIURL(
+      environment,
+      `/users/${encodeURIComponent(login)}`
+    );
+    init = {
+      headers: createGitHubJSONHeaders(resolveRequestGitHubToken(request)),
+      next: { revalidate: 300 },
+    };
+  }
+
   let response: Response;
   try {
-    // The identity lookup is token-scoped and never cached; public profiles
-    // are near-static, so cache those briefly to spare one upstream call per
-    // comment author per viewer.
-    response = await fetch(
-      createGitHubAPIURL(
-        environment,
-        login == null ? '/user' : `/users/${encodeURIComponent(login)}`
-      ),
-      login == null
-        ? { headers: createGitHubJSONHeaders(token), cache: 'no-store' }
-        : {
-            headers: createGitHubJSONHeaders(
-              resolveRequestGitHubToken(request)
-            ),
-            next: { revalidate: 300 },
-          }
-    );
+    response = await fetch(url, init);
   } catch {
-    return createJSONResponse(
-      { error: `Could not reach ${environment.host}.` },
-      { status: 502 }
-    );
+    return createUnreachableResponse(environment);
   }
 
   if (!response.ok) {
-    return createJSONResponse(
-      { error: `GitHub responded with ${response.status}.` },
-      { status: response.status === 401 ? 401 : 502 }
-    );
+    return await createGitHubFailureResponse(response);
   }
 
   const user = (await response.json()) as {

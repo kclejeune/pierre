@@ -6,7 +6,6 @@ import { Button } from '@/components/Button';
 
 interface CommentComposerProps {
   autoFocus?: boolean;
-  busy?: boolean;
   initialBody?: string;
   submitLabel: string;
   onCancel(): void;
@@ -19,7 +18,6 @@ interface CommentComposerProps {
 // editing. Submit on Cmd/Shift+Enter, cancel on Escape.
 export function CommentComposer({
   autoFocus = false,
-  busy = false,
   initialBody = '',
   submitLabel,
   onCancel,
@@ -27,10 +25,9 @@ export function CommentComposer({
 }: CommentComposerProps) {
   const [body, setBody] = useState(initialBody);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const isBusy = busy || isSubmitting;
   const trimmedBody = body.trim();
   const canSubmit =
-    !isBusy && trimmedBody !== '' && trimmedBody !== initialBody.trim();
+    !isSubmitting && trimmedBody !== '' && trimmedBody !== initialBody.trim();
 
   async function submit() {
     if (!canSubmit) {
@@ -57,7 +54,7 @@ export function CommentComposer({
       <textarea
         autoFocus={autoFocus}
         value={body}
-        disabled={isBusy}
+        disabled={isSubmitting}
         rows={2}
         placeholder="Leave a comment…"
         className="field-sizing-content w-full resize-none rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))] bg-transparent px-3 py-1.5 text-[14px] text-inherit placeholder:text-[var(--diffshub-popover-muted-fg,var(--color-muted-foreground))] focus:outline-none"
@@ -79,7 +76,7 @@ export function CommentComposer({
           type="button"
           variant="muted"
           size="sm"
-          disabled={isBusy}
+          disabled={isSubmitting}
           onClick={onCancel}
           className="text-muted-foreground hover:text-foreground font-normal hover:no-underline"
         >

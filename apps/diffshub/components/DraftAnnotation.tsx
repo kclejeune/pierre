@@ -1,4 +1,5 @@
 import type { DiffLineAnnotation } from '@pierre/diffs';
+import { useStableCallback } from '@pierre/diffs/react';
 import { IconArrowRight } from '@pierre/icons';
 import { useEffect, useRef, useState } from 'react';
 
@@ -53,6 +54,7 @@ export function DraftAnnotation({
   const author: CommentAuthor = githubUser ?? personaAuthor;
   const [isSaving, setIsSaving] = useState(false);
   const [isConfirmingDiscard, setIsConfirmingDiscard] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const trimmedMessage = message.trim();
   const reviewAvailable = reviewEnabled && onSaveToReview != null;
@@ -109,8 +111,42 @@ export function DraftAnnotation({
     textarea.setSelectionRange(cursorIndex, cursorIndex);
   }, []);
 
+  // Dismissal from outside the card. Once focus leaves the textarea (the user
+  // clicked elsewhere in the diff), its own Escape handler can no longer fire,
+  // so listen at the document level: Escape anywhere cancels the draft (with
+  // the usual discard confirm when text is present), and a pointerdown outside
+  // the card removes a still-empty draft. The card renders as slotted light-DOM
+  // content inside the diff viewer's shadow tree, so composedPath() is needed
+  // to decide whether an event originated inside it.
+  const handleDocumentPointerDown = useStableCallback((event: PointerEvent) => {
+    const form = formRef.current;
+    if (form == null || event.composedPath().includes(form)) {
+      return;
+    }
+    if (trimmedMessage.length === 0 && !isSaving) {
+      onCancel(itemId, annotation.metadata.key);
+    }
+  });
+  const handleDocumentKeyDown = useStableCallback((event: KeyboardEvent) => {
+    // defaultPrevented covers both the textarea's own Escape handler and
+    // overlays (dropdowns, dialogs) that consume Escape to close themselves.
+    if (event.key !== 'Escape' || event.defaultPrevented) {
+      return;
+    }
+    tryCancel();
+  });
+  useEffect(() => {
+    document.addEventListener('pointerdown', handleDocumentPointerDown);
+    document.addEventListener('keydown', handleDocumentKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handleDocumentPointerDown);
+      document.removeEventListener('keydown', handleDocumentKeyDown);
+    };
+  }, [handleDocumentPointerDown, handleDocumentKeyDown]);
+
   return (
     <form
+      ref={formRef}
       className={cn(annotationCardBase, 'flex-col md:flex-row md:flex-wrap')}
       onSubmit={(event) => {
         event.preventDefault();

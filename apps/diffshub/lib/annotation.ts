@@ -26,15 +26,6 @@ const AVATAR_NAMES = [
   'zac',
 ] as const;
 
-// Triggers browser fetches for all avatar images so they are in the cache
-// before the comment form opens. Call once on mount of the top-level UI component.
-export function preloadAvatars(): void {
-  for (const name of AVATAR_NAMES) {
-    const img = new Image();
-    img.src = `/diffshub-avatars/${name}.png`;
-  }
-}
-
 // Picks a random demo persona as the comment author. Used as the fallback
 // identity when no GitHub token is saved (or the token cannot resolve /user);
 // intended as a useState lazy initializer so each new draft form gets a fresh

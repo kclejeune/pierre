@@ -19,7 +19,7 @@ import {
 } from '@/lib/githubPullSummaries';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
-import { isValidRepoName } from '@/lib/pinnedRepos';
+import { isValidRepoName, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
 
 // Pull request lists for the /pulls dashboard: cross-repo buckets built on
 // @me search qualifiers (optionally scoped to one repo, for pinned-repo cards
@@ -44,6 +44,18 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
+    const exclude = params.get('exclude');
+    const excludeRepos =
+      exclude == null || exclude === '' ? [] : exclude.split(',');
+    if (
+      excludeRepos.length > MAX_PINNED_REPOS ||
+      !excludeRepos.every(isValidRepoName)
+    ) {
+      return createJSONResponse(
+        { error: 'exclude must be a short list of owner/name repos.' },
+        { status: 400 }
+      );
+    }
     // The @me qualifiers resolve to whoever the token belongs to, so the
     // deployment fallback token must never stand in here: it would silently
     // return the fallback identity's pull requests to anonymous viewers.
@@ -61,7 +73,10 @@ export async function GET(request: NextRequest) {
         advanced_search: 'true',
         order: 'desc',
         per_page: '25',
-        q: buildBucketSearchQuery(bucket, repo ?? undefined),
+        q: buildBucketSearchQuery(
+          bucket,
+          repo != null ? { repo } : { excludeRepos }
+        ),
         sort: 'updated',
       }),
       token

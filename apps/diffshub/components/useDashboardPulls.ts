@@ -13,7 +13,9 @@ export interface DashboardPullsState {
 }
 
 export type DashboardPullsSource =
-  | { kind: 'bucket'; bucket: PullBucket }
+  // The main bucket list; excludeRepos drops pulls from repos already shown
+  // in the pinned cards above it.
+  | { kind: 'bucket'; bucket: PullBucket; excludeRepos?: readonly string[] }
   // A pinned repo's card, scoped to the dashboard's active bucket tab.
   | { kind: 'repo'; repo: string; bucket: PullBucket };
 
@@ -68,9 +70,15 @@ export function useDashboardPulls(
     totalCount: 0,
   });
 
+  const excludeRepos =
+    source.kind === 'bucket' ? (source.excludeRepos ?? []) : [];
+  const excludeParam =
+    excludeRepos.length > 0
+      ? `&exclude=${encodeURIComponent(excludeRepos.join(','))}`
+      : '';
   const sourceKey =
     source.kind === 'bucket'
-      ? `bucket=${encodeURIComponent(source.bucket)}`
+      ? `bucket=${encodeURIComponent(source.bucket)}${excludeParam}`
       : `bucket=${encodeURIComponent(source.bucket)}&repo=${encodeURIComponent(source.repo)}`;
 
   useEffect(() => {

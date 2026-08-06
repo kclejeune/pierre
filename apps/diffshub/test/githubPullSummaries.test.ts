@@ -32,8 +32,18 @@ describe('buildBucketSearchQuery', () => {
   });
 
   test('appends a repo qualifier when scoped to a pinned repo', () => {
-    expect(buildBucketSearchQuery('created', 'oven-sh/bun')).toBe(
+    expect(buildBucketSearchQuery('created', { repo: 'oven-sh/bun' })).toBe(
       'is:open is:pr archived:false author:@me repo:oven-sh/bun'
+    );
+  });
+
+  test('appends -repo qualifiers when excluding pinned repos', () => {
+    expect(
+      buildBucketSearchQuery('created', {
+        excludeRepos: ['oven-sh/bun', 'ziglang/zig'],
+      })
+    ).toBe(
+      'is:open is:pr archived:false author:@me -repo:oven-sh/bun -repo:ziglang/zig'
     );
   });
 

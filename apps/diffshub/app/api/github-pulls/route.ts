@@ -22,7 +22,8 @@ import { parseBearerToken } from '@/lib/parseBearerToken';
 import { isValidRepoName } from '@/lib/pinnedRepos';
 
 // Pull request lists for the /pulls dashboard: cross-repo buckets built on
-// @me search qualifiers, and per-repo open pull lists for pinned repos.
+// @me search qualifiers (optionally scoped to one repo, for pinned-repo cards
+// following the active bucket tab), and per-repo open pull lists.
 
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
@@ -34,6 +35,12 @@ export async function GET(request: NextRequest) {
     if (!isPullBucket(bucket)) {
       return createJSONResponse(
         { error: 'bucket must be created, assigned, or review-requested.' },
+        { status: 400 }
+      );
+    }
+    if (repo != null && !isValidRepoName(repo)) {
+      return createJSONResponse(
+        { error: 'repo must look like owner/name.' },
         { status: 400 }
       );
     }
@@ -54,7 +61,7 @@ export async function GET(request: NextRequest) {
         advanced_search: 'true',
         order: 'desc',
         per_page: '25',
-        q: buildBucketSearchQuery(bucket),
+        q: buildBucketSearchQuery(bucket, repo ?? undefined),
         sort: 'updated',
       }),
       token

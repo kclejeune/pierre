@@ -34,8 +34,14 @@ const BUCKET_QUALIFIERS: Record<PullBucket, string> = {
   'review-requested': 'review-requested:@me',
 };
 
-export function buildBucketSearchQuery(bucket: PullBucket): string {
-  return `is:open is:pr archived:false ${BUCKET_QUALIFIERS[bucket]}`;
+// Optionally scoped to a single "owner/name" repository, for pinned-repo
+// cards that follow the dashboard's active bucket tab.
+export function buildBucketSearchQuery(
+  bucket: PullBucket,
+  repo?: string
+): string {
+  const base = `is:open is:pr archived:false ${BUCKET_QUALIFIERS[bucket]}`;
+  return repo == null ? base : `${base} repo:${repo}`;
 }
 
 // repository_url looks like https://api.github.com/repos/{owner}/{repo} on

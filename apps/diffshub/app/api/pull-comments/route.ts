@@ -22,6 +22,9 @@ import type {
 //   POST   {owner, repo, pull, body, inReplyToId}          → reply to a thread
 //   POST   {owner, repo, pull, body, path, line, side, …}  → new comment
 //   POST   {owner, repo, pull, body, discussion: true}     → new PR-level comment
+//   POST   {owner, repo, pull, review: true, event, body, comments} → submit a
+//          review: verdict (APPROVE / REQUEST_CHANGES / COMMENT), optional
+//          summary body, and the batched inline comments, in one call
 //   PATCH  {owner, repo, commentId, body}                  → edit a comment
 //   PATCH  {owner, repo, commentId, body, discussion: true} → edit PR-level
 //   DELETE ?owner&repo&commentId                           → delete a comment
@@ -171,21 +174,29 @@ export async function POST(request: NextRequest) {
   const owner = payload?.owner;
   const repo = payload?.repo;
   const pull = payload?.pull;
-  const body = payload?.body;
-  if (
-    !isValidSegment(owner) ||
-    !isValidSegment(repo) ||
-    !isValidNumber(pull) ||
-    typeof body !== 'string' ||
-    body.trim() === ''
-  ) {
+  if (!isValidSegment(owner) || !isValidSegment(repo) || !isValidNumber(pull)) {
     return createJSONResponse(
-      { error: 'owner, repo, pull, and a non-empty body are required.' },
+      { error: 'owner, repo, and pull are required.' },
       { status: 400 }
     );
   }
 
   const environment = getGitHubEnvironment();
+
+  // Review submission allows an empty body (a bare approval), so it validates
+  // before the shared non-empty body check the comment branches rely on.
+  if (payload?.review === true) {
+    return await submitReview(environment, token, owner, repo, pull, payload);
+  }
+
+  const body = payload?.body;
+  if (typeof body !== 'string' || body.trim() === '') {
+    return createJSONResponse(
+      { error: 'A non-empty body is required.' },
+      { status: 400 }
+    );
+  }
+
   const inReplyToId = payload?.inReplyToId;
   try {
     if (payload?.discussion === true) {
@@ -237,22 +248,15 @@ export async function POST(request: NextRequest) {
 
     // New review comments must reference the diff revision they were written
     // against; resolve the pull's current head commit server-side.
-    const pullResponse = await fetch(
-      createGitHubAPIURL(environment, `/repos/${owner}/${repo}/pulls/${pull}`),
-      { cache: 'no-store', headers: buildGitHubHeaders(token) }
+    const commitId = await resolvePullHeadCommit(
+      environment,
+      token,
+      owner,
+      repo,
+      pull
     );
-    if (!pullResponse.ok) {
-      return createGitHubFailureResponse(pullResponse);
-    }
-    const pullData = (await pullResponse.json()) as {
-      head?: { sha?: unknown };
-    };
-    const commitId = pullData.head?.sha;
     if (typeof commitId !== 'string') {
-      return createJSONResponse(
-        { error: 'Could not resolve the pull request head commit.' },
-        { status: 502 }
-      );
+      return commitId;
     }
 
     const startLine = payload?.startLine;
@@ -379,6 +383,156 @@ export async function DELETE(request: NextRequest) {
   } catch {
     return createUnreachableResponse(environment);
   }
+}
+
+const REVIEW_EVENTS = new Set(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']);
+
+// Creates and submits a pull-request review in one call: the verdict, an
+// optional summary body, and the batched inline comments. GitHub creates a
+// PENDING review only when `event` is omitted, so always sending it means no
+// server-side draft state is ever left behind.
+async function submitReview(
+  environment: GitHubEnvironment,
+  token: string,
+  owner: string,
+  repo: string,
+  pull: string,
+  payload: Record<string, unknown>
+): Promise<Response> {
+  const event = payload.event;
+  const body = typeof payload.body === 'string' ? payload.body : '';
+  if (typeof event !== 'string' || !REVIEW_EVENTS.has(event)) {
+    return createJSONResponse(
+      { error: 'event must be APPROVE, REQUEST_CHANGES, or COMMENT.' },
+      { status: 400 }
+    );
+  }
+  const comments = normalizeReviewDraftComments(payload.comments);
+  if (comments == null) {
+    return createJSONResponse(
+      { error: 'comments must be {path, line, side, body} entries.' },
+      { status: 400 }
+    );
+  }
+  if (event === 'COMMENT' && body.trim() === '' && comments.length === 0) {
+    return createJSONResponse(
+      { error: 'A comment review needs a summary or at least one comment.' },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const commitId = await resolvePullHeadCommit(
+      environment,
+      token,
+      owner,
+      repo,
+      pull
+    );
+    if (typeof commitId !== 'string') {
+      return commitId;
+    }
+    const response = await fetch(
+      createGitHubAPIURL(
+        environment,
+        `/repos/${owner}/${repo}/pulls/${pull}/reviews`
+      ),
+      {
+        method: 'POST',
+        headers: buildGitHubHeaders(token),
+        body: JSON.stringify({
+          body,
+          comments: comments.length > 0 ? comments : undefined,
+          commit_id: commitId,
+          event,
+        }),
+      }
+    );
+    if (!response.ok) {
+      return createGitHubFailureResponse(response);
+    }
+    // May be null for a bodiless COMMENTED review (dropped from the
+    // discussion feed by design); the client refetches comments regardless.
+    return createJSONResponse({
+      review: normalizeReviewSummary(await response.json()),
+    });
+  } catch {
+    return createUnreachableResponse(environment);
+  }
+}
+
+// Validates the batched inline comments for a review submission, mapping them
+// to GitHub's snake_case anchor fields. Returns null when any entry is
+// malformed so the route can reject the whole batch.
+function normalizeReviewDraftComments(
+  value: unknown
+): Record<string, unknown>[] | null {
+  if (value == null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const comments: Record<string, unknown>[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry == null) {
+      return null;
+    }
+    const record = entry as Record<string, unknown>;
+    const path = record.path;
+    const line = record.line;
+    const side = record.side;
+    const body = record.body;
+    if (
+      typeof path !== 'string' ||
+      path === '' ||
+      typeof line !== 'number' ||
+      !isGitHubDiffSide(side) ||
+      typeof body !== 'string' ||
+      body.trim() === ''
+    ) {
+      return null;
+    }
+    const comment: Record<string, unknown> = { body, line, path, side };
+    // GitHub rejects start_line equal to line (same as single comments).
+    if (typeof record.startLine === 'number' && record.startLine !== line) {
+      comment.start_line = record.startLine;
+      comment.start_side = isGitHubDiffSide(record.startSide)
+        ? record.startSide
+        : side;
+    }
+    comments.push(comment);
+  }
+  return comments;
+}
+
+// Resolves the pull's current head commit, or a ready-to-return failure
+// Response when GitHub refuses or answers with an unexpected shape.
+async function resolvePullHeadCommit(
+  environment: GitHubEnvironment,
+  token: string,
+  owner: string,
+  repo: string,
+  pull: string
+): Promise<string | Response> {
+  const pullResponse = await fetch(
+    createGitHubAPIURL(environment, `/repos/${owner}/${repo}/pulls/${pull}`),
+    { cache: 'no-store', headers: buildGitHubHeaders(token) }
+  );
+  if (!pullResponse.ok) {
+    return createGitHubFailureResponse(pullResponse);
+  }
+  const pullData = (await pullResponse.json()) as {
+    head?: { sha?: unknown };
+  };
+  const commitId = pullData.head?.sha;
+  if (typeof commitId !== 'string') {
+    return createJSONResponse(
+      { error: 'Could not resolve the pull request head commit.' },
+      { status: 502 }
+    );
+  }
+  return commitId;
 }
 
 // Normalizes a GitHub review-comment payload into the app's shape, dropping

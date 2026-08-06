@@ -19,6 +19,7 @@ import { DiffsHubHeader } from './DiffsHubHeader';
 import { DiffsHubSidebar } from './DiffsHubSidebar';
 import { DiffsHubStatusPanel } from './DiffsHubStatusPanel';
 import { DiffsHubViewer } from './DiffsHubViewer';
+import { ReviewSubmitControl } from './ReviewSubmitControl';
 import { ThemeSourceProvider } from './ThemeSourceProvider';
 import { useGitHubToken } from './useGitHubToken';
 import { usePatchLoader } from './usePatchLoader';
@@ -29,13 +30,29 @@ import {
   themeController,
 } from '@/components/themeController';
 import { preloadAvatars } from '@/lib/annotation';
+import {
+  compileCollapsePatterns,
+  loadCollapsePatternsText,
+  parseCollapsePatterns,
+  saveCollapsePatternsText,
+} from '@/lib/collapsePatterns';
+import {
+  loadDisplaySettings,
+  saveDisplaySettings,
+} from '@/lib/displaySettings';
 import { createGitHubDiffFileLoader } from '@/lib/githubDiffFileLoader';
 import { parseGitHubDiffSource } from '@/lib/githubDiffSource';
+import { incrementItemVersion } from '@/lib/incrementItemVersion';
+import { isDiffItem } from '@/lib/isDiffItem';
 import {
+  createCommentAnchor,
   deletePullDiscussionComment,
   editPullDiscussionComment,
   postPullDiscussionComment,
   type PullRequestRef,
+  type PullReviewDraftComment,
+  type PullReviewEvent,
+  submitPullReview,
 } from '@/lib/pullCommentsClient';
 import { removeSavedCommentSidebarEntry } from '@/lib/removeSavedCommentSidebarEntry';
 import type { DarkThemeName, LightThemeName } from '@/lib/themeNames';
@@ -44,6 +61,7 @@ import type {
   DiffsHubDeletedCommentEvent,
   DiffsHubSavedCommentEntry,
   DiffsHubSavedCommentEvent,
+  PendingReviewComment,
   PullDiscussionComment,
 } from '@/lib/types';
 import { upsertSavedCommentSidebarEntry } from '@/lib/upsertSavedCommentSidebarEntry';
@@ -69,10 +87,33 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
 
   const isWorkerPoolReadyOrDisable = useIsWorkerPoolReadyOrDisabled();
   const [diffStyle, setDiffStyle] = useState<'split' | 'unified'>('split');
+  // The user's explicit split/unified pick. The live diffStyle is viewport-
+  // managed (mobile always renders unified), so only this preference — not
+  // the effective style — persists and is restored on desktop.
+  const [diffStylePreference, setDiffStylePreference] = useState<
+    'split' | 'unified' | null
+  >(null);
+  const diffStylePreferenceRef = useRef<'split' | 'unified' | null>(null);
+  const handleSetDiffStyle = useCallback((style: 'split' | 'unified') => {
+    diffStylePreferenceRef.current = style;
+    setDiffStylePreference(style);
+    setDiffStyle(style);
+  }, []);
   const [collapseMode, setCollapseMode] = useState<'expanded' | 'collapsed'>(
     'expanded'
   );
   const [fileTreeOverlayOpen, setFileTreeOverlayOpen] = useState(false);
+  const [markdownView, setMarkdownView] = useState<'rendered' | 'raw'>('raw');
+  // Auto-collapse patterns are a persisted personal preference; load them
+  // after mount so the SSR markup stays deterministic.
+  const [collapsePatternsText, setCollapsePatternsText] = useState('');
+  useEffect(() => {
+    setCollapsePatternsText(loadCollapsePatternsText());
+  }, []);
+  const collapsePatterns = useMemo(
+    () => compileCollapsePatterns(parseCollapsePatterns(collapsePatternsText)),
+    [collapsePatternsText]
+  );
   const [overflow, setOverflow] = useState<'wrap' | 'scroll'>('scroll');
   const [showBackgrounds, setShowBackgrounds] = useState(true);
   const [diffIndicators, setDiffIndicators] = useState<DiffIndicators>('bars');
@@ -177,33 +218,104 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
   }, []);
   const {
     applyCollapseModeToLoaded,
+    applyCollapsePatternsToLoaded,
+    applyMarkdownViewToLoaded,
     commentFileByItemId,
     commentSections,
     diffStats,
     errorMessage,
     initialItems,
+    isFileReviewed,
     loadState,
     onLineLinkChange,
     onViewerReady,
     recordViewTarget,
     retryLoad,
     setCommentSections,
+    setFileReviewed,
     treeSource,
     viewerKey,
   } = usePatchLoader({
     collapseMode,
+    collapsePatterns,
     domain,
     getGitHubToken,
     githubTokenVersion,
+    markdownView,
     onLoadStart: handlePatchLoadStart,
     path,
     viewerRef,
   });
 
+  // Restore persisted display settings after mount (the server render uses
+  // the defaults, so hydrating in an effect keeps SSR markup deterministic —
+  // same pattern as the theme controller). The apply* calls also rewrite any
+  // items that may have loaded before this effect ran. Saving is gated on
+  // hydration so the defaults never clobber stored values.
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
+  useEffect(() => {
+    const stored = loadDisplaySettings();
+    if (stored.diffStyle != null) {
+      diffStylePreferenceRef.current = stored.diffStyle;
+      setDiffStylePreference(stored.diffStyle);
+      if (!window.matchMedia('(max-width: 767px)').matches) {
+        setDiffStyle(stored.diffStyle);
+      }
+    }
+    if (stored.collapseMode != null) {
+      setCollapseMode(stored.collapseMode);
+      applyCollapseModeToLoaded(stored.collapseMode);
+    }
+    if (stored.markdownView != null) {
+      setMarkdownView(stored.markdownView);
+      applyMarkdownViewToLoaded(stored.markdownView);
+    }
+    if (stored.diffIndicators != null) {
+      setDiffIndicators(stored.diffIndicators);
+    }
+    if (stored.lineNumbers != null) {
+      setLineNumbers(stored.lineNumbers);
+    }
+    if (stored.overflow != null) {
+      setOverflow(stored.overflow);
+    }
+    if (stored.showBackgrounds != null) {
+      setShowBackgrounds(stored.showBackgrounds);
+    }
+    setSettingsHydrated(true);
+  }, [applyCollapseModeToLoaded, applyMarkdownViewToLoaded]);
+  useEffect(() => {
+    if (!settingsHydrated) {
+      return;
+    }
+    saveDisplaySettings({
+      collapseMode,
+      diffIndicators,
+      lineNumbers,
+      markdownView,
+      overflow,
+      showBackgrounds,
+      ...(diffStylePreference != null
+        ? { diffStyle: diffStylePreference }
+        : {}),
+    });
+  }, [
+    collapseMode,
+    diffIndicators,
+    diffStylePreference,
+    lineNumbers,
+    markdownView,
+    overflow,
+    settingsHydrated,
+    showBackgrounds,
+  ]);
+
   useEffect(() => {
     const mediaQuery = window.matchMedia('(max-width: 767px)');
     const updateMobileState = (matches: boolean) => {
-      setDiffStyle(matches ? 'unified' : 'split');
+      setDiffStyle(
+        matches ? 'unified' : (diffStylePreferenceRef.current ?? 'split')
+      );
       if (!matches) setFileTreeOverlayOpen(false);
     };
     const handleChange = (event: MediaQueryListEvent) => {
@@ -242,6 +354,35 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     setCollapseMode(next);
     applyCollapseModeToLoaded(next);
   }, [applyCollapseModeToLoaded, collapseMode]);
+  const handleToggleMarkdownView = useCallback(() => {
+    const next = markdownView === 'rendered' ? 'raw' : 'rendered';
+    setMarkdownView(next);
+    applyMarkdownViewToLoaded(next);
+  }, [applyMarkdownViewToLoaded, markdownView]);
+  const handleCollapsePatternsChange = useCallback(
+    (text: string) => {
+      setCollapsePatternsText(text);
+      saveCollapsePatternsText(text);
+      applyCollapsePatternsToLoaded(
+        compileCollapsePatterns(parseCollapsePatterns(text))
+      );
+    },
+    [applyCollapsePatternsToLoaded]
+  );
+  // A file-header click behaves like selecting the file in the tree: scroll
+  // the file to the top and record it as the URL hash target.
+  const handleFileHeaderSelect = useCallback(
+    (itemId: string) => {
+      viewerRef.current?.scrollTo({
+        type: 'item',
+        id: itemId,
+        align: 'start',
+        behavior: 'smooth',
+      });
+      recordViewTarget(itemId);
+    },
+    [recordViewTarget]
+  );
   const handleCommentSaved = useCallback(
     (comment: DiffsHubSavedCommentEvent) => {
       setCommentSections((prev) =>
@@ -258,12 +399,16 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     setViewerReadyTick((tick) => tick + 1);
   }, [onViewerReady]);
   const [discussion, setDiscussion] = useState<PullDiscussionComment[]>([]);
+  // Bumped after a review submission so the thread hook refetches and injects
+  // the newly created GitHub threads (and the review summary in discussion).
+  const [threadsRefreshTick, setThreadsRefreshTick] = useState(0);
   usePullReviewThreads({
     loadState,
     onDiscussionLoaded: setDiscussion,
     onThreadApplied: handleCommentSaved,
     pathToItemId: treeSource?.pathToItemId ?? null,
     pullRequest,
+    refreshTick: threadsRefreshTick,
     token: githubToken,
     viewerKey,
     viewerReadyTick,
@@ -379,6 +524,89 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     },
     [setCommentSections]
   );
+  // The in-progress batched review, keyed by item id + annotation key. The
+  // viewer keeps this in sync as pending cards are added/edited/deleted; the
+  // header control submits the whole batch with a verdict.
+  const [pendingReviewComments, setPendingReviewComments] = useState<
+    ReadonlyMap<string, PendingReviewComment>
+  >(new Map());
+  const handlePendingReviewCommentUpserted = useCallback(
+    (entry: PendingReviewComment) => {
+      setPendingReviewComments((prev) =>
+        new Map(prev).set(`${entry.itemId} ${entry.key}`, entry)
+      );
+    },
+    []
+  );
+  const handlePendingReviewCommentRemoved = useCallback(
+    (itemId: string, key: string) => {
+      setPendingReviewComments((prev) => {
+        const mapKey = `${itemId} ${key}`;
+        if (!prev.has(mapKey)) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.delete(mapKey);
+        return next;
+      });
+    },
+    []
+  );
+  const handleSubmitReview = useCallback(
+    async (event: PullReviewEvent, body: string) => {
+      const token = githubTokenRef.current;
+      if (pullRequest == null || token === '') {
+        throw new Error(
+          'Submitting a review requires signing in or saving a token.'
+        );
+      }
+      const entries = [...pendingReviewComments.values()];
+      const comments: PullReviewDraftComment[] = [];
+      for (const entry of entries) {
+        const anchor = createCommentAnchor(entry.path, entry.range);
+        if (anchor != null) {
+          comments.push({ ...anchor, body: entry.message });
+        }
+      }
+      try {
+        await submitPullReview(pullRequest, token, event, body, comments);
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : 'Submitting the review failed.'
+        );
+        throw error;
+      }
+      // Drop the local pending cards and their sidebar entries; the refetch
+      // below re-injects the submitted comments as real GitHub threads and
+      // adds the review summary to the discussion feed.
+      const viewer = viewerRef.current;
+      for (const entry of entries) {
+        const item = viewer?.getItem(entry.itemId);
+        if (
+          viewer != null &&
+          item != null &&
+          isDiffItem(item) &&
+          item.annotations != null
+        ) {
+          const nextAnnotations = item.annotations.filter(
+            (annotation) => annotation.metadata.key !== entry.key
+          );
+          if (nextAnnotations.length !== item.annotations.length) {
+            item.annotations = nextAnnotations;
+            incrementItemVersion(item);
+            viewer.updateItem(item);
+          }
+        }
+        handleCommentDeleted({ itemId: entry.itemId, key: entry.key });
+      }
+      setPendingReviewComments(new Map());
+      setThreadsRefreshTick((tick) => tick + 1);
+      toast.success('Review submitted.');
+    },
+    [handleCommentDeleted, pendingReviewComments, pullRequest]
+  );
   const handleToggleFileTreeOverlay = useCallback(() => {
     setFileTreeOverlayOpen((open) => !open);
   }, []);
@@ -443,6 +671,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
       <DiffsHubHeader
         className="[grid-area:header]"
         collapseMode={collapseMode}
+        collapsePatternsText={collapsePatternsText}
         colorMode={colorMode}
         darkThemeName={darkThemeName}
         diffIndicators={diffIndicators}
@@ -450,18 +679,30 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
         initialUrl={initialUrl}
         lightThemeName={lightThemeName}
         lineNumbers={lineNumbers}
+        markdownView={markdownView}
         overflow={overflow}
+        reviewControl={
+          pullRequest != null ? (
+            <ReviewSubmitControl
+              canWrite={hasGitHubToken}
+              pendingCount={pendingReviewComments.size}
+              onSubmit={handleSubmitReview}
+            />
+          ) : undefined
+        }
         fileTreeOverlayOpen={fileTreeOverlayOpen}
         fileTreeAvailable={treeSource != null}
         githubTokenActive={hasGitHubToken}
         onClearGitHubToken={clearGitHubToken}
+        onCollapsePatternsChange={handleCollapsePatternsChange}
         onSaveGitHubToken={setGitHubToken}
         onToggleCollapseMode={handleToggleCollapseMode}
         onToggleFileTreeOverlay={handleToggleFileTreeOverlay}
+        onToggleMarkdownView={handleToggleMarkdownView}
         setColorMode={setColorMode}
         setDarkThemeName={setDarkThemeName}
         setDiffIndicators={setDiffIndicators}
-        setDiffStyle={setDiffStyle}
+        setDiffStyle={handleSetDiffStyle}
         setLightThemeName={setLightThemeName}
         setLineNumbers={setLineNumbers}
         setOverflow={setOverflow}
@@ -502,9 +743,15 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
             pullRequest={pullRequest}
             sourcePath={domain == null ? path : undefined}
             getGitHubToken={getGitHubToken}
+            isFileReviewed={isFileReviewed}
+            pendingReviewCount={pendingReviewComments.size}
             onCommentDeleted={handleCommentDeleted}
             onCommentSaved={handleCommentSaved}
+            onFileHeaderSelect={handleFileHeaderSelect}
             onLineLinkChange={onLineLinkChange}
+            onPendingReviewCommentRemoved={handlePendingReviewCommentRemoved}
+            onPendingReviewCommentUpserted={handlePendingReviewCommentUpserted}
+            onSetFileReviewed={setFileReviewed}
             onViewerReady={handleViewerReady}
           />
         </>

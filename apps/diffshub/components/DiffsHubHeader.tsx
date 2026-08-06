@@ -1,5 +1,6 @@
 import type { DiffIndicators } from '@pierre/diffs';
 import {
+  IconBook,
   IconCheck,
   IconChevronSm,
   IconCodeStyleBars,
@@ -22,6 +23,7 @@ import {
   type CSSProperties,
   type Dispatch,
   memo,
+  type ReactNode,
   type SetStateAction,
   useLayoutEffect,
   useMemo,
@@ -57,6 +59,7 @@ const SETTING_ROW_CLASS =
 interface HeaderProps {
   className?: string;
   collapseMode: 'expanded' | 'collapsed';
+  collapsePatternsText: string;
   colorMode: ColorMode;
   darkThemeName: DarkThemeName;
   diffIndicators: DiffIndicators;
@@ -67,15 +70,21 @@ interface HeaderProps {
   initialUrl: string;
   lightThemeName: LightThemeName;
   lineNumbers: boolean;
+  markdownView: 'rendered' | 'raw';
   overflow: 'wrap' | 'scroll';
+  // PR-only review submission control (pending-count badge + verdict panel),
+  // provided by the parent so the header stays source-agnostic.
+  reviewControl?: ReactNode;
   onClearGitHubToken(): void;
+  onCollapsePatternsChange(text: string): void;
   onSaveGitHubToken(token: string): void;
   onToggleCollapseMode(): void;
   onToggleFileTreeOverlay(): void;
+  onToggleMarkdownView(): void;
   setColorMode(mode: ColorMode): void;
   setDarkThemeName(name: DarkThemeName): void;
   setDiffIndicators: Dispatch<SetStateAction<DiffIndicators>>;
-  setDiffStyle: Dispatch<SetStateAction<'split' | 'unified'>>;
+  setDiffStyle(style: 'split' | 'unified'): void;
   setLightThemeName(name: LightThemeName): void;
   setLineNumbers: Dispatch<SetStateAction<boolean>>;
   setOverflow: Dispatch<SetStateAction<'wrap' | 'scroll'>>;
@@ -86,6 +95,7 @@ interface HeaderProps {
 export const DiffsHubHeader = memo(function DiffsHubHeader({
   className,
   collapseMode,
+  collapsePatternsText,
   colorMode,
   darkThemeName,
   diffIndicators,
@@ -96,11 +106,15 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
   initialUrl,
   lightThemeName,
   lineNumbers,
+  markdownView,
   overflow,
+  reviewControl,
   onClearGitHubToken,
+  onCollapsePatternsChange,
   onSaveGitHubToken,
   onToggleCollapseMode,
   onToggleFileTreeOverlay,
+  onToggleMarkdownView,
   setColorMode,
   setDarkThemeName,
   setDiffIndicators,
@@ -182,6 +196,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
             </>
           )}
           <div className="flex items-center">
+            {reviewControl}
             <Button
               type="button"
               variant="ghost"
@@ -201,6 +216,24 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
               ) : (
                 <IconDiffUnified className="size-4 md:size-3" />
               )}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-md"
+              aria-pressed={markdownView === 'rendered'}
+              title={
+                markdownView === 'rendered'
+                  ? 'Show raw markdown'
+                  : 'Render markdown files'
+              }
+              className={cn(
+                CHROME_ICON_BUTTON_CLASS,
+                markdownView === 'rendered' && 'text-foreground bg-muted'
+              )}
+              onClick={onToggleMarkdownView}
+            >
+              <IconBook className="size-4 md:size-3" />
             </Button>
             <Button
               type="button"
@@ -314,6 +347,35 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
                     </ButtonGroupItem>
                   </ButtonGroup>
                 </DropdownMenuItem>
+                <div className="bg-border/70 my-2 h-px" />
+                <div className="px-2 py-1.5">
+                  <label
+                    className="flex flex-col gap-1.5 text-sm"
+                    htmlFor="diffshub-collapse-patterns"
+                  >
+                    <span>Auto-collapse files</span>
+                    <textarea
+                      id="diffshub-collapse-patterns"
+                      value={collapsePatternsText}
+                      rows={2}
+                      spellCheck={false}
+                      placeholder={'vendor/**\n*.pb.go'}
+                      className="field-sizing-content max-h-40 w-full resize-none rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))] bg-transparent px-2 py-1.5 font-mono text-xs text-inherit placeholder:text-[var(--diffshub-popover-muted-fg,var(--color-muted-foreground))] focus:outline-none"
+                      onChange={({ currentTarget }) =>
+                        onCollapsePatternsChange(currentTarget.value)
+                      }
+                      // Keep typing (incl. spaces/letters) inside the
+                      // textarea instead of triggering Radix menu typeahead
+                      // or item activation.
+                      onKeyDown={(event) => event.stopPropagation()}
+                    />
+                  </label>
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    One glob per line; matching files load collapsed. `**`
+                    crosses directories, a bare name collapses the whole
+                    directory.
+                  </p>
+                </div>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

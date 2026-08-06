@@ -30,6 +30,9 @@ interface UsePullReviewThreadsOptions {
   onThreadApplied(event: DiffsHubSavedCommentEvent): void;
   pathToItemId: ReadonlyMap<string, string> | null;
   pullRequest: PullRequestRef | undefined;
+  // Bumped after writes that create comments outside the annotation flow
+  // (review submission), to refetch and inject the fresh threads.
+  refreshTick?: number;
   token: string;
   viewerKey: number;
   // Bumped by the parent whenever the CodeView handle mounts, so application
@@ -48,6 +51,7 @@ export function usePullReviewThreads({
   onThreadApplied,
   pathToItemId,
   pullRequest,
+  refreshTick = 0,
   token,
   viewerKey,
   viewerReadyTick,
@@ -84,8 +88,11 @@ export function usePullReviewThreads({
       controller.abort();
     };
     // token re-runs the fetch when the user signs in/out; viewerKey re-runs
-    // it on reload so re-applied annotations are fresh.
-  }, [pullRequest, token, viewerKey]);
+    // it on reload so re-applied annotations are fresh; refreshTick re-runs
+    // it after a review submission. Resetting appliedViewerKeyRef above lets
+    // the apply effect run again — already-injected threads are deduped by
+    // key, so only the fresh ones land.
+  }, [pullRequest, refreshTick, token, viewerKey]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

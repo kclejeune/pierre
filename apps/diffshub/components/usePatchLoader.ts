@@ -18,6 +18,7 @@ import {
   useState,
 } from 'react';
 
+import { matchesCollapsePattern } from '@/lib/collapsePatterns';
 import { CODE_VIEW_BATCH_COUNT, getInitialBatchSize } from '@/lib/constants';
 import {
   appendFileDiffToDiffsHubData,
@@ -27,6 +28,7 @@ import {
   snapshotDiffsHubTreeSource,
   takePendingDiffsHubItems,
 } from '@/lib/diffsHubDataAccumulator';
+import { applyDocPreviewToItem } from '@/lib/docPreview';
 import { getPatchTreePathPrefix } from '@/lib/gitPatchMetadata';
 import {
   type DiffsHubLineHashTarget,
@@ -34,6 +36,11 @@ import {
   formatDiffsHubLineHash,
   parseDiffsHubLineHash,
 } from '@/lib/lineHash';
+import {
+  getFileDiffFingerprint,
+  loadReviewedFiles,
+  saveReviewedFiles,
+} from '@/lib/reviewedFiles';
 import {
   getStreamedPatchMetadata,
   streamGitPatchFiles,
@@ -62,9 +69,13 @@ const GENERIC_PATCH_LOAD_ERROR_MESSAGE =
 
 interface UsePatchLoaderOptions {
   collapseMode: 'expanded' | 'collapsed';
+  // Compiled auto-collapse globs; matching files arrive collapsed.
+  collapsePatterns?: readonly RegExp[];
   domain?: string;
   getGitHubToken?(): string | undefined;
   githubTokenVersion?: number | string;
+  // Whether markdown files should show their rendered document by default.
+  markdownView?: 'rendered' | 'raw';
   onLoadStart(): void;
   path: string;
   viewerRef: RefObject<CodeViewHandle<CommentMetadata> | null>;
@@ -72,26 +83,32 @@ interface UsePatchLoaderOptions {
 
 interface UsePatchLoaderResult {
   applyCollapseModeToLoaded(mode: 'expanded' | 'collapsed'): void;
+  applyCollapsePatternsToLoaded(patterns: readonly RegExp[]): void;
+  applyMarkdownViewToLoaded(view: 'rendered' | 'raw'): void;
   commentFileByItemId: DiffsHubCommentFileByItemId | null;
   commentSections: DiffsHubSavedCommentItem[];
   diffStats: DiffsHubDiffStats | null;
   errorMessage: string | null;
   initialItems: CodeViewItem<CommentMetadata>[];
+  isFileReviewed(item: CodeViewItem<CommentMetadata>): boolean;
   loadState: ViewerLoadState;
   onLineLinkChange(selection: CodeViewLineSelection | null): void;
   onViewerReady(): void;
   recordViewTarget(itemId: string, range?: SelectedLineRange): void;
   retryLoad(): void;
   setCommentSections: Dispatch<SetStateAction<DiffsHubSavedCommentItem[]>>;
+  setFileReviewed(itemId: string, reviewed: boolean): void;
   treeSource: DiffsHubFileTreeSource | null;
   viewerKey: number;
 }
 
 export function usePatchLoader({
   collapseMode,
+  collapsePatterns,
   domain,
   getGitHubToken,
   githubTokenVersion = 0,
+  markdownView = 'raw',
   onLoadStart,
   path,
   viewerRef,
@@ -127,22 +144,62 @@ export function usePatchLoader({
   // having to re-bind it on every change.
   const collapseModeRef = useRef(collapseMode);
   collapseModeRef.current = collapseMode;
+  const collapsePatternsRef = useRef(collapsePatterns);
+  collapsePatternsRef.current = collapsePatterns;
+  const markdownViewRef = useRef(markdownView);
+  markdownViewRef.current = markdownView;
+  // Reviewed-file marks for the current diff source, loaded from localStorage
+  // when a load starts and kept authoritative in memory afterwards.
+  const reviewedFilesRef = useRef<Map<string, string>>(new Map());
+  const reviewedSourceKeyRef = useRef('');
 
   // Pre-mutates fresh items so they arrive in the viewer matching the current
   // collapse mode, then records their ids for later bulk updates. Diff items
   // are normalized in both directions because the accumulator initializes
   // deleted-file diffs as collapsed by default — without an unconditional
   // overwrite, those would stay collapsed even when the user is in expanded
-  // mode.
+  // mode. On top of the mode, three per-file defaults apply: reviewed files
+  // (still matching their stored fingerprint) and auto-collapse pattern
+  // matches arrive collapsed, and markdown files open their rendered document
+  // when the global markdown view is 'rendered'. A reviewed mark whose
+  // fingerprint no longer matches is stale — the file changed since it was
+  // reviewed — and is dropped here.
   const prepareItemsForViewer = (
     items: readonly CodeViewItem<CommentMetadata>[]
   ): void => {
     const targetCollapsed = collapseModeRef.current === 'collapsed';
+    const patterns = collapsePatternsRef.current;
+    const reviewed = reviewedFilesRef.current;
+    let reviewedChanged = false;
     for (const item of items) {
       loadedItemIdsRef.current.add(item.id);
-      if (item.type === 'diff') {
-        item.collapsed = targetCollapsed;
+      if (item.type !== 'diff') {
+        continue;
       }
+      item.collapsed = targetCollapsed;
+      const storedFingerprint = reviewed.get(item.fileDiff.name);
+      if (storedFingerprint != null) {
+        if (storedFingerprint === getFileDiffFingerprint(item.fileDiff)) {
+          item.collapsed = true;
+        } else {
+          reviewed.delete(item.fileDiff.name);
+          reviewedChanged = true;
+        }
+      }
+      if (
+        item.collapsed !== true &&
+        patterns != null &&
+        patterns.length > 0 &&
+        matchesCollapsePattern(item.fileDiff.name, patterns)
+      ) {
+        item.collapsed = true;
+      }
+      if (markdownViewRef.current === 'rendered') {
+        applyDocPreviewToItem(item, true);
+      }
+    }
+    if (reviewedChanged) {
+      saveReviewedFiles(reviewedSourceKeyRef.current, reviewed);
     }
   };
 
@@ -185,6 +242,143 @@ export function usePatchLoader({
         item.collapsed = targetCollapsed;
         item.version = getNextItemVersion(item);
         viewer.updateItem(item);
+      }
+    }
+  );
+
+  // Global markdown view: walk every loaded markdown item and force its
+  // rendered-document annotation on or off. Mirrors applyCollapseModeToLoaded,
+  // including the pre-mount initialItems rewrite.
+  const applyMarkdownViewToLoaded = useStableCallback(
+    (view: 'rendered' | 'raw') => {
+      const shown = view === 'rendered';
+      const viewer = viewerRef.current;
+      if (viewer == null) {
+        setInitialItems((prev) => {
+          let changed = false;
+          const next = prev.map((item) => {
+            if (item.type !== 'diff') {
+              return item;
+            }
+            // Copy before mutating: applyDocPreviewToItem writes annotations
+            // in place, and React state must not be mutated.
+            const copy = { ...item };
+            if (!applyDocPreviewToItem(copy, shown)) {
+              return item;
+            }
+            changed = true;
+            return copy;
+          });
+          return changed ? next : prev;
+        });
+        return;
+      }
+
+      for (const itemId of loadedItemIdsRef.current) {
+        const item = viewer.getItem(itemId);
+        if (item == null || item.type !== 'diff') {
+          continue;
+        }
+        if (!applyDocPreviewToItem(item, shown)) {
+          continue;
+        }
+        item.version = getNextItemVersion(item);
+        viewer.updateItem(item);
+      }
+    }
+  );
+
+  // Collapses every loaded file matching the given patterns. Intentionally
+  // one-directional: removing a pattern never force-expands files, since that
+  // would also expand files the user collapsed by hand or marked reviewed.
+  const applyCollapsePatternsToLoaded = useStableCallback(
+    (patterns: readonly RegExp[]) => {
+      if (patterns.length === 0) {
+        return;
+      }
+      const collapseMatching = (item: CodeViewItem<CommentMetadata>) =>
+        item.type === 'diff' &&
+        item.collapsed !== true &&
+        matchesCollapsePattern(item.fileDiff.name, patterns);
+      const viewer = viewerRef.current;
+      if (viewer == null) {
+        setInitialItems((prev) => {
+          let changed = false;
+          const next = prev.map((item) => {
+            if (!collapseMatching(item)) {
+              return item;
+            }
+            changed = true;
+            return { ...item, collapsed: true };
+          });
+          return changed ? next : prev;
+        });
+        return;
+      }
+      for (const itemId of loadedItemIdsRef.current) {
+        const item = viewer.getItem(itemId);
+        if (item == null || !collapseMatching(item)) {
+          continue;
+        }
+        item.collapsed = true;
+        item.version = getNextItemVersion(item);
+        viewer.updateItem(item);
+      }
+    }
+  );
+
+  // A file counts as reviewed only while its stored fingerprint matches the
+  // rendered diff, so marks invalidate as soon as new commits change the file.
+  const isFileReviewed = useStableCallback(
+    (item: CodeViewItem<CommentMetadata>): boolean => {
+      if (item.type !== 'diff') {
+        return false;
+      }
+      return (
+        reviewedFilesRef.current.get(item.fileDiff.name) ===
+        getFileDiffFingerprint(item.fileDiff)
+      );
+    }
+  );
+
+  // Marks/unmarks a file as reviewed: persists the fingerprint and collapses
+  // (or re-expands) the file, GitHub-style. When collapsing a file whose top
+  // is above the viewport, re-anchor the scroll so the header stays in view.
+  const setFileReviewed = useStableCallback(
+    (itemId: string, reviewed: boolean) => {
+      const viewer = viewerRef.current;
+      if (viewer == null) {
+        return;
+      }
+      const item = viewer.getItem(itemId);
+      if (item == null || item.type !== 'diff') {
+        return;
+      }
+      const reviewedFiles = reviewedFilesRef.current;
+      if (reviewed) {
+        reviewedFiles.set(
+          item.fileDiff.name,
+          getFileDiffFingerprint(item.fileDiff)
+        );
+      } else {
+        reviewedFiles.delete(item.fileDiff.name);
+      }
+      saveReviewedFiles(reviewedSourceKeyRef.current, reviewedFiles);
+
+      const instance = viewer.getInstance();
+      const itemTop = instance?.getTopForItem(itemId);
+      item.collapsed = reviewed;
+      item.version = getNextItemVersion(item);
+      if (!viewer.updateItem(item)) {
+        return;
+      }
+      if (
+        reviewed &&
+        instance != null &&
+        itemTop != null &&
+        itemTop < instance.getScrollTop()
+      ) {
+        viewer.scrollTo({ type: 'item', id: itemId, align: 'start' });
       }
     }
   );
@@ -318,6 +512,8 @@ export function usePatchLoader({
     viewerKeyRef.current = requestId;
     appliedLineHashKeyRef.current = null;
     loadedItemIdsRef.current = new Set();
+    reviewedSourceKeyRef.current = patchRequestKey;
+    reviewedFilesRef.current = loadReviewedFiles(patchRequestKey);
     setViewerKey(requestId);
     setInitialItems([]);
     setTreeSource(null);
@@ -596,17 +792,21 @@ export function usePatchLoader({
 
   return {
     applyCollapseModeToLoaded,
+    applyCollapsePatternsToLoaded,
+    applyMarkdownViewToLoaded,
     commentFileByItemId,
     commentSections,
     diffStats,
     errorMessage,
     initialItems,
+    isFileReviewed,
     loadState,
     onLineLinkChange: handleLineLinkChange,
     onViewerReady: tryApplyLineHashTarget,
     recordViewTarget,
     retryLoad,
     setCommentSections,
+    setFileReviewed,
     treeSource,
     viewerKey,
   };

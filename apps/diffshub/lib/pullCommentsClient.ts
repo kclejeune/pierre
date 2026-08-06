@@ -133,6 +133,38 @@ export async function deletePullReviewComment(
   });
 }
 
+export type PullReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+
+// One batched inline comment in a review submission: the anchor fields plus
+// the comment text.
+export interface PullReviewDraftComment extends NewCommentAnchor {
+  body: string;
+}
+
+// Submits a review in one call: verdict, optional summary, and the batched
+// inline comments. The route resolves the head commit server-side.
+export async function submitPullReview(
+  pull: PullRequestRef,
+  token: string,
+  event: PullReviewEvent,
+  body: string,
+  comments: readonly PullReviewDraftComment[]
+): Promise<void> {
+  await requestJSON('/api/pull-comments', {
+    method: 'POST',
+    headers: buildHeaders(token),
+    body: JSON.stringify({
+      body,
+      comments,
+      event,
+      owner: pull.owner,
+      pull: pull.number,
+      repo: pull.repo,
+      review: true,
+    }),
+  });
+}
+
 // PR-level conversation writes: GitHub issue comments on the pull request,
 // with no diff anchor. Review summaries cannot be written through these.
 export async function postPullDiscussionComment(

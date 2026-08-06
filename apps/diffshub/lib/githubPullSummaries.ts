@@ -34,14 +34,22 @@ const BUCKET_QUALIFIERS: Record<PullBucket, string> = {
   'review-requested': 'review-requested:@me',
 };
 
-// Optionally scoped to a single "owner/name" repository, for pinned-repo
-// cards that follow the dashboard's active bucket tab.
+// Optionally scoped to a single "owner/name" repository (pinned-repo cards
+// following the dashboard's active bucket tab) or scoped to exclude a set of
+// repositories (the main bucket list, which drops pulls already shown in the
+// pinned cards above it).
 export function buildBucketSearchQuery(
   bucket: PullBucket,
-  repo?: string
+  scope?: { excludeRepos?: readonly string[]; repo?: string }
 ): string {
-  const base = `is:open is:pr archived:false ${BUCKET_QUALIFIERS[bucket]}`;
-  return repo == null ? base : `${base} repo:${repo}`;
+  let query = `is:open is:pr archived:false ${BUCKET_QUALIFIERS[bucket]}`;
+  if (scope?.repo != null) {
+    query += ` repo:${scope.repo}`;
+  }
+  for (const repo of scope?.excludeRepos ?? []) {
+    query += ` -repo:${repo}`;
+  }
+  return query;
 }
 
 // repository_url looks like https://api.github.com/repos/{owner}/{repo} on

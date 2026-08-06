@@ -133,6 +133,62 @@ export async function deletePullReviewComment(
   });
 }
 
+// PR-level conversation writes: GitHub issue comments on the pull request,
+// with no diff anchor. Review summaries cannot be written through these.
+export async function postPullDiscussionComment(
+  pull: PullRequestRef,
+  token: string,
+  body: string
+): Promise<PullDiscussionComment> {
+  return await requestDiscussionComment('/api/pull-comments', {
+    method: 'POST',
+    headers: buildHeaders(token),
+    body: JSON.stringify({
+      body,
+      discussion: true,
+      owner: pull.owner,
+      pull: pull.number,
+      repo: pull.repo,
+    }),
+  });
+}
+
+export async function editPullDiscussionComment(
+  pull: PullRequestRef,
+  token: string,
+  commentId: number,
+  body: string
+): Promise<PullDiscussionComment> {
+  return await requestDiscussionComment('/api/pull-comments', {
+    method: 'PATCH',
+    headers: buildHeaders(token),
+    body: JSON.stringify({
+      body,
+      commentId,
+      discussion: true,
+      owner: pull.owner,
+      repo: pull.repo,
+    }),
+  });
+}
+
+export async function deletePullDiscussionComment(
+  pull: PullRequestRef,
+  token: string,
+  commentId: number
+): Promise<void> {
+  const params = new URLSearchParams({
+    commentId: String(commentId),
+    discussion: 'true',
+    owner: pull.owner,
+    repo: pull.repo,
+  });
+  await requestJSON(`/api/pull-comments?${params}`, {
+    method: 'DELETE',
+    headers: buildHeaders(token),
+  });
+}
+
 // Maps a draft annotation's selected range to the GitHub anchor fields for a
 // new review comment. GitHub rejects start_line === line, so single-line
 // ranges omit the start anchor.
@@ -166,6 +222,18 @@ async function requestComment(
     throw new Error('GitHub returned an unexpected comment payload.');
   }
   return comment as PullReviewComment;
+}
+
+async function requestDiscussionComment(
+  input: string,
+  init: RequestInit
+): Promise<PullDiscussionComment> {
+  const payload = await requestJSON(input, init);
+  const comment = (payload as { comment?: unknown }).comment;
+  if (typeof comment !== 'object' || comment == null) {
+    throw new Error('GitHub returned an unexpected comment payload.');
+  }
+  return comment as PullDiscussionComment;
 }
 
 async function requestJSON(input: string, init: RequestInit): Promise<unknown> {

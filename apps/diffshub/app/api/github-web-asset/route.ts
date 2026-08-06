@@ -1,11 +1,15 @@
 import { type NextRequest } from 'next/server';
 
+import { fetchAssetFollowingRedirects } from '@/lib/assetRedirects';
 import { createGitHubRawHeaders } from '@/lib/githubDiffFileServer';
 import {
   getGitHubEnvironment,
   resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
-import { matchGitHubWebAsset } from '@/lib/githubWebAssets';
+import {
+  matchGitHubWebAsset,
+  resolveGitHubWebAssetUpstreamURL,
+} from '@/lib/githubWebAssets';
 import { createInertAssetResponse } from '@/lib/inertAssetResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
 
@@ -18,11 +22,10 @@ import { createJSONResponse } from '@/lib/jsonResponse';
 // this must not become an open proxy.
 
 export async function GET(request: NextRequest) {
+  const environment = getGitHubEnvironment();
   const url = request.nextUrl.searchParams.get('url');
   const assetURL =
-    url == null
-      ? null
-      : matchGitHubWebAsset(url, getGitHubEnvironment().webURL);
+    url == null ? null : matchGitHubWebAsset(url, environment.webURL);
   if (assetURL == null) {
     return createJSONResponse(
       { error: 'url must be an asset on the configured GitHub instance.' },
@@ -32,10 +35,10 @@ export async function GET(request: NextRequest) {
 
   let upstream: Response;
   try {
-    upstream = await fetch(assetURL, {
-      headers: createGitHubRawHeaders(resolveRequestGitHubToken(request)),
-      redirect: 'follow',
-    });
+    upstream = await fetchAssetFollowingRedirects(
+      resolveGitHubWebAssetUpstreamURL(assetURL, environment),
+      createGitHubRawHeaders(resolveRequestGitHubToken(request))
+    );
   } catch (error) {
     return createJSONResponse(
       { error: error instanceof Error ? error.message : 'Unknown error' },
@@ -45,6 +48,19 @@ export async function GET(request: NextRequest) {
   if (!upstream.ok) {
     return createJSONResponse(
       { error: `Asset request failed (${upstream.status}).` },
+      { status: 502 }
+    );
+  }
+
+  // A 2xx carrying markup rather than an image means the instance answered
+  // with a page (a login or error interstitial) where an asset was expected.
+  // Rejecting it here keeps that from reaching the browser as a broken image.
+  const contentType = upstream.headers.get('content-type') ?? '';
+  if (!contentType.startsWith('image/')) {
+    return createJSONResponse(
+      {
+        error: `Asset request returned ${contentType === '' ? 'no content type' : contentType}.`,
+      },
       { status: 502 }
     );
   }

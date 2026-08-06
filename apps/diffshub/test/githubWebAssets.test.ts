@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   createGitHubWebAssetProxyURL,
   matchGitHubWebAsset,
+  resolveGitHubWebAssetUpstreamURL,
 } from '../lib/githubWebAssets';
 
 const GHES = 'https://ghe.company.com';
@@ -51,5 +52,52 @@ describe('createGitHubWebAssetProxyURL', () => {
     expect(
       createGitHubWebAssetProxyURL('https://cdn.example.com/x.png', GHES)
     ).toBeNull();
+  });
+});
+
+describe('resolveGitHubWebAssetUpstreamURL', () => {
+  const ghes = { apiURL: `${GHES}/api/v3`, isGitHubDotCom: false };
+
+  test('sends GHES avatars to the REST enterprise route, preserving ?s=', () => {
+    // GHES serves /avatars/ to session cookies only; a PAT gets a 302 to
+    // /login. The same bytes are Bearer-accessible under the API.
+    const asset = matchGitHubWebAsset(`${GHES}/avatars/u/123?s=64`, GHES);
+    expect(resolveGitHubWebAssetUpstreamURL(asset!, ghes)).toBe(
+      `${GHES}/api/v3/enterprise/avatars/u/123?s=64`
+    );
+  });
+
+  test('keeps the enterprise prefix under subdomain isolation', () => {
+    const asset = matchGitHubWebAsset(`${GHES}/avatars/u/123`, GHES);
+    expect(
+      resolveGitHubWebAssetUpstreamURL(asset!, {
+        apiURL: 'https://api.ghe.company.com',
+        isGitHubDotCom: false,
+      })
+    ).toBe('https://api.ghe.company.com/enterprise/avatars/u/123');
+  });
+
+  test('leaves user attachments at their original URL', () => {
+    const asset = matchGitHubWebAsset(
+      `${GHES}/user-attachments/assets/abc-123`,
+      GHES
+    );
+    expect(resolveGitHubWebAssetUpstreamURL(asset!, ghes)).toBe(
+      `${GHES}/user-attachments/assets/abc-123`
+    );
+  });
+
+  test('leaves dotcom attachments untouched', () => {
+    const dotcom = 'https://github.com';
+    const asset = matchGitHubWebAsset(
+      `${dotcom}/user-attachments/assets/x`,
+      dotcom
+    );
+    expect(
+      resolveGitHubWebAssetUpstreamURL(asset!, {
+        apiURL: 'https://api.github.com',
+        isGitHubDotCom: true,
+      })
+    ).toBe(`${dotcom}/user-attachments/assets/x`);
   });
 });

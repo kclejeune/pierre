@@ -5,6 +5,7 @@ import {
   type CodeViewItem,
   type CodeViewLineSelection,
   processFile,
+  type SelectedLineRange,
 } from '@pierre/diffs';
 import { type CodeViewHandle, useStableCallback } from '@pierre/diffs/react';
 import {
@@ -29,6 +30,7 @@ import {
 import { getPatchTreePathPrefix } from '@/lib/gitPatchMetadata';
 import {
   type DiffsHubLineHashTarget,
+  formatDiffsHubItemHash,
   formatDiffsHubLineHash,
   parseDiffsHubLineHash,
 } from '@/lib/lineHash';
@@ -50,6 +52,11 @@ const STREAM_INITIAL_PUBLISH_INTERVAL_MS = 500;
 const STREAM_WORK_BUDGET_MS = 8;
 const STREAM_TREE_PUBLISH_FILE_BATCH_SIZE = 1_000;
 const STREAM_TREE_PUBLISH_INTERVAL_MS = 1_000;
+const LINE_HASH_SETTLE_CANCEL_EVENTS = [
+  'wheel',
+  'touchstart',
+  'keydown',
+] as const;
 const GENERIC_PATCH_LOAD_ERROR_MESSAGE =
   'We couldn’t load that diff. Check the URL and try again.';
 
@@ -73,6 +80,7 @@ interface UsePatchLoaderResult {
   loadState: ViewerLoadState;
   onLineLinkChange(selection: CodeViewLineSelection | null): void;
   onViewerReady(): void;
+  recordViewTarget(itemId: string, range?: SelectedLineRange): void;
   retryLoad(): void;
   setCommentSections: Dispatch<SetStateAction<DiffsHubSavedCommentItem[]>>;
   treeSource: DiffsHubFileTreeSource | null;
@@ -181,6 +189,8 @@ export function usePatchLoader({
     }
   );
 
+  const cancelLineHashSettleRef = useRef<(() => void) | null>(null);
+
   const tryApplyLineHashTarget = useStableCallback(() => {
     const { hash } = window.location;
     const target = parseDiffsHubLineHash(hash);
@@ -200,18 +210,95 @@ export function usePatchLoader({
 
     if (applyDiffsHubLineHashTarget(viewer, target)) {
       appliedLineHashKeyRef.current = applyKey;
+      settleLineHashScroll(target);
     }
+  });
+
+  // Re-issues the restore scroll for a short window after the first apply.
+  // The initial scroll fires while the page is still settling — virtualized
+  // neighbors re-measure as they mount and review threads inject annotation
+  // height once they load — all of which shift the target away from a
+  // one-shot scroll. Any manual scroll input cancels the loop immediately.
+  const settleLineHashScroll = useStableCallback(
+    (target: DiffsHubLineHashTarget) => {
+      cancelLineHashSettleRef.current?.();
+      let ticks = 0;
+      let timer: number | undefined;
+      const cleanup = () => {
+        if (timer != null) {
+          window.clearTimeout(timer);
+        }
+        for (const type of LINE_HASH_SETTLE_CANCEL_EVENTS) {
+          window.removeEventListener(type, cleanup, true);
+        }
+        if (cancelLineHashSettleRef.current === cleanup) {
+          cancelLineHashSettleRef.current = null;
+        }
+      };
+      cancelLineHashSettleRef.current = cleanup;
+      for (const type of LINE_HASH_SETTLE_CANCEL_EVENTS) {
+        window.addEventListener(type, cleanup, {
+          capture: true,
+          passive: true,
+        });
+      }
+      const tick = () => {
+        const viewer = viewerRef.current;
+        if (viewer == null || ++ticks > 8) {
+          cleanup();
+          return;
+        }
+        if (target.range == null) {
+          viewer.scrollTo({
+            type: 'item',
+            id: target.itemId,
+            align: 'start',
+            behavior: 'instant',
+          });
+        } else {
+          viewer.scrollTo({
+            type: 'range',
+            id: target.itemId,
+            range: target.range,
+            align: 'center',
+            behavior: 'instant',
+          });
+        }
+        timer = window.setTimeout(tick, 300);
+      };
+      timer = window.setTimeout(tick, 300);
+    }
+  );
+
+  // Writes a hash into the URL (via replaceState, so no history entry) and
+  // marks it as already applied so the restore path doesn't scroll-jump the
+  // view the user is currently looking at.
+  const recordLineHash = useStableCallback((hash: string | null) => {
+    // A new navigation supersedes any still-settling restore scroll.
+    cancelLineHashSettleRef.current?.();
+    appliedLineHashKeyRef.current =
+      hash == null ? null : getLineHashApplyKey(viewerKeyRef.current, hash);
+    replaceLocationHash(hash);
   });
 
   const handleLineLinkChange = useStableCallback(
     (selection: CodeViewLineSelection | null) => {
-      const nextHash =
-        selection == null ? null : formatDiffsHubLineHash(selection);
-      appliedLineHashKeyRef.current =
-        nextHash == null
-          ? null
-          : getLineHashApplyKey(viewerKeyRef.current, nextHash);
-      replaceLocationHash(nextHash);
+      recordLineHash(
+        selection == null ? null : formatDiffsHubLineHash(selection)
+      );
+    }
+  );
+
+  // Persists a navigation target (a file-tree or sidebar-comment click) so a
+  // refresh restores the same place: file-only targets scroll the file into
+  // view, ranged targets also restore the line selection.
+  const recordViewTarget = useStableCallback(
+    (itemId: string, range?: SelectedLineRange) => {
+      recordLineHash(
+        range == null
+          ? formatDiffsHubItemHash(itemId)
+          : formatDiffsHubLineHash({ id: itemId, range })
+      );
     }
   );
 
@@ -517,6 +604,7 @@ export function usePatchLoader({
     loadState,
     onLineLinkChange: handleLineLinkChange,
     onViewerReady: tryApplyLineHashTarget,
+    recordViewTarget,
     retryLoad,
     setCommentSections,
     treeSource,
@@ -539,6 +627,7 @@ function applyDiffsHubLineHashTarget(
 
   const selectedLines = viewer.getSelectedLines();
   if (
+    target.range != null &&
     selectedLines?.id === target.itemId &&
     areSelectionsEqual(selectedLines.range, target.range)
   ) {
@@ -552,6 +641,16 @@ function applyDiffsHubLineHashTarget(
       return false;
     }
     viewer.getInstance()?.render(true);
+  }
+
+  if (target.range == null) {
+    viewer.scrollTo({
+      type: 'item',
+      id: target.itemId,
+      align: 'start',
+      behavior: 'instant',
+    });
+    return true;
   }
 
   viewer.setSelectedLines({ id: target.itemId, range: target.range });

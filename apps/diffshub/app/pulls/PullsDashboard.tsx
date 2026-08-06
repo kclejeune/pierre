@@ -1,6 +1,6 @@
 'use client';
 
-import { IconClockArrow, IconPin, IconX } from '@pierre/icons';
+import { IconPin, IconX } from '@pierre/icons';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
@@ -18,7 +18,6 @@ import {
 } from '@/components/useDiffUrlSuggestions';
 import { useGitHubToken } from '@/components/useGitHubToken';
 import { usePinnedRepos } from '@/components/usePinnedRepos';
-import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import {
   PULL_BUCKETS,
   type PullBucket,
@@ -29,7 +28,6 @@ import {
   isValidRepoName,
   MAX_PINNED_REPOS,
 } from '@/lib/pinnedRepos';
-import { loadRecentDiffs, type RecentDiff } from '@/lib/recentDiffs';
 
 const BUCKET_COPY: Record<PullBucket, { empty: string; label: string }> = {
   created: { empty: 'you created', label: 'Created' },
@@ -86,43 +84,64 @@ export function PullsDashboard() {
 
 function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   const [bucket, setBucket] = useState<PullBucket>('created');
+  const { hydrated, pinned, toggle } = usePinnedRepos();
+  // Everything below both filters on the pinned list (cards + bucket
+  // exclusions), so wait for the single post-mount localStorage read instead
+  // of fetching unexcluded and immediately refetching.
+  if (!hydrated) {
+    return null;
+  }
   return (
-    <div className="space-y-6">
-      <section className="space-y-3">
-        <ButtonGroup
-          size="sm"
-          value={bucket}
-          onValueChange={(value) => setBucket(value as PullBucket)}
-        >
-          {PULL_BUCKETS.map((value) => (
-            <ButtonGroupItem key={value} value={value}>
-              {BUCKET_COPY[value].label}
-            </ButtonGroupItem>
-          ))}
-        </ButtonGroup>
-        <BucketSection bucket={bucket} tokenVersion={tokenVersion} />
-      </section>
-      <PinnedReposSection bucket={bucket} tokenVersion={tokenVersion} />
-      <RecentDiffsSection />
+    <div className="space-y-4">
+      <ButtonGroup
+        size="sm"
+        value={bucket}
+        onValueChange={(value) => setBucket(value as PullBucket)}
+      >
+        {PULL_BUCKETS.map((value) => (
+          <ButtonGroupItem key={value} value={value}>
+            {BUCKET_COPY[value].label}
+          </ButtonGroupItem>
+        ))}
+      </ButtonGroup>
+      <PinnedReposSection
+        bucket={bucket}
+        pinned={pinned}
+        tokenVersion={tokenVersion}
+        onToggle={toggle}
+      />
+      <BucketSection
+        bucket={bucket}
+        excludeRepos={pinned}
+        tokenVersion={tokenVersion}
+      />
     </div>
   );
 }
 
 function BucketSection({
   bucket,
+  excludeRepos,
   tokenVersion,
 }: {
   bucket: PullBucket;
+  excludeRepos: readonly string[];
   tokenVersion: number;
 }) {
   const { error, loading, pulls, totalCount } = useDashboardPulls(
-    { kind: 'bucket', bucket },
+    { kind: 'bucket', bucket, excludeRepos },
     tokenVersion
   );
+  // With pinned repos excluded, their pulls appear in the cards above, so
+  // the empty state says "other" rather than implying there are none at all.
+  const emptyLabel =
+    excludeRepos.length > 0
+      ? `No other open pull requests ${BUCKET_COPY[bucket].empty}.`
+      : `No open pull requests ${BUCKET_COPY[bucket].empty}.`;
   return (
     <div className={SECTION_CARD_CLASS}>
       <SectionRows
-        emptyLabel={`No open pull requests ${BUCKET_COPY[bucket].empty}.`}
+        emptyLabel={emptyLabel}
         error={error}
         loading={loading}
         pulls={pulls}
@@ -139,15 +158,15 @@ function BucketSection({
 
 function PinnedReposSection({
   bucket,
+  onToggle,
+  pinned,
   tokenVersion,
 }: {
   bucket: PullBucket;
+  onToggle: (repo: string) => void;
+  pinned: readonly string[];
   tokenVersion: number;
 }) {
-  const { hydrated, pinned, toggle } = usePinnedRepos();
-  if (!hydrated) {
-    return null;
-  }
   return (
     <section className="space-y-3">
       <h3 className="flex items-center gap-1.5 text-sm font-medium">
@@ -158,7 +177,7 @@ function PinnedReposSection({
         <AddPinnedRepoInput
           onPin={(repo) => {
             if (!isRepoPinned(pinned, repo)) {
-              toggle(repo);
+              onToggle(repo);
             }
           }}
         />
@@ -169,7 +188,7 @@ function PinnedReposSection({
           bucket={bucket}
           repo={repo}
           tokenVersion={tokenVersion}
-          onUnpin={() => toggle(repo)}
+          onUnpin={() => onToggle(repo)}
         />
       ))}
     </section>
@@ -298,49 +317,6 @@ function AddPinnedRepoInput({ onPin }: { onPin: (repo: string) => void }) {
         </div>
       )}
     </div>
-  );
-}
-
-function RecentDiffsSection() {
-  const [recents, setRecents] = useState<RecentDiff[]>([]);
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => {
-    setRecents(loadRecentDiffs());
-    setHydrated(true);
-  }, []);
-  if (!hydrated || recents.length === 0) {
-    return null;
-  }
-  return (
-    <section className="space-y-3">
-      <h3 className="flex items-center gap-1.5 text-sm font-medium">
-        <IconClockArrow className="size-4" />
-        Recently viewed
-      </h3>
-      <div className={SECTION_CARD_CLASS}>
-        {/* Every stored entry renders; the height cap (~7 rows) keeps the
-            section compact while the rest stays reachable by scrolling. */}
-        <div className="max-h-80 overflow-y-auto">
-          {recents.map((recent) => (
-            <Link
-              key={recent.path}
-              href={recent.path}
-              className="hover:bg-accent/60 flex items-center gap-3 border-b p-3 transition-colors last:border-b-0"
-            >
-              <span className="min-w-0 flex-1 truncate text-sm">
-                {recent.title ?? recent.path}
-              </span>
-              <span className="text-muted-foreground shrink-0 truncate text-xs">
-                {recent.title != null ? recent.path : ''}
-              </span>
-              <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
-                {formatRelativeTime(new Date(recent.viewedAt).toISOString())}
-              </span>
-            </Link>
-          ))}
-        </div>
-      </div>
-    </section>
   );
 }
 

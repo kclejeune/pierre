@@ -14,7 +14,14 @@ import {
 } from '@pierre/diffs';
 import { type CodeViewHandle, useStableCallback } from '@pierre/diffs/react';
 import { IconBook, IconChevronSm } from '@pierre/icons';
-import { memo, type RefObject, useMemo, useRef, useState } from 'react';
+import {
+  memo,
+  type RefObject,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { toast } from 'sonner';
 
 import { DraftAnnotation } from './DraftAnnotation';
@@ -26,13 +33,10 @@ import { useChromeThemeProps } from './useChromeThemeProps';
 import { buildAnnotationThemeStyle } from '@/lib/annotationThemeStyle';
 import { cn } from '@/lib/cn';
 import { CODE_VIEW_CUSTOM_CSS, CODE_VIEW_LAYOUT } from '@/lib/constants';
+import { applyDocPreviewToItem } from '@/lib/docPreview';
 import { incrementItemVersion } from '@/lib/incrementItemVersion';
 import { isDiffItem } from '@/lib/isDiffItem';
-import {
-  DOC_PREVIEW_KEY,
-  getDocAnnotationSide,
-  isDocAnnotation,
-} from '@/lib/isDocAnnotation';
+import { getDocAnnotationSide, isDocAnnotation } from '@/lib/isDocAnnotation';
 import { isDraftAnnotation } from '@/lib/isDraftAnnotation';
 import { isDraftMetadata } from '@/lib/isDraftMetadata';
 import { isMarkdownFileName } from '@/lib/isMarkdownFileName';
@@ -60,6 +64,7 @@ import type {
   CommentMetadata,
   DiffsHubDeletedCommentEvent,
   DiffsHubSavedCommentEvent,
+  PendingReviewComment,
   SavedCommentMetadata,
 } from '@/lib/types';
 
@@ -116,8 +121,20 @@ interface DiffsHubViewerProps {
   // references. Unset for arbitrary-domain patch URLs.
   sourcePath?: string;
   getGitHubToken?(): string | undefined;
+  // Reviewed-file marks: read for the header checkbox state, write on toggle.
+  isFileReviewed(item: CodeViewItem<CommentMetadata>): boolean;
+  onSetFileReviewed(itemId: string, reviewed: boolean): void;
+  // Fired when the user clicks a file's header bar (not its controls), so the
+  // parent can record/scroll the file target like a tree click.
+  onFileHeaderSelect(itemId: string): void;
   onCommentDeleted(comment: DiffsHubDeletedCommentEvent): void;
   onCommentSaved(comment: DiffsHubSavedCommentEvent): void;
+  // Batched-review integration: the number of comments currently pending (it
+  // drives the draft card's primary action) and callbacks that keep the
+  // parent's batch in sync as pending annotations are created/edited/removed.
+  pendingReviewCount: number;
+  onPendingReviewCommentUpserted(entry: PendingReviewComment): void;
+  onPendingReviewCommentRemoved(itemId: string, key: string): void;
   overflow: 'wrap' | 'scroll';
   showBackgrounds: boolean;
   diffIndicators: DiffIndicators;
@@ -137,8 +154,14 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
   pullRequest,
   sourcePath,
   getGitHubToken,
+  isFileReviewed,
+  onSetFileReviewed,
+  onFileHeaderSelect,
   onCommentDeleted,
   onCommentSaved,
+  pendingReviewCount,
+  onPendingReviewCommentUpserted,
+  onPendingReviewCommentRemoved,
   overflow,
   showBackgrounds,
   diffIndicators,
@@ -299,6 +322,9 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       onLineLinkChange(null);
       if (removedAnnotation != null && isSavedAnnotation(removedAnnotation)) {
         onCommentDeleted({ itemId, key });
+        if (removedAnnotation.metadata.pending === true) {
+          onPendingReviewCommentRemoved(itemId, key);
+        }
       }
     }
   );
@@ -448,6 +474,66 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
           savedAnnotation
         )
       );
+    }
+  );
+
+  // "Add to review": the draft becomes a locally-held pending card instead of
+  // publishing to GitHub — it posts later as part of the batched review
+  // submission. The card shows in the sidebar like any local comment; the
+  // parent's batch is kept in sync through the pending callbacks.
+  const handleSaveDraftToReview = useStableCallback(
+    (itemId: string, key: string, message: string, author: CommentAuthor) => {
+      const trimmedMessage = message.trim();
+      const { current: viewer } = viewerRef;
+      if (trimmedMessage.length === 0 || viewer == null) {
+        return;
+      }
+      const item = viewer.getItem(itemId);
+      if (item == null || !isDiffItem(item)) {
+        return;
+      }
+      const draftAnnotation = item.annotations?.find(
+        (annotation) => annotation.metadata.key === key
+      );
+      if (draftAnnotation == null || !isDraftAnnotation(draftAnnotation)) {
+        return;
+      }
+
+      const pendingAnnotation: DiffLineAnnotation<SavedCommentMetadata> = {
+        ...draftAnnotation,
+        metadata: {
+          kind: 'saved',
+          key,
+          author,
+          message: trimmedMessage,
+          pending: true,
+          range: draftAnnotation.metadata.range,
+        },
+      };
+      const updatedItem = replaceAnnotation(
+        viewer,
+        itemId,
+        key,
+        pendingAnnotation
+      );
+      if (updatedItem == null) {
+        return;
+      }
+      finishDraft(itemId, key);
+      onCommentSaved(
+        createLocalSavedCommentEvent(
+          updatedItem.fileDiff,
+          itemId,
+          pendingAnnotation
+        )
+      );
+      onPendingReviewCommentUpserted({
+        itemId,
+        key,
+        message: trimmedMessage,
+        path: updatedItem.fileDiff.name,
+        range: draftAnnotation.metadata.range,
+      });
     }
   );
 
@@ -627,6 +713,15 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
           nextAnnotation
         )
       );
+      if (nextAnnotation.metadata.pending === true) {
+        onPendingReviewCommentUpserted({
+          itemId,
+          key,
+          message,
+          path: updatedItem.fileDiff.name,
+          range: nextAnnotation.metadata.range,
+        });
+      }
     }
   );
 
@@ -637,26 +732,66 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       return;
     }
     updateViewerDiffItem(viewer, itemId, (item) => {
-      const annotations = item.annotations ?? [];
-      const withoutDoc = annotations.filter(
-        (annotation) => !isDocAnnotation(annotation)
-      );
-      if (withoutDoc.length !== annotations.length) {
-        item.annotations = withoutDoc;
-        return true;
-      }
-      item.annotations = [
-        // The doc renders above the diff via the file-level (line 0) slot.
-        {
-          side: getDocAnnotationSide(item.fileDiff),
-          lineNumber: 0,
-          metadata: { kind: 'doc', key: DOC_PREVIEW_KEY },
-        },
-        ...annotations,
-      ];
-      return true;
+      const shown = item.annotations?.some(isDocAnnotation) === true;
+      return applyDocPreviewToItem(item, !shown);
     });
   });
+
+  // File headers render inside the diffs-container shadow DOM, which exposes
+  // no click callback — so listen on the scroll container and resolve header
+  // clicks through the composed event path. The clicked item's id is read off
+  // the header-metadata slot content (stamped below with
+  // data-diffshub-item-id), which lives in the container's light DOM. Clicks
+  // on the header's interactive controls (collapse, doc toggle, reviewed
+  // checkbox) are ignored so they don't also retarget the URL.
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (container == null) {
+      return undefined;
+    }
+    const handleClick = (event: MouseEvent) => {
+      const path = event.composedPath();
+      let headerIndex = -1;
+      for (let index = 0; index < path.length; index++) {
+        const node = path[index];
+        if (!(node instanceof HTMLElement)) {
+          continue;
+        }
+        const tagName = node.tagName;
+        if (
+          tagName === 'BUTTON' ||
+          tagName === 'A' ||
+          tagName === 'INPUT' ||
+          tagName === 'LABEL'
+        ) {
+          return;
+        }
+        if (node.hasAttribute('data-diffs-header')) {
+          headerIndex = index;
+          break;
+        }
+      }
+      if (headerIndex === -1) {
+        return;
+      }
+      for (let index = headerIndex + 1; index < path.length; index++) {
+        const node = path[index];
+        if (node instanceof HTMLElement && node.tagName === 'DIFFS-CONTAINER') {
+          const itemId = node
+            .querySelector('[data-diffshub-item-id]')
+            ?.getAttribute('data-diffshub-item-id');
+          if (itemId != null && itemId !== '') {
+            onFileHeaderSelect(itemId);
+          }
+          return;
+        }
+      }
+    };
+    container.addEventListener('click', handleClick);
+    return () => {
+      container.removeEventListener('click', handleClick);
+    };
+  }, [onFileHeaderSelect, scrollRef]);
 
   // A comment affordance in the rendered document maps back to a source line;
   // the draft it opens renders in the document's margin rail, so no scrolling
@@ -712,8 +847,11 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
           <DraftAnnotation
             annotation={annotation}
             itemId={itemId}
+            pendingReviewCount={pendingReviewCount}
+            reviewEnabled={pullRequest != null && getWriteToken() != null}
             onCancel={handleRemoveComment}
             onSave={handleSaveDraftComment}
+            onSaveToReview={handleSaveDraftToReview}
           />
         );
       }
@@ -842,28 +980,55 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
 
   const renderHeaderMetadata = useStableCallback(
     (item: CodeViewItem<CommentMetadata>) => {
-      if (item.type !== 'diff' || !isMarkdownFileName(item.fileDiff.name)) {
+      if (item.type !== 'diff') {
         return null;
       }
 
       const docShown = item.annotations?.some(isDocAnnotation) === true;
+      const reviewed = isFileReviewed(item);
       return (
-        <button
-          type="button"
-          aria-pressed={docShown}
-          title={docShown ? 'Hide rendered document' : 'Show rendered document'}
-          className={cn(
-            'text-muted-foreground hover:bg-muted hover:text-foreground inline-flex size-6 cursor-pointer items-center justify-center rounded-md transition',
-            docShown && 'text-foreground bg-muted'
-          )}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            handleToggleDocPreview(item.id);
-          }}
+        // The data attribute lets the header-click listener above map a
+        // shadow-DOM header back to its item id.
+        <span
+          className="flex items-center gap-1.5"
+          data-diffshub-item-id={item.id}
         >
-          <IconBook aria-hidden="true" className="size-4" />
-        </button>
+          {isMarkdownFileName(item.fileDiff.name) && (
+            <button
+              type="button"
+              aria-pressed={docShown}
+              title={
+                docShown ? 'Hide rendered document' : 'Show rendered document'
+              }
+              className={cn(
+                'text-muted-foreground hover:bg-muted hover:text-foreground inline-flex size-6 cursor-pointer items-center justify-center rounded-md transition',
+                docShown && 'text-foreground bg-muted'
+              )}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                handleToggleDocPreview(item.id);
+              }}
+            >
+              <IconBook aria-hidden="true" className="size-4" />
+            </button>
+          )}
+          <label
+            className="text-muted-foreground hover:text-foreground flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] whitespace-nowrap select-none"
+            title="Mark this file as viewed; it stays collapsed until new changes are pushed"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <input
+              type="checkbox"
+              className="size-3.5 cursor-pointer accent-blue-500"
+              checked={reviewed}
+              onChange={(event) =>
+                onSetFileReviewed(item.id, event.currentTarget.checked)
+              }
+            />
+            Viewed
+          </label>
+        </span>
       );
     }
   );

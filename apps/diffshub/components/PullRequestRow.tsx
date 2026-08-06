@@ -56,7 +56,7 @@ export function PullRequestRow({ pull, showRepo = true }: PullRequestRowProps) {
             avatarUrl: pull.authorAvatarUrl ?? '',
             login: pull.authorLogin,
           }}
-          className="size-6"
+          className="size-6 self-center"
         />
       )}
     </Link>

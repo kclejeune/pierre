@@ -58,7 +58,10 @@ export function AppNavbar({ className, tokenState }: AppNavbarProps) {
             className="rounded-md"
           >
             {githubUser != null ? (
-              <CommentAuthorAvatar author={githubUser} className="size-5" />
+              <CommentAuthorAvatar
+                author={githubUser}
+                className="size-6 self-center"
+              />
             ) : (
               <IconBrandGithub className="size-4" />
             )}

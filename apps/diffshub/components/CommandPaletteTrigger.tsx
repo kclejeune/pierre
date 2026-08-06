@@ -33,7 +33,7 @@ export function CommandPaletteTrigger({ className }: { className?: string }) {
       <kbd
         aria-hidden="true"
         className={cn(
-          'bg-muted pointer-events-none inline-flex h-5 shrink-0 items-center rounded border px-1.5 font-mono text-[10px] font-medium',
+          'bg-muted pointer-events-none inline-flex h-6 shrink-0 items-center rounded border px-2 font-mono text-xs font-medium',
           shortcut == null && 'opacity-0'
         )}
       >

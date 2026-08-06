@@ -56,6 +56,7 @@ import {
 } from '@/lib/pullCommentsClient';
 import { removeSavedCommentSidebarEntry } from '@/lib/removeSavedCommentSidebarEntry';
 import type { DarkThemeName, LightThemeName } from '@/lib/themeNames';
+import { toastRequestError } from '@/lib/toastRequestError';
 import type {
   CommentMetadata,
   DiffsHubDeletedCommentEvent,
@@ -93,9 +94,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
   const [diffStylePreference, setDiffStylePreference] = useState<
     'split' | 'unified' | null
   >(null);
-  const diffStylePreferenceRef = useRef<'split' | 'unified' | null>(null);
   const handleSetDiffStyle = useCallback((style: 'split' | 'unified') => {
-    diffStylePreferenceRef.current = style;
     setDiffStylePreference(style);
     setDiffStyle(style);
   }, []);
@@ -121,6 +120,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
   const {
     clearToken: clearGitHubToken,
     hasToken: hasGitHubToken,
+    hydrated: githubTokenHydrated,
     setToken: setGitHubToken,
     token: githubToken,
     tokenVersion: githubTokenVersion,
@@ -256,7 +256,6 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
   useEffect(() => {
     const stored = loadDisplaySettings();
     if (stored.diffStyle != null) {
-      diffStylePreferenceRef.current = stored.diffStyle;
       setDiffStylePreference(stored.diffStyle);
       if (!window.matchMedia('(max-width: 767px)').matches) {
         setDiffStyle(stored.diffStyle);
@@ -310,12 +309,13 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     showBackgrounds,
   ]);
 
+  // Re-runs when the preference changes; that just re-applies the style the
+  // setter already set, and keeps the breakpoint restore reading one source
+  // of truth.
   useEffect(() => {
     const mediaQuery = window.matchMedia('(max-width: 767px)');
     const updateMobileState = (matches: boolean) => {
-      setDiffStyle(
-        matches ? 'unified' : (diffStylePreferenceRef.current ?? 'split')
-      );
+      setDiffStyle(matches ? 'unified' : (diffStylePreference ?? 'split'));
       if (!matches) setFileTreeOverlayOpen(false);
     };
     const handleChange = (event: MediaQueryListEvent) => {
@@ -325,50 +325,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     updateMobileState(mediaQuery.matches);
     mediaQuery.addEventListener('change', handleChange);
     return () => mediaQuery.removeEventListener('change', handleChange);
-  }, []);
-  const handleSelectTreeItem = useCallback(
-    (itemId: string) => {
-      setFileTreeOverlayOpen(false);
-      const viewer = viewerRef.current;
-      if (viewer == null) {
-        return;
-      }
-      const item = viewer.getItem(itemId);
-      if (item != null && item.collapsed === true) {
-        item.collapsed = false;
-        item.version = typeof item.version === 'number' ? item.version + 1 : 1;
-        viewer.updateItem(item);
-      }
-      viewer.scrollTo({
-        type: 'item',
-        id: itemId,
-        align: 'start',
-        behavior: 'smooth',
-      });
-      recordViewTarget(itemId);
-    },
-    [recordViewTarget]
-  );
-  const handleToggleCollapseMode = useCallback(() => {
-    const next = collapseMode === 'expanded' ? 'collapsed' : 'expanded';
-    setCollapseMode(next);
-    applyCollapseModeToLoaded(next);
-  }, [applyCollapseModeToLoaded, collapseMode]);
-  const handleToggleMarkdownView = useCallback(() => {
-    const next = markdownView === 'rendered' ? 'raw' : 'rendered';
-    setMarkdownView(next);
-    applyMarkdownViewToLoaded(next);
-  }, [applyMarkdownViewToLoaded, markdownView]);
-  const handleCollapsePatternsChange = useCallback(
-    (text: string) => {
-      setCollapsePatternsText(text);
-      saveCollapsePatternsText(text);
-      applyCollapsePatternsToLoaded(
-        compileCollapsePatterns(parseCollapsePatterns(text))
-      );
-    },
-    [applyCollapsePatternsToLoaded]
-  );
+  }, [diffStylePreference]);
   // A file-header click behaves like selecting the file in the tree: scroll
   // the file to the top and record it as the URL hash target.
   const handleFileHeaderSelect = useCallback(
@@ -382,6 +339,62 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
       recordViewTarget(itemId);
     },
     [recordViewTarget]
+  );
+  const handleSelectTreeItem = useCallback(
+    (itemId: string) => {
+      setFileTreeOverlayOpen(false);
+      const viewer = viewerRef.current;
+      if (viewer == null) {
+        return;
+      }
+      const item = viewer.getItem(itemId);
+      if (item != null && item.collapsed === true) {
+        item.collapsed = false;
+        incrementItemVersion(item);
+        viewer.updateItem(item);
+      }
+      handleFileHeaderSelect(itemId);
+    },
+    [handleFileHeaderSelect]
+  );
+  const handleToggleCollapseMode = useCallback(() => {
+    const next = collapseMode === 'expanded' ? 'collapsed' : 'expanded';
+    setCollapseMode(next);
+    applyCollapseModeToLoaded(next);
+  }, [applyCollapseModeToLoaded, collapseMode]);
+  const handleToggleMarkdownView = useCallback(() => {
+    const next = markdownView === 'rendered' ? 'raw' : 'rendered';
+    setMarkdownView(next);
+    applyMarkdownViewToLoaded(next);
+  }, [applyMarkdownViewToLoaded, markdownView]);
+  // The textarea updates per keystroke, but persisting and re-walking every
+  // loaded item is debounced — intermediate prefixes like "ven" are valid
+  // patterns and would collapse files mid-typing (collapse is one-directional,
+  // so a premature match can't be undone by finishing the word).
+  const collapsePatternsApplyTimeoutRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (collapsePatternsApplyTimeoutRef.current != null) {
+        window.clearTimeout(collapsePatternsApplyTimeoutRef.current);
+      }
+    },
+    []
+  );
+  const handleCollapsePatternsChange = useCallback(
+    (text: string) => {
+      setCollapsePatternsText(text);
+      if (collapsePatternsApplyTimeoutRef.current != null) {
+        window.clearTimeout(collapsePatternsApplyTimeoutRef.current);
+      }
+      collapsePatternsApplyTimeoutRef.current = window.setTimeout(() => {
+        collapsePatternsApplyTimeoutRef.current = null;
+        saveCollapsePatternsText(text);
+        applyCollapsePatternsToLoaded(
+          compileCollapsePatterns(parseCollapsePatterns(text))
+        );
+      }, 500);
+    },
+    [applyCollapsePatternsToLoaded]
   );
   const handleCommentSaved = useCallback(
     (comment: DiffsHubSavedCommentEvent) => {
@@ -410,6 +423,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     pullRequest,
     refreshTick: threadsRefreshTick,
     token: githubToken,
+    tokenHydrated: githubTokenHydrated,
     viewerKey,
     viewerReadyTick,
     viewerRef,
@@ -429,19 +443,13 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
   const handleDiscussionPost = useCallback(
     async (body: string) => {
       const context = requireDiscussionContext();
-      let comment: PullDiscussionComment;
-      try {
-        comment = await postPullDiscussionComment(
-          context.pullRequest,
-          context.token,
-          body
-        );
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : 'Posting the comment failed.'
-        );
-        throw error;
-      }
+      const comment = await postPullDiscussionComment(
+        context.pullRequest,
+        context.token,
+        body
+      ).catch((error: unknown) =>
+        toastRequestError(error, 'Posting the comment failed.')
+      );
       setDiscussion((prev) => [...prev, comment]);
     },
     [requireDiscussionContext]
@@ -449,20 +457,14 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
   const handleDiscussionEdit = useCallback(
     async (commentId: number, body: string) => {
       const context = requireDiscussionContext();
-      let edited: PullDiscussionComment;
-      try {
-        edited = await editPullDiscussionComment(
-          context.pullRequest,
-          context.token,
-          commentId,
-          body
-        );
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : 'Editing the comment failed.'
-        );
-        throw error;
-      }
+      const edited = await editPullDiscussionComment(
+        context.pullRequest,
+        context.token,
+        commentId,
+        body
+      ).catch((error: unknown) =>
+        toastRequestError(error, 'Editing the comment failed.')
+      );
       setDiscussion((prev) =>
         prev.map((comment) =>
           comment.kind === 'comment' && comment.id === commentId
@@ -476,20 +478,13 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
   const handleDiscussionDelete = useCallback(
     async (commentId: number) => {
       const context = requireDiscussionContext();
-      try {
-        await deletePullDiscussionComment(
-          context.pullRequest,
-          context.token,
-          commentId
-        );
-      } catch (error) {
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : 'Deleting the comment failed.'
-        );
-        throw error;
-      }
+      await deletePullDiscussionComment(
+        context.pullRequest,
+        context.token,
+        commentId
+      ).catch((error: unknown) =>
+        toastRequestError(error, 'Deleting the comment failed.')
+      );
       setDiscussion((prev) =>
         prev.filter(
           (comment) => comment.kind !== 'comment' || comment.id !== commentId
@@ -568,38 +563,43 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
           comments.push({ ...anchor, body: entry.message });
         }
       }
-      try {
-        await submitPullReview(pullRequest, token, event, body, comments);
-      } catch (error) {
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : 'Submitting the review failed.'
-        );
-        throw error;
-      }
+      await submitPullReview(pullRequest, token, event, body, comments).catch(
+        (error: unknown) =>
+          toastRequestError(error, 'Submitting the review failed.')
+      );
       // Drop the local pending cards and their sidebar entries; the refetch
       // below re-injects the submitted comments as real GitHub threads and
-      // adds the review summary to the discussion feed.
+      // adds the review summary to the discussion feed. Removals are grouped
+      // per file so each item re-renders once, not once per comment.
       const viewer = viewerRef.current;
+      const keysByItemId = new Map<string, Set<string>>();
       for (const entry of entries) {
-        const item = viewer?.getItem(entry.itemId);
-        if (
-          viewer != null &&
-          item != null &&
-          isDiffItem(item) &&
-          item.annotations != null
-        ) {
-          const nextAnnotations = item.annotations.filter(
-            (annotation) => annotation.metadata.key !== entry.key
-          );
-          if (nextAnnotations.length !== item.annotations.length) {
-            item.annotations = nextAnnotations;
-            incrementItemVersion(item);
-            viewer.updateItem(item);
-          }
+        let keys = keysByItemId.get(entry.itemId);
+        if (keys == null) {
+          keys = new Set();
+          keysByItemId.set(entry.itemId, keys);
         }
+        keys.add(entry.key);
         handleCommentDeleted({ itemId: entry.itemId, key: entry.key });
+      }
+      for (const [itemId, keys] of keysByItemId) {
+        const item = viewer?.getItem(itemId);
+        if (
+          viewer == null ||
+          item == null ||
+          !isDiffItem(item) ||
+          item.annotations == null
+        ) {
+          continue;
+        }
+        const nextAnnotations = item.annotations.filter(
+          (annotation) => !keys.has(annotation.metadata.key)
+        );
+        if (nextAnnotations.length !== item.annotations.length) {
+          item.annotations = nextAnnotations;
+          incrementItemVersion(item);
+          viewer.updateItem(item);
+        }
       }
       setPendingReviewComments(new Map());
       setThreadsRefreshTick((tick) => tick + 1);

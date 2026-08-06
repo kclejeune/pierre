@@ -1,21 +1,19 @@
 'use client';
 
 import type { AnnotationSide } from '@pierre/diffs';
-import {
-  IconArrowUpRight,
-  IconConvoFill,
-  IconPencil,
-  IconPlus,
-  IconTrash,
-} from '@pierre/icons';
+import { IconArrowUpRight, IconConvoFill, IconPlus } from '@pierre/icons';
 import { memo, type MouseEvent, useState } from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { CommentComposer } from './CommentComposer';
-import { InlineConfirm } from './InlineConfirm';
+import {
+  CommentDeleteConfirm,
+  CommentEditComposer,
+  CommentModerationButtons,
+  useCommentModeration,
+} from './CommentModeration';
 import { MarkdownContent } from './MarkdownContent';
 import { useGitHubUser } from './useGitHubUser';
-import { Button } from '@/components/Button';
 import { cn } from '@/lib/cn';
 import { createCommentSidebarPreview } from '@/lib/commentSidebarPreview';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
@@ -25,6 +23,21 @@ import type {
   DiffsHubSavedCommentItem,
   PullDiscussionComment,
 } from '@/lib/types';
+
+// Card chrome shared by the sidebar's stacked card sections. The border and
+// surface come from themed CSS variables (set on the sidebar wrapper) so
+// cards stay on-palette for mixed-light/dark themes like slack-ochin
+// (light-typed but uses a dark navy sidebar); the hardcoded fallbacks cover
+// the brief window before the Shiki theme resolves on first render.
+const CARD_BORDER_CLASS =
+  'border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]';
+
+// A row inside a card stack: hairline separators between rows, with the
+// stack's outer rounding echoed on the first/last rows.
+const CARD_ROW_CLASS = cn(
+  CARD_BORDER_CLASS,
+  'border-b bg-[var(--diffshub-card-bg,var(--color-card))] first:rounded-t-lg last:rounded-b-lg last:border-b-0'
+);
 
 // Write access to the PR-level conversation, provided only on pull-request
 // views. `canWrite` mirrors the thread cards' meaning: a token is saved, so
@@ -150,9 +163,9 @@ function DiscussionRow({
   comment: PullDiscussionComment;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
-  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const moderation = useCommentModeration(async () => {
+    await actions?.onDelete(comment.id);
+  });
   const githubUser = useGitHubUser();
   const canModify =
     actions != null &&
@@ -162,7 +175,7 @@ function DiscussionRow({
   const preview = createCommentSidebarPreview(comment.body);
 
   const toggleExpanded = () => {
-    if (!isEditing && !isConfirmingDelete) {
+    if (!moderation.isEditing && !moderation.isConfirmingDelete) {
       setExpanded((prev) => !prev);
     }
   };
@@ -172,7 +185,10 @@ function DiscussionRow({
       role="button"
       tabIndex={0}
       aria-expanded={expanded}
-      className="group/discussion focus-visible:ring-ring flex w-full cursor-pointer items-start gap-2 border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] p-3 text-left text-sm outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]"
+      className={cn(
+        CARD_ROW_CLASS,
+        'group/discussion focus-visible:ring-ring flex w-full cursor-pointer items-start gap-2 p-3 text-left text-sm outline-none hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2'
+      )}
       onClick={(event) => {
         // Interactive descendants — markdown links, the edit composer, the
         // action buttons — handle their own clicks; only clicks on the row
@@ -207,34 +223,12 @@ function DiscussionRow({
           </span>
           <span>· {formatRelativeTime(comment.createdAt)}</span>
           <span className="ml-auto flex shrink-0 items-center gap-1">
-            {canModify && !isEditing && (
+            {canModify && !moderation.isEditing && (
               <span className="flex gap-1 opacity-0 transition-opacity duration-100 group-focus-within/discussion:opacity-100 group-hover/discussion:opacity-100">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Edit comment"
-                  title="Edit comment"
-                  disabled={isDeleting}
-                  onClick={() => {
-                    setExpanded(true);
-                    setIsConfirmingDelete(false);
-                    setIsEditing(true);
-                  }}
-                >
-                  <IconPencil size={12} />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Delete comment"
-                  title="Delete comment"
-                  disabled={isDeleting}
-                  onClick={() => setIsConfirmingDelete(true)}
-                >
-                  <IconTrash size={12} />
-                </Button>
+                <CommentModerationButtons
+                  moderation={moderation}
+                  onBeginEdit={() => setExpanded(true)}
+                />
               </span>
             )}
             {comment.htmlUrl != null && (
@@ -251,17 +245,12 @@ function DiscussionRow({
             )}
           </span>
         </div>
-        {isEditing && actions != null ? (
+        {moderation.isEditing && actions != null ? (
           <div className="w-full pt-1">
-            <CommentComposer
-              autoFocus
+            <CommentEditComposer
               initialBody={comment.body}
-              submitLabel="Save"
-              onCancel={() => setIsEditing(false)}
-              onSubmit={async (body) => {
-                await actions.onEdit(comment.id, body);
-                setIsEditing(false);
-              }}
+              moderation={moderation}
+              onEdit={(body) => actions.onEdit(comment.id, body)}
             />
           </div>
         ) : expanded ? (
@@ -273,21 +262,9 @@ function DiscussionRow({
             </p>
           )
         )}
-        {isConfirmingDelete && actions != null && (
+        {moderation.isConfirmingDelete && actions != null && (
           <div className="w-full pt-1">
-            <InlineConfirm
-              confirmLabel="Delete"
-              disabled={isDeleting}
-              message="Delete this comment on GitHub?"
-              onCancel={() => setIsConfirmingDelete(false)}
-              onConfirm={() => {
-                setIsDeleting(true);
-                actions.onDelete(comment.id).catch(() => {
-                  // Failure already surfaced; re-enable the controls.
-                  setIsDeleting(false);
-                });
-              }}
-            />
+            <CommentDeleteConfirm moderation={moderation} />
           </div>
         )}
       </div>
@@ -303,14 +280,16 @@ function DiscussionComposerRow({ actions }: { actions: DiscussionActions }) {
 
   if (!actions.canWrite) {
     return (
-      <div className="text-muted-foreground border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] p-3 text-[13px] first:rounded-t-lg last:rounded-b-lg last:border-b-0 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]">
+      <div
+        className={cn(CARD_ROW_CLASS, 'text-muted-foreground p-3 text-[13px]')}
+      >
         Sign in with GitHub or save a token to comment.
       </div>
     );
   }
 
   return (
-    <div className="border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] p-3 first:rounded-t-lg last:rounded-b-lg last:border-b-0 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]">
+    <div className={cn(CARD_ROW_CLASS, 'p-3')}>
       {isOpen ? (
         <CommentComposer
           autoFocus
@@ -375,7 +354,7 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
           <div className="text-muted-foreground p-3 pb-2 text-sm font-medium">
             Conversation
           </div>
-          <div className="rounded-lg border border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]">
+          <div className={cn(CARD_BORDER_CLASS, 'rounded-lg border')}>
             {discussion.map((comment) => (
               <DiscussionRow
                 key={`${comment.kind}-${comment.id}`}
@@ -406,24 +385,21 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
               {section.path}
             </div>
           )}
-          <div className="rounded-lg border border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]">
+          <div className={cn(CARD_BORDER_CLASS, 'rounded-lg border')}>
             {section.comments.map((comment) => (
               <button
                 key={comment.key}
                 type="button"
-                // Card surface, hover, and border come from the themed
-                // chrome (set on the sidebar wrapper) so cards stay
-                // on-palette for mixed-light/dark themes like slack-ochin
-                // (light-typed but uses a dark navy sidebar). The
-                // hardcoded fallbacks cover the brief window before the
-                // Shiki theme resolves on first render.
                 // No `transition-colors` here: the bg / border / text
                 // colors are driven by CSS variables that flip the entire
                 // chrome on every theme swap, so a smooth color transition
                 // on each card visibly trails the rest of the UI (header,
                 // file tree, diff body) which snap instantly. Hover bg is
                 // snappy enough without an interpolated transition.
-                className="focus-visible:ring-ring flex w-full cursor-pointer items-start gap-2 border-b border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] p-3 text-left text-sm outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2 dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]"
+                className={cn(
+                  CARD_ROW_CLASS,
+                  'focus-visible:ring-ring flex w-full cursor-pointer items-start gap-2 p-3 text-left text-sm outline-none hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2'
+                )}
                 onClick={(event) =>
                   handleRowClick(event, () => onSelectComment?.(comment))
                 }

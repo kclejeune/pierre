@@ -34,6 +34,10 @@ interface UsePullReviewThreadsOptions {
   // (review submission), to refetch and inject the fresh threads.
   refreshTick?: number;
   token: string;
+  // False until the stored token has been read after mount. Gating the fetch
+  // on it avoids issuing (and aborting) an anonymous request that the token
+  // hydration would immediately supersede.
+  tokenHydrated: boolean;
   viewerKey: number;
   // Bumped by the parent whenever the CodeView handle mounts, so application
   // can retry once the viewer exists.
@@ -53,6 +57,7 @@ export function usePullReviewThreads({
   pullRequest,
   refreshTick = 0,
   token,
+  tokenHydrated,
   viewerKey,
   viewerReadyTick,
   viewerRef,
@@ -67,7 +72,7 @@ export function usePullReviewThreads({
   useEffect(() => {
     setThreads(null);
     appliedViewerKeyRef.current = null;
-    if (pullRequest == null) {
+    if (pullRequest == null || !tokenHydrated) {
       return;
     }
 
@@ -92,7 +97,7 @@ export function usePullReviewThreads({
     // it after a review submission. Resetting appliedViewerKeyRef above lets
     // the apply effect run again — already-injected threads are deduped by
     // key, so only the fresh ones land.
-  }, [pullRequest, refreshTick, token, viewerKey]);
+  }, [pullRequest, refreshTick, token, tokenHydrated, viewerKey]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

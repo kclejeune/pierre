@@ -1,12 +1,17 @@
 'use client';
 
 import type { DiffLineAnnotation } from '@pierre/diffs';
-import { IconArrowUpRight, IconPencil, IconTrash } from '@pierre/icons';
+import { IconArrowUpRight } from '@pierre/icons';
 import { memo, useState } from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { CommentComposer } from './CommentComposer';
-import { InlineConfirm } from './InlineConfirm';
+import {
+  CommentDeleteConfirm,
+  CommentEditComposer,
+  CommentModerationButtons,
+  useCommentModeration,
+} from './CommentModeration';
 import { MarkdownContent } from './MarkdownContent';
 import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
@@ -83,10 +88,9 @@ function ThreadComment({
   onDelete,
   onEdit,
 }: ThreadCommentProps) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const showActions = comment.htmlUrl != null || (canModify && !isEditing);
+  const moderation = useCommentModeration(onDelete);
+  const showActions =
+    comment.htmlUrl != null || (canModify && !moderation.isEditing);
 
   return (
     <div className="group/comment flex gap-2.5">
@@ -116,63 +120,23 @@ function ThreadComment({
                   </a>
                 </Button>
               )}
-              {canModify && !isEditing && (
-                <>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Edit comment"
-                    title="Edit comment"
-                    disabled={isDeleting}
-                    onClick={() => setIsEditing(true)}
-                  >
-                    <IconPencil size={12} />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Delete comment"
-                    title="Delete comment"
-                    disabled={isDeleting}
-                    onClick={() => setIsConfirmingDelete(true)}
-                  >
-                    <IconTrash size={12} />
-                  </Button>
-                </>
+              {canModify && !moderation.isEditing && (
+                <CommentModerationButtons moderation={moderation} />
               )}
             </span>
           )}
         </div>
-        {isEditing ? (
-          <CommentComposer
-            autoFocus
+        {moderation.isEditing ? (
+          <CommentEditComposer
             initialBody={comment.body}
-            submitLabel="Save"
-            onCancel={() => setIsEditing(false)}
-            onSubmit={async (body) => {
-              await onEdit(body);
-              setIsEditing(false);
-            }}
+            moderation={moderation}
+            onEdit={onEdit}
           />
         ) : (
           <MarkdownContent markdown={comment.body} />
         )}
-        {isConfirmingDelete && (
-          <InlineConfirm
-            confirmLabel="Delete"
-            disabled={isDeleting}
-            message="Delete this comment on GitHub?"
-            onCancel={() => setIsConfirmingDelete(false)}
-            onConfirm={() => {
-              setIsDeleting(true);
-              onDelete().catch(() => {
-                // Failure already surfaced; re-enable the controls.
-                setIsDeleting(false);
-              });
-            }}
-          />
+        {moderation.isConfirmingDelete && (
+          <CommentDeleteConfirm moderation={moderation} />
         )}
       </div>
     </div>

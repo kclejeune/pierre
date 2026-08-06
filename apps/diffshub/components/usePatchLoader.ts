@@ -2,6 +2,7 @@
 
 import {
   areSelectionsEqual,
+  type CodeViewDiffItem,
   type CodeViewItem,
   type CodeViewLineSelection,
   processFile,
@@ -30,6 +31,7 @@ import {
 } from '@/lib/diffsHubDataAccumulator';
 import { applyDocPreviewToItem } from '@/lib/docPreview';
 import { getPatchTreePathPrefix } from '@/lib/gitPatchMetadata';
+import { incrementItemVersion } from '@/lib/incrementItemVersion';
 import {
   type DiffsHubLineHashTarget,
   formatDiffsHubItemHash,
@@ -203,88 +205,66 @@ export function usePatchLoader({
     }
   };
 
+  // Shared traversal for the global "apply X to every loaded file" toggles.
+  // `mutate` changes a diff item in place and returns whether anything
+  // changed. Before the viewer mounts (e.g. the worker pool is still warming
+  // up while the header is already interactive), the items buffered in
+  // initialItems are rewritten instead — on shallow copies, since React state
+  // must not be mutated — so they arrive in the right state once it mounts;
+  // items still streaming in pick up the live settings through
+  // prepareItemsForViewer. After mount, changed items get a version bump so
+  // the viewer re-renders them.
+  const applyToLoadedItems = (
+    mutate: (item: CodeViewDiffItem<CommentMetadata>) => boolean
+  ) => {
+    const viewer = viewerRef.current;
+    if (viewer == null) {
+      setInitialItems((prev) => {
+        let changed = false;
+        const next = prev.map((item) => {
+          if (item.type !== 'diff') {
+            return item;
+          }
+          const copy = { ...item };
+          if (!mutate(copy)) {
+            return item;
+          }
+          changed = true;
+          return copy;
+        });
+        return changed ? next : prev;
+      });
+      return;
+    }
+    for (const itemId of loadedItemIdsRef.current) {
+      const item = viewer.getItem(itemId);
+      if (item == null || item.type !== 'diff' || !mutate(item)) {
+        continue;
+      }
+      incrementItemVersion(item);
+      viewer.updateItem(item);
+    }
+  };
+
   const applyCollapseModeToLoaded = useStableCallback(
     (mode: 'expanded' | 'collapsed') => {
       const targetCollapsed = mode === 'collapsed';
-      const viewer = viewerRef.current;
-      if (viewer == null) {
-        // The viewer hasn't mounted yet (e.g. the worker pool is still warming
-        // up while the header is already interactive). Rewrite any items
-        // already buffered in initialItems so they arrive in the right state
-        // once the viewer mounts. New items still streaming in pick up the
-        // live collapse mode through prepareItemsForViewer.
-        setInitialItems((prev) => {
-          let changed = false;
-          const next = prev.map((item) => {
-            if (
-              item.type !== 'diff' ||
-              (item.collapsed === true) === targetCollapsed
-            ) {
-              return item;
-            }
-            changed = true;
-            return { ...item, collapsed: targetCollapsed };
-          });
-          return changed ? next : prev;
-        });
-        return;
-      }
-
-      for (const itemId of loadedItemIdsRef.current) {
-        const item = viewer.getItem(itemId);
-        if (item == null || item.type !== 'diff') {
-          continue;
-        }
-        const current = item.collapsed === true;
-        if (current === targetCollapsed) {
-          continue;
+      applyToLoadedItems((item) => {
+        if ((item.collapsed === true) === targetCollapsed) {
+          return false;
         }
         item.collapsed = targetCollapsed;
-        item.version = getNextItemVersion(item);
-        viewer.updateItem(item);
-      }
+        return true;
+      });
     }
   );
 
-  // Global markdown view: walk every loaded markdown item and force its
-  // rendered-document annotation on or off. Mirrors applyCollapseModeToLoaded,
-  // including the pre-mount initialItems rewrite.
+  // Global markdown view: force every loaded markdown item's rendered-document
+  // annotation on or off.
   const applyMarkdownViewToLoaded = useStableCallback(
     (view: 'rendered' | 'raw') => {
       const shown = view === 'rendered';
-      const viewer = viewerRef.current;
-      if (viewer == null) {
-        setInitialItems((prev) => {
-          let changed = false;
-          const next = prev.map((item) => {
-            if (item.type !== 'diff') {
-              return item;
-            }
-            // Copy before mutating: applyDocPreviewToItem writes annotations
-            // in place, and React state must not be mutated.
-            const copy = { ...item };
-            if (!applyDocPreviewToItem(copy, shown)) {
-              return item;
-            }
-            changed = true;
-            return copy;
-          });
-          return changed ? next : prev;
-        });
-        return;
-      }
-
-      for (const itemId of loadedItemIdsRef.current) {
-        const item = viewer.getItem(itemId);
-        if (item == null || item.type !== 'diff') {
-          continue;
-        }
-        if (!applyDocPreviewToItem(item, shown)) {
-          continue;
-        }
-        item.version = getNextItemVersion(item);
-        viewer.updateItem(item);
-      }
+      applyToLoadedItems((item) => applyDocPreviewToItem(item, shown));
     }
   );
 
@@ -296,34 +276,16 @@ export function usePatchLoader({
       if (patterns.length === 0) {
         return;
       }
-      const collapseMatching = (item: CodeViewItem<CommentMetadata>) =>
-        item.type === 'diff' &&
-        item.collapsed !== true &&
-        matchesCollapsePattern(item.fileDiff.name, patterns);
-      const viewer = viewerRef.current;
-      if (viewer == null) {
-        setInitialItems((prev) => {
-          let changed = false;
-          const next = prev.map((item) => {
-            if (!collapseMatching(item)) {
-              return item;
-            }
-            changed = true;
-            return { ...item, collapsed: true };
-          });
-          return changed ? next : prev;
-        });
-        return;
-      }
-      for (const itemId of loadedItemIdsRef.current) {
-        const item = viewer.getItem(itemId);
-        if (item == null || !collapseMatching(item)) {
-          continue;
+      applyToLoadedItems((item) => {
+        if (
+          item.collapsed === true ||
+          !matchesCollapsePattern(item.fileDiff.name, patterns)
+        ) {
+          return false;
         }
         item.collapsed = true;
-        item.version = getNextItemVersion(item);
-        viewer.updateItem(item);
-      }
+        return true;
+      });
     }
   );
 
@@ -368,7 +330,7 @@ export function usePatchLoader({
       const instance = viewer.getInstance();
       const itemTop = instance?.getTopForItem(itemId);
       item.collapsed = reviewed;
-      item.version = getNextItemVersion(item);
+      incrementItemVersion(item);
       if (!viewer.updateItem(item)) {
         return;
       }
@@ -836,7 +798,7 @@ function applyDiffsHubLineHashTarget(
 
   if (item.collapsed === true) {
     item.collapsed = false;
-    item.version = getNextItemVersion(item);
+    incrementItemVersion(item);
     if (!viewer.updateItem(item)) {
       return false;
     }
@@ -869,10 +831,6 @@ function applyDiffsHubItemIdRename(
   rename: DiffsHubItemIdRename
 ): void {
   viewer?.updateItemId(rename.oldId, rename.newId);
-}
-
-function getNextItemVersion(item: { version?: string | number }): number {
-  return typeof item.version === 'number' ? item.version + 1 : 1;
 }
 
 function createPatchRequestInit(

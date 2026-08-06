@@ -29,7 +29,6 @@ import {
   docsThemeCatalog,
   themeController,
 } from '@/components/themeController';
-import { preloadAvatars } from '@/lib/annotation';
 import {
   compileCollapsePatterns,
   loadCollapsePatternsText,
@@ -84,8 +83,6 @@ export function ReviewUI({ domain, initialUrl, path }: ReviewUIProps) {
 }
 
 function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
-  useEffect(preloadAvatars, []);
-
   const isWorkerPoolReadyOrDisable = useIsWorkerPoolReadyOrDisabled();
   const [diffStyle, setDiffStyle] = useState<'split' | 'unified'>('split');
   // The user's explicit split/unified pick. The live diffStyle is viewport-

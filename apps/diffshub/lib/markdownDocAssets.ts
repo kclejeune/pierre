@@ -1,9 +1,5 @@
-import {
-  encodePath,
-  type GitHubDiffSource,
-  parseGitHubDiffSource,
-} from './githubDiffSource';
-import { buildBrowseBlobPath, formatPullHeadRef } from './repoBrowser';
+import { parseGitHubDiffSource } from './githubDiffSource';
+import { buildBrowseBlobPath, resolveDiffHeadRef } from './repoBrowser';
 
 // URL handling for references made by a rendered markdown document. The
 // document lives at a path inside the repository, so relative references
@@ -68,6 +64,9 @@ export function createDocAssetURL(
 export interface DocLinkTarget {
   // The repository path the link names, for looking the file up in the diff.
   path: string;
+  // The fragment the reference carried ('#…' or ''), so a link back into the
+  // document being rendered can scroll to its section instead of navigating.
+  hash: string;
   // The file in the app's own repo browser at the diff's head ref, so the
   // link resolves even when the file is not part of the diff.
   url: string;
@@ -93,7 +92,7 @@ export function resolveDocLinkTarget(
   if (source == null) {
     return null;
   }
-  const ref = resolveHeadRefName(source);
+  const ref = resolveDiffHeadRef(source);
   if (ref == null) {
     return null;
   }
@@ -102,24 +101,7 @@ export function resolveDocLinkTarget(
   // target.
   return {
     path,
+    hash: resolved.hash,
     url: `${buildBrowseBlobPath(source.repo, ref, path)}${resolved.hash}`,
   };
-}
-
-// The diff's head ref in a form both the app's repo browser and the GitHub
-// web UI resolve: every PR advertises refs/pull/N/head, commits use their
-// own sha, and same-repo compares use the head side of the range. Fork
-// compare heads (owner:branch) live in another repository, so those links
-// get no target.
-function resolveHeadRefName(source: GitHubDiffSource): string | null {
-  switch (source.kind) {
-    case 'pull':
-      return formatPullHeadRef(source.number);
-    case 'commit':
-      return source.sha;
-    case 'compare': {
-      const head = source.range.split(/\.{2,3}/).pop() ?? '';
-      return head === '' || head.includes(':') ? null : encodePath(head);
-    }
-  }
 }

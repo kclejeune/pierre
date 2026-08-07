@@ -1,5 +1,12 @@
 import { getPatchViewerHref } from './getPatchViewerHref';
 import type { RecentDiff } from './recentDiffs';
+import {
+  buildBrowseRepoPath,
+  buildBrowseTreePath,
+  buildCommitDiffPath,
+  formatBrowseRecentTitle,
+  isCommitShaLike,
+} from './repoBrowser';
 
 // Pure assembly of the command palette's sections from its data inputs, kept
 // out of the component so ordering/grouping rules are unit-testable. The
@@ -35,6 +42,53 @@ export interface BuildPaletteItemsInput {
 
 const MAX_RECENT_ITEMS = 8;
 
+// "owner/repo@ref" opens the repo file browser at that ref; the ref may be
+// empty ("owner/repo@") for the default branch, and a sha-like ref also
+// offers the commit's diff.
+const REPO_AT_REF_PATTERN = /^([^/\s@#]+)\/([^/\s@#]+)@(\S*)$/;
+
+const BARE_REPO_PATTERN = /^[^/\s@#]+\/[^/\s@#]+$/;
+
+function buildRepoAtRefItems(query: string): PaletteItem[] | null {
+  const match = REPO_AT_REF_PATTERN.exec(query);
+  if (match == null) {
+    return null;
+  }
+  const [, owner, repo, ref] = match;
+  const browsePath =
+    ref === ''
+      ? buildBrowseRepoPath({ owner, repo })
+      : buildBrowseTreePath({ owner, repo }, ref);
+  const items: PaletteItem[] = [
+    {
+      key: `browse:${browsePath}`,
+      label:
+        ref === '' ? `Browse ${owner}/${repo} files` : `Browse files at ${ref}`,
+      kind: 'open',
+      action: {
+        type: 'navigate',
+        path: browsePath,
+        recordTitle: formatBrowseRecentTitle(
+          { owner, repo },
+          ref === '' ? null : ref
+        ),
+      },
+    },
+  ];
+  if (isCommitShaLike(ref)) {
+    items.push({
+      key: `commit:${owner}/${repo}@${ref}`,
+      label: `View commit ${ref}`,
+      kind: 'open',
+      action: {
+        type: 'navigate',
+        path: buildCommitDiffPath({ owner, repo }, ref),
+      },
+    });
+  }
+  return items;
+}
+
 export function buildPaletteItems(
   input: BuildPaletteItemsInput
 ): PaletteSection[] {
@@ -54,11 +108,18 @@ export function buildPaletteItems(
           kind: 'action',
           action: { type: 'navigate', path: '/pulls' },
         },
+        {
+          key: 'action:browse',
+          label: 'Browse repository files',
+          detail: 'Open the /browse dashboard',
+          kind: 'action',
+          action: { type: 'navigate', path: '/browse' },
+        },
       ],
     });
     if (input.recents.length > 0) {
       sections.push({
-        heading: 'Recent diffs',
+        heading: 'Recent',
         items: input.recents.slice(0, MAX_RECENT_ITEMS).map((recent) => ({
           key: `recent:${recent.path}`,
           label: recent.title ?? recent.path,
@@ -80,6 +141,14 @@ export function buildPaletteItems(
         })),
       });
     }
+    return sections;
+  }
+
+  // "owner/repo@ref" is unambiguously a file-browser target; the pull search
+  // has nothing to add, so those items are the whole result.
+  const atRefItems = buildRepoAtRefItems(query);
+  if (atRefItems != null) {
+    sections.push({ heading: 'Go to', items: atRefItems });
     return sections;
   }
 
@@ -140,6 +209,28 @@ export function buildPaletteItems(
   }
   if (repoItems.length > 0) {
     sections.push({ heading: 'Repositories', items: repoItems });
+  }
+  // A complete "owner/repo" also offers the file browser, after the
+  // pull-request results so Enter keeps narrowing toward a pull by default.
+  if (BARE_REPO_PATTERN.test(query)) {
+    const [owner, repo] = query.split('/');
+    const path = buildBrowseRepoPath({ owner, repo });
+    sections.push({
+      heading: 'Browse',
+      items: [
+        {
+          key: `browse:${path}`,
+          label: `Browse ${query} files`,
+          detail: 'Repository tree at the default branch',
+          kind: 'open',
+          action: {
+            type: 'navigate',
+            path,
+            recordTitle: formatBrowseRecentTitle({ owner, repo }, null),
+          },
+        },
+      ],
+    });
   }
   return sections;
 }

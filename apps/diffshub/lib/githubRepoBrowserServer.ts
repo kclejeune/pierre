@@ -38,6 +38,22 @@ interface RepoBrowserOptions {
 const MAX_FILE_BYTES = 5_000_000;
 const FILE_TOO_LARGE_MESSAGE = 'This file is too large to display.';
 
+// Extracts the owner/repo pair every repo-browser route requires, or the 400
+// response to return when either is missing.
+export function readRepoParams(
+  params: URLSearchParams
+): { owner: string; repo: string } | Response {
+  const owner = params.get('owner');
+  const repo = params.get('repo');
+  if (owner == null || owner === '' || repo == null || repo === '') {
+    return createJSONResponse(
+      { error: 'owner and repo parameters are required.' },
+      { status: 400 }
+    );
+  }
+  return { owner, repo };
+}
+
 // Maps repo-browser failures onto the JSON error response both routes return:
 // GitHubCommitError keeps GitHub's own status, anything else (raw-host
 // fetches, oversized files) reads as a 502 with the message intact.
@@ -189,7 +205,9 @@ async function findLongestMatchingRef(
   return { ref: best, path: refAndPath.slice(best.length + 1) };
 }
 
-async function fetchDefaultBranch(
+// Also consumed by the /api/github-refs listing, which reports the default
+// branch alongside the branch and tag names.
+export async function fetchDefaultBranch(
   repo: GitHubRepo,
   options: RepoBrowserOptions
 ): Promise<string> {

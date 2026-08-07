@@ -42,12 +42,12 @@ export function AppNavbar({ className, tokenState }: AppNavbarProps) {
       className={cn('flex items-center justify-end gap-2 px-4 py-3', className)}
     >
       <CommandPaletteTrigger className="w-40 min-w-0 min-[420px]:w-64 sm:w-80" />
-      <Link
-        href="/pulls"
-        className="bg-background hover:bg-accent inline-flex h-9 items-center rounded-md border px-3.5 text-sm font-medium shadow-xs transition-colors"
-      >
-        Pulls
-      </Link>
+      <Button asChild variant="outline" className="rounded-md">
+        <Link href="/pulls">Pulls</Link>
+      </Button>
+      <Button asChild variant="outline" className="rounded-md">
+        <Link href="/browse">Browse</Link>
+      </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button

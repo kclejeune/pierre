@@ -30,6 +30,10 @@ import {
   resolveDocAssetPath,
   resolveDocLinkTarget,
 } from '@/lib/markdownDocAssets';
+import {
+  headingIdCandidates,
+  rehypeGitHubHeadingIds,
+} from '@/lib/markdownHeadingIds';
 import type { CommentMetadata } from '@/lib/types';
 
 interface MarkdownDocAnnotationProps {
@@ -124,7 +128,10 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
     };
   }, [docReady, isDeletedDoc]);
 
-  const rehypePlugins = useMemo(() => [rehypeWrapTopLevelBlocks], []);
+  const rehypePlugins = useMemo(
+    () => [rehypeWrapTopLevelBlocks, rehypeGitHubHeadingIds],
+    []
+  );
   const components = useMemo<Components>(
     () => ({
       // Relative image references point at repository paths; route them
@@ -155,8 +162,26 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
       // resolve against the DiffsHub origin and 404. Point them at the file
       // on the GitHub instance at this diff's head ref; a plain left-click on
       // a file that is part of the diff opens it in the viewer instead, the
-      // same way selecting it in the file tree would.
+      // same way selecting it in the file tree would. Fragment links target a
+      // section of this document and scroll the rendered view there — the
+      // browser must not navigate, because the viewer owns location.hash for
+      // its own line anchors.
       a: ({ node: _node, href, ...rest }) => {
+        if (typeof href === 'string' && href.startsWith('#')) {
+          return (
+            <a
+              {...rest}
+              href={href}
+              onClick={(event) => {
+                if (!isPlainLeftClick(event)) {
+                  return;
+                }
+                event.preventDefault();
+                scrollToDocFragment(containerRef.current, href);
+              }}
+            />
+          );
+        }
         const linkTarget =
           typeof href === 'string' && sourcePath != null
             ? resolveDocLinkTarget(href, fileDiff.name, sourcePath)
@@ -171,16 +196,14 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
             rel="noreferrer noopener"
             target="_blank"
             onClick={(event) => {
-              // Modified clicks (new tab, download, …) keep browser behavior
-              // and follow the href.
-              if (
-                event.defaultPrevented ||
-                event.button !== 0 ||
-                event.metaKey ||
-                event.ctrlKey ||
-                event.shiftKey ||
-                event.altKey
-              ) {
+              if (!isPlainLeftClick(event)) {
+                return;
+              }
+              // A qualified link back into this document (./README.md#usage
+              // from README.md) is a section link too.
+              if (linkTarget.path === fileDiff.name && linkTarget.hash !== '') {
+                event.preventDefault();
+                scrollToDocFragment(containerRef.current, linkTarget.hash);
                 return;
               }
               if (onOpenFile?.(linkTarget.path) === true) {
@@ -438,6 +461,41 @@ function useMarkdownDocContents(
     return { kind: 'ready', contents: localContents };
   }
   return fetchedState ?? { kind: 'loading' };
+}
+
+// Whether a click should be handled in-app; modified clicks (new tab,
+// download, …) keep browser behavior and follow the href.
+function isPlainLeftClick(event: React.MouseEvent): boolean {
+  return (
+    !event.defaultPrevented &&
+    event.button === 0 &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.altKey
+  );
+}
+
+// Scrolls the rendered document to the heading a fragment names. Heading ids
+// are GitHub slugs (stamped by rehypeGitHubHeadingIds) that sanitization
+// renamed to `user-content-<slug>`; the bare form is tried too for anchors
+// embedded HTML carried itself. A fragment with no matching heading is a
+// no-op, matching GitHub.
+function scrollToDocFragment(
+  container: HTMLElement | null,
+  hash: string
+): void {
+  const fragment = decodeURIComponent(hash.replace(/^#/, ''));
+  if (container == null || fragment === '') {
+    return;
+  }
+  for (const id of headingIdCandidates(fragment)) {
+    const target = container.querySelector(`#${CSS.escape(id)}`);
+    if (target != null) {
+      target.scrollIntoView({ block: 'start' });
+      return;
+    }
+  }
 }
 
 // The wrapper attributes round-trip through rehype-raw's HTML re-parse, which

@@ -5,15 +5,14 @@ import {
   resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import {
-  loadRepoBrowserTree,
   readRepoParams,
   repoBrowserErrorResponse,
 } from '@/lib/githubRepoBrowserServer';
+import { loadRepoRefs } from '@/lib/githubRepoRefsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
 
-// Lists a repository's file tree for the browse view: resolves the `ref`
-// remainder (branch, tag, sha, or refs/pull/… plus an optional sub-path)
-// against the repo and returns every blob path at the resolved commit.
+// Lists a repository's default branch, branches, and tags for the /browse
+// dashboard's ref picker.
 export async function GET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
@@ -24,13 +23,10 @@ export async function GET(request: NextRequest) {
   if (repo instanceof Response) {
     return repo;
   }
-  const ref = request.nextUrl.searchParams.get('ref') ?? '';
 
   try {
     return createJSONResponse(
-      await loadRepoBrowserTree(repo, ref, {
-        token: resolveRequestGitHubToken(request),
-      })
+      await loadRepoRefs(repo, { token: resolveRequestGitHubToken(request) })
     );
   } catch (error) {
     return repoBrowserErrorResponse(error);

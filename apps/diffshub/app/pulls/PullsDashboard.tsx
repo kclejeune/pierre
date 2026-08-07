@@ -1,21 +1,18 @@
 'use client';
 
 import { IconPin, IconX } from '@pierre/icons';
-import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
-import { AppNavbar } from '@/components/AppNavbar';
 import { Button } from '@/components/Button';
 import { ButtonGroup, ButtonGroupItem } from '@/components/ButtonGroup';
-import { DiffsHubLogo } from '@/components/DiffsHubLogo';
-import { GitHubTokenControl } from '@/components/GitHubTokenControl';
-import { Input } from '@/components/Input';
-import { PullRequestRow } from '@/components/PullRequestRow';
-import { useDashboardPulls } from '@/components/useDashboardPulls';
 import {
-  type DiffUrlSuggestion,
-  loadSuggestions,
-} from '@/components/useDiffUrlSuggestions';
+  DashboardShell,
+  SECTION_CARD_CLASS,
+} from '@/components/DashboardShell';
+import { GitHubTokenControl } from '@/components/GitHubTokenControl';
+import { PullRequestRow } from '@/components/PullRequestRow';
+import { RepoNameInput } from '@/components/RepoNameInput';
+import { useDashboardPulls } from '@/components/useDashboardPulls';
 import { useGitHubToken } from '@/components/useGitHubToken';
 import { usePinnedRepos } from '@/components/usePinnedRepos';
 import {
@@ -23,11 +20,7 @@ import {
   type PullBucket,
   type PullSummary,
 } from '@/lib/githubPullSummaries';
-import {
-  isRepoPinned,
-  isValidRepoName,
-  MAX_PINNED_REPOS,
-} from '@/lib/pinnedRepos';
+import { isRepoPinned, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
 
 const BUCKET_COPY: Record<PullBucket, { empty: string; label: string }> = {
   created: { empty: 'you created', label: 'Created' },
@@ -38,47 +31,30 @@ const BUCKET_COPY: Record<PullBucket, { empty: string; label: string }> = {
   },
 };
 
-const SECTION_CARD_CLASS = 'bg-background overflow-hidden rounded-lg border';
-
 export function PullsDashboard() {
   const tokenState = useGitHubToken();
   const { clearToken, hasToken, hydrated, setToken, tokenVersion } = tokenState;
 
   return (
-    <div className="flex min-h-[100svh] flex-col items-center md:bg-[var(--diffshub-sidebar-bg)]">
-      <AppNavbar className="w-full" tokenState={tokenState} />
-      <div className="w-3xl max-w-[100vw] space-y-6 px-5 pt-2 pb-8 md:pt-4 md:pb-12">
-        <header className="flex items-center gap-1.5">
-          <Link
-            href="/"
-            className="flex items-center gap-1.5 text-2xl font-semibold tracking-tight"
-          >
-            <DiffsHubLogo />
-            DiffsHub
-          </Link>
-          <span className="text-muted-foreground text-2xl font-semibold tracking-tight">
-            / pulls
-          </span>
-        </header>
-        {!hydrated ? null : hasToken ? (
-          <SignedInDashboard tokenVersion={tokenVersion} />
-        ) : (
-          <div className={SECTION_CARD_CLASS}>
-            <p className="text-muted-foreground border-b px-4 py-3 text-sm">
-              Sign in with GitHub or paste a token to browse your pull requests,
-              assigned reviews, and pinned repositories.
-            </p>
-            <GitHubTokenControl
-              active={hasToken}
-              className="px-4 py-3"
-              onClear={clearToken}
-              onSave={setToken}
-              title="GitHub access"
-            />
-          </div>
-        )}
-      </div>
-    </div>
+    <DashboardShell section="pulls" tokenState={tokenState}>
+      {!hydrated ? null : hasToken ? (
+        <SignedInDashboard tokenVersion={tokenVersion} />
+      ) : (
+        <div className={SECTION_CARD_CLASS}>
+          <p className="text-muted-foreground border-b px-4 py-3 text-sm">
+            Sign in with GitHub or paste a token to browse your pull requests,
+            assigned reviews, and pinned repositories.
+          </p>
+          <GitHubTokenControl
+            active={hasToken}
+            className="px-4 py-3"
+            onClear={clearToken}
+            onSave={setToken}
+            title="GitHub access"
+          />
+        </div>
+      )}
+    </DashboardShell>
   );
 }
 
@@ -174,8 +150,10 @@ function PinnedReposSection({
         Pinned repositories
       </h3>
       {pinned.length < MAX_PINNED_REPOS && (
-        <AddPinnedRepoInput
-          onPin={(repo) => {
+        <RepoNameInput
+          placeholder="Pin a repository (owner/name)"
+          submitLabel="Pin"
+          onSubmit={(repo) => {
             if (!isRepoPinned(pinned, repo)) {
               onToggle(repo);
             }
@@ -230,92 +208,6 @@ function PinnedRepoCard({
         pulls={pulls}
         showRepo={false}
       />
-    </div>
-  );
-}
-
-// Free-text repo input with live GitHub repo-name suggestions, sharing the
-// URL bar's suggestion loader (and its cache).
-function AddPinnedRepoInput({ onPin }: { onPin: (repo: string) => void }) {
-  const [value, setValue] = useState('');
-  const [suggestions, setSuggestions] = useState<DiffUrlSuggestion[]>([]);
-
-  useEffect(() => {
-    const query = value.trim();
-    if (query === '' || isValidRepoName(query)) {
-      setSuggestions([]);
-      return;
-    }
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      const slash = query.indexOf('/');
-      void loadSuggestions(
-        slash === -1
-          ? { kind: 'repos', owner: null, query }
-          : {
-              kind: 'repos',
-              owner: query.slice(0, slash),
-              query: query.slice(slash + 1),
-            }
-      ).then((items) => {
-        if (!cancelled) {
-          setSuggestions(items.slice(0, 5));
-        }
-      });
-    }, 250);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [value]);
-
-  const submit = (repo: string) => {
-    if (isValidRepoName(repo)) {
-      onPin(repo);
-      setValue('');
-      setSuggestions([]);
-    }
-  };
-
-  return (
-    <div className="space-y-1">
-      <form
-        className="flex items-center gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit(value.trim());
-        }}
-      >
-        <Input
-          inputSize="sm"
-          placeholder="Pin a repository (owner/name)"
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-        />
-        <Button
-          type="submit"
-          variant="outline"
-          size="sm"
-          disabled={!isValidRepoName(value.trim())}
-        >
-          Pin
-        </Button>
-      </form>
-      {suggestions.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {suggestions.map((suggestion) => (
-            <Button
-              key={suggestion.key}
-              variant="ghost"
-              size="xs"
-              className="text-muted-foreground"
-              onClick={() => submit(suggestion.label)}
-            >
-              {suggestion.label}
-            </Button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

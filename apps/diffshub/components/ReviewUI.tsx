@@ -67,6 +67,7 @@ import {
 } from '@/lib/pullConflictsClient';
 import { recordRecentDiff } from '@/lib/recentDiffs';
 import { removeSavedCommentSidebarEntry } from '@/lib/removeSavedCommentSidebarEntry';
+import { buildDiffHeadTreePath } from '@/lib/repoBrowser';
 import type { DarkThemeName, LightThemeName } from '@/lib/themeNames';
 import { toastRequestError } from '@/lib/toastRequestError';
 import type {
@@ -222,6 +223,12 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     githubSource == null
       ? undefined
       : `${githubSource.repo.owner}/${githubSource.repo.repo}`;
+  // The diff→tree side of the browse/diff toggle: the repo file browser at
+  // this diff's head ref, when the head has a client-resolvable name.
+  const browseFilesPath =
+    githubSource == null
+      ? undefined
+      : (buildDiffHeadTreePath(githubSource) ?? undefined);
   // Record the visit for the recents list (dashboard + command palette). The
   // patch stream has no PR title, so this records path-only; entries clicked
   // from surfaces that know the title merge it in without clobbering.
@@ -785,6 +792,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
           markdownView={markdownView}
           overflow={overflow}
           pinnableRepo={pinnableRepo}
+          browseFilesPath={browseFilesPath}
           reviewControl={
             pullRequest != null ? (
               <>

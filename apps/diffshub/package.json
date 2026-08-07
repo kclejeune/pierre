@@ -17,6 +17,8 @@
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
     "cmdk": "catalog:",
+    "github-slugger": "catalog:",
+    "hast-util-to-string": "catalog:",
     "lucide-react": "catalog:",
     "mermaid": "catalog:",
     "next": "catalog:",

@@ -6,6 +6,7 @@ import { memo, useState } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
+import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
 
 import { GitHubAssetImage } from './GitHubAssetImage';
@@ -15,6 +16,16 @@ import { cn } from '@/lib/cn';
 import { createGitHubWebAssetProxyURL } from '@/lib/githubWebAssets';
 
 const REMARK_PLUGINS = [remarkGfm];
+
+// Extra plugin set for full-document rendering (the diff viewer's rendered
+// docs and the browse blob view): a leading `---` YAML block is metadata
+// (Jekyll/Obsidian-style frontmatter), not content — parsing it as
+// frontmatter keeps it out of the rendered output while leaving every source
+// position intact. Comment bodies keep the base set, matching how GitHub
+// renders comments.
+export const DOC_REMARK_PLUGINS: NonNullable<
+  React.ComponentProps<typeof Markdown>['remarkPlugins']
+> = [remarkFrontmatter];
 
 // GitHub-flavored sanitization, extended to keep the sizing attributes HTML
 // <img> tags commonly carry in READMEs (avatar grids, logos, badges). Divs
@@ -144,6 +155,8 @@ interface MarkdownContentProps {
   className?: string;
   components?: Components;
   markdown: string;
+  // Appended after the GFM base; document views pass DOC_REMARK_PLUGINS.
+  extraRemarkPlugins?: React.ComponentProps<typeof Markdown>['remarkPlugins'];
   rehypePluginsBeforeRaw?: React.ComponentProps<
     typeof Markdown
   >['rehypePlugins'];
@@ -156,12 +169,13 @@ export const MarkdownContent = memo(function MarkdownContent({
   className,
   components,
   markdown,
+  extraRemarkPlugins,
   rehypePluginsBeforeRaw,
 }: MarkdownContentProps) {
   return (
     <div className={cn(MARKDOWN_PROSE_CLASS, className)}>
       <Markdown
-        remarkPlugins={REMARK_PLUGINS}
+        remarkPlugins={[...REMARK_PLUGINS, ...(extraRemarkPlugins ?? [])]}
         rehypePlugins={[
           ...(rehypePluginsBeforeRaw ?? []),
           ...BASE_REHYPE_PLUGINS,

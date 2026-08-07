@@ -1,11 +1,25 @@
 'use client';
 
 import { useStableCallback } from '@pierre/diffs/react';
+import { IconBook, IconBrandGithub, IconShare } from '@pierre/icons';
 import type { FileTree as FileTreeModel } from '@pierre/trees';
 import { useFileTree } from '@pierre/trees/react';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import {
+  type CSSProperties,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import type { Components } from 'react-markdown';
 
-import { AppNavbar } from './AppNavbar';
+import { Button } from './Button';
+import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
+import { CommentAuthorAvatar } from './CommentAuthorAvatar';
+import { DiffsHubLogo } from './DiffsHubLogo';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,20 +27,45 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from './DropdownMenu';
+import { GitHubAssetImage } from './GitHubAssetImage';
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
+import { GitHubTokenControl } from './GitHubTokenControl';
+import {
+  DOC_REMARK_PLUGINS,
+  MarkdownContent,
+  MarkdownImage,
+} from './MarkdownContent';
 import { themeController } from './themeController';
 import { ThemedCodeView } from './ThemedCodeView';
 import { ThemedFileTree } from './ThemedFileTree';
 import { ThemeSourceProvider } from './ThemeSourceProvider';
-import { useGitHubToken } from './useGitHubToken';
+import { useChromeThemeProps } from './useChromeThemeProps';
+import { type GitHubTokenState, useGitHubToken } from './useGitHubToken';
+import { useGitHubUser } from './useGitHubUser';
 import { useIsWorkerPoolReadyOrDisabled } from './useIsWorkerPoolReadyOrDisabled';
 import { useRepoRefs } from './useRepoRefs';
+import { cn } from '@/lib/cn';
 import {
   BASE_FILE_TREE_OPTIONS,
   CODE_VIEW_FILE_TREE_ITEM_HEIGHT,
   FILE_TREE_DENSITY_STYLES,
 } from '@/lib/constants';
+import {
+  loadDisplaySettings,
+  saveDisplaySettings,
+} from '@/lib/displaySettings';
 import { encodePath } from '@/lib/githubDiffSource';
+import { isMarkdownFileName } from '@/lib/isMarkdownFileName';
+import { isPlainLeftClick } from '@/lib/isPlainLeftClick';
+import {
+  createDocAssetURL,
+  resolveDocAssetPath,
+  resolveDocLinkTarget,
+} from '@/lib/markdownDocAssets';
+import {
+  rehypeGitHubHeadingIds,
+  scrollToDocFragment,
+} from '@/lib/markdownHeadingIds';
 import { recordRecentDiff } from '@/lib/recentDiffs';
 import {
   buildBrowseBlobPath,
@@ -39,6 +78,8 @@ import {
   type RepoFileData,
   type RepoTreeData,
 } from '@/lib/repoBrowser';
+import { diffshubChromeMapping } from '@/lib/theme/diffshubChromeMapping';
+import { getDropdownThemeStyle } from '@/lib/theme/dropdownChromeStyle';
 
 interface BrowseUIProps {
   owner: string;
@@ -80,6 +121,33 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
   const [treeState, setTreeState] = useState<TreeState>({ kind: 'loading' });
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const treeData = treeState.kind === 'ready' ? treeState.data : null;
+
+  // Shares the diff viewer's persisted rendered/raw markdown preference, so
+  // toggling in either surface carries to the other.
+  const [markdownView, setMarkdownView] = useState<'rendered' | 'raw'>('raw');
+  useEffect(() => {
+    const stored = loadDisplaySettings().markdownView;
+    if (stored != null) {
+      setMarkdownView(stored);
+    }
+  }, []);
+  const toggleMarkdownView = useCallback(() => {
+    setMarkdownView((current) => {
+      const next = current === 'rendered' ? 'raw' : 'rendered';
+      saveDisplaySettings({ ...loadDisplaySettings(), markdownView: next });
+      return next;
+    });
+  }, []);
+
+  // Mirror the diff viewer's chrome: the header and panes live on the active
+  // Shiki theme's surfaces instead of the global light/dark palette.
+  const { style: chromeStyle } = useChromeThemeProps(diffshubChromeMapping);
+  const themeChromeStyle =
+    Object.keys(chromeStyle).length > 0 ? chromeStyle : undefined;
+  const dropdownThemeStyle = useMemo(
+    () => getDropdownThemeStyle(themeChromeStyle),
+    [themeChromeStyle]
+  );
 
   useEffect(() => {
     if (!tokenState.hydrated) {
@@ -143,6 +211,18 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
     },
     [owner, repo, treeData]
   );
+  // A rendered-document link naming a file in this tree opens it in the pane
+  // instead of navigating, same as selecting it in the tree.
+  const handleOpenDocFile = useCallback(
+    (path: string): boolean => {
+      if (treeData == null || !treeData.paths.includes(path)) {
+        return false;
+      }
+      handleSelectFile(path);
+      return true;
+    },
+    [handleSelectFile, treeData]
+  );
   useEffect(() => {
     if (treeData == null) {
       return;
@@ -175,45 +255,90 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
         : `${webURL}${buildBrowseTreePath({ owner, repo }, treeData.ref)}`;
 
   return (
-    <div className="flex h-dvh min-h-0 flex-col">
-      <AppNavbar tokenState={tokenState} />
-      <div className="border-border text-foreground flex items-center gap-2 border-b px-4 py-2 font-sans text-[13px]">
-        <a className="hover:underline" href={`/${repoSlug}`}>
-          {owner}/{repo}
-        </a>
-        {treeData != null && (
-          <span className="border-border bg-muted text-muted-foreground rounded-md border px-1.5 py-0.5 font-mono text-[11px]">
-            {treeData.ref}
-          </span>
-        )}
-        {selectedPath != null && (
-          <span className="text-muted-foreground truncate font-mono text-[12px]">
-            {selectedPath}
-          </span>
-        )}
-        <span className="flex-1" />
+    <div
+      className={cn(
+        'text-foreground flex h-dvh min-h-0 flex-col',
+        themeChromeStyle == null && 'bg-background'
+      )}
+      style={themeChromeStyle}
+    >
+      <header className="z-10 flex items-center gap-2.5 border-b border-[var(--color-border-opaque)] px-4 py-1.5 md:px-3">
+        <Link
+          href="/"
+          className="inline-flex transition-transform duration-200 hover:scale-110"
+        >
+          <DiffsHubLogo />
+        </Link>
+        <div className="flex min-w-0 flex-1 items-center gap-2 font-sans text-[13px]">
+          <a
+            className="whitespace-nowrap hover:underline"
+            href={`/${repoSlug}`}
+          >
+            {owner}/{repo}
+          </a>
+          {treeData != null && (
+            <span className="border-border bg-muted text-muted-foreground rounded-md border px-1.5 py-0.5 font-mono text-[11px]">
+              {treeData.ref}
+            </span>
+          )}
+          {selectedPath != null && (
+            <span className="text-muted-foreground truncate font-mono text-[12px]">
+              {selectedPath}
+            </span>
+          )}
+        </div>
         {treeData?.truncated === true && (
-          <span className="text-muted-foreground text-[12px]">
+          <span className="text-muted-foreground hidden text-[12px] lg:block">
             Large repository — file list truncated.
           </span>
         )}
-        {treeData != null && (
-          <BrowseDiffMenu
-            owner={owner}
-            repo={repo}
-            treeData={treeData}
-            token={token}
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-md"
+            aria-pressed={markdownView === 'rendered'}
+            title={
+              markdownView === 'rendered'
+                ? 'Show raw markdown'
+                : 'Render markdown files'
+            }
+            className={cn(
+              CHROME_ICON_BUTTON_CLASS,
+              markdownView === 'rendered' && 'text-foreground bg-muted'
+            )}
+            onClick={toggleMarkdownView}
+          >
+            <IconBook className="size-4 md:size-3" />
+          </Button>
+          {treeData != null && (
+            <BrowseDiffMenu
+              owner={owner}
+              repo={repo}
+              treeData={treeData}
+              token={token}
+              dropdownThemeStyle={dropdownThemeStyle}
+            />
+          )}
+          <Button
+            asChild
+            variant="ghost"
+            size="icon-md"
+            aria-label="Open on GitHub"
+            title="Open on GitHub"
+            className={CHROME_ICON_BUTTON_CLASS}
+          >
+            <a href={githubURL} rel="noreferrer noopener" target="_blank">
+              <IconShare className="size-4 md:size-3" />
+            </a>
+          </Button>
+          <div className="bg-border h-3 w-px" />
+          <BrowseAccountMenu
+            dropdownThemeStyle={dropdownThemeStyle}
+            tokenState={tokenState}
           />
-        )}
-        <a
-          className="text-muted-foreground hover:text-foreground whitespace-nowrap hover:underline"
-          href={githubURL}
-          rel="noreferrer noopener"
-          target="_blank"
-        >
-          Open on GitHub
-        </a>
-      </div>
+        </div>
+      </header>
       <div className="flex min-h-0 flex-1">
         {treeState.kind === 'loading' && (
           <p className="text-muted-foreground m-auto font-sans text-[13px]">
@@ -227,14 +352,17 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
         )}
         {treeData != null && (
           <>
-            <aside className="border-border hidden w-80 shrink-0 border-r md:block">
+            <aside className="hidden w-80 shrink-0 border-r border-[var(--color-border-opaque)] md:block">
               <BrowseFileTree
                 paths={treeData.paths}
                 revealPath={treeData.path}
                 onSelectFile={handleSelectFile}
               />
             </aside>
-            <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+            {/* The code view paints the editor surface only as far as its
+                content; carrying the same background on the pane keeps the
+                area past the end of a short file consistent. */}
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--diffshub-editor-bg,var(--color-background))]">
               {selectedPath == null ? (
                 <p className="text-muted-foreground m-auto font-sans text-[13px]">
                   Select a file to view it.
@@ -248,6 +376,8 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
                   path={selectedPath}
                   githubURL={githubURL}
                   token={token}
+                  markdownView={markdownView}
+                  onOpenFile={handleOpenDocFile}
                 />
               ) : null}
             </main>
@@ -255,6 +385,53 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
         )}
       </div>
     </div>
+  );
+}
+
+// The header's account affordance: the same GitHub token panel the other
+// pages offer, behind an avatar (signed in) or GitHub mark, restyled for the
+// themed chrome.
+function BrowseAccountMenu({
+  dropdownThemeStyle,
+  tokenState,
+}: {
+  dropdownThemeStyle: CSSProperties | undefined;
+  tokenState: GitHubTokenState;
+}) {
+  const githubUser = useGitHubUser();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-md"
+          aria-label="GitHub account"
+          className={CHROME_ICON_BUTTON_CLASS}
+        >
+          {githubUser != null ? (
+            <CommentAuthorAvatar
+              author={githubUser}
+              className="size-5 self-center"
+            />
+          ) : (
+            <IconBrandGithub className="size-4 md:size-3" />
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        className="w-80 p-2"
+        style={dropdownThemeStyle}
+      >
+        <GitHubTokenControl
+          active={tokenState.hasToken}
+          onClear={tokenState.clearToken}
+          onSave={tokenState.setToken}
+          title="GitHub access"
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -266,11 +443,13 @@ function BrowseDiffMenu({
   repo,
   token,
   treeData,
+  dropdownThemeStyle,
 }: {
   owner: string;
   repo: string;
   token: string | undefined;
   treeData: RepoTreeData;
+  dropdownThemeStyle: CSSProperties | undefined;
 }) {
   const [opened, setOpened] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
@@ -294,10 +473,14 @@ function BrowseDiffMenu({
         }
       }}
     >
-      <DropdownMenuTrigger className="text-muted-foreground hover:text-foreground cursor-pointer whitespace-nowrap hover:underline">
+      <DropdownMenuTrigger className="text-muted-foreground hover:text-foreground cursor-pointer font-sans text-[13px] whitespace-nowrap hover:underline">
         Diff…
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
+      <DropdownMenuContent
+        align="end"
+        className="w-64"
+        style={dropdownThemeStyle}
+      >
         <DropdownMenuItem asChild>
           <a href={buildCommitDiffPath(repoRef, treeData.sha)}>
             Commit diff ({treeData.sha.slice(0, 7)})
@@ -402,6 +585,8 @@ interface BrowseFileViewProps {
   path: string;
   githubURL: string;
   token: string | undefined;
+  markdownView: 'rendered' | 'raw';
+  onOpenFile(path: string): boolean;
 }
 
 function BrowseFileView({
@@ -411,6 +596,8 @@ function BrowseFileView({
   path,
   githubURL,
   token,
+  markdownView,
+  onOpenFile,
 }: BrowseFileViewProps) {
   const [state, setState] = useState<FileState>({ kind: 'loading' });
   useEffect(() => {
@@ -469,6 +656,18 @@ function BrowseFileView({
       </p>
     );
   }
+  if (isMarkdownFileName(path) && markdownView === 'rendered') {
+    return (
+      <BrowseMarkdownDoc
+        owner={owner}
+        repo={repo}
+        sha={sha}
+        path={path}
+        contents={state.data.contents}
+        onOpenFile={onOpenFile}
+      />
+    );
+  }
   return (
     <ThemedCodeView
       className="cv-scrollbar min-h-0 flex-1 overflow-x-clip overflow-y-auto overscroll-contain"
@@ -485,5 +684,111 @@ function BrowseFileView({
       ]}
       options={{ overflow: 'scroll' }}
     />
+  );
+}
+
+const DOC_REHYPE_PLUGINS = [rehypeGitHubHeadingIds];
+
+// The rendered-document view for a markdown blob, mirroring the diff
+// viewer's rendered docs: GitHub heading slugs for fragment links, relative
+// images through the doc-asset proxy, and relative links opened in the pane
+// when they name a file in this tree.
+function BrowseMarkdownDoc({
+  owner,
+  repo,
+  sha,
+  path,
+  contents,
+  onOpenFile,
+}: {
+  owner: string;
+  repo: string;
+  sha: string;
+  path: string;
+  contents: string;
+  onOpenFile(path: string): boolean;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  // A /commit/<sha> source pins every asset and link the doc references to
+  // the same commit the pane displays.
+  const sourcePath = `${owner}/${repo}/commit/${sha}`;
+  const components = useMemo<Components>(
+    () => ({
+      img: ({ node: _node, src, alt, ...rest }) => {
+        if (typeof src === 'string') {
+          const assetPath = resolveDocAssetPath(src, path);
+          if (assetPath != null) {
+            return (
+              <GitHubAssetImage
+                {...rest}
+                alt={alt ?? ''}
+                src={createDocAssetURL(sourcePath, assetPath, 'new')}
+              />
+            );
+          }
+        }
+        return <MarkdownImage {...rest} alt={alt} src={src} />;
+      },
+      a: ({ node: _node, href, ...rest }) => {
+        if (typeof href === 'string' && href.startsWith('#')) {
+          return (
+            <a
+              {...rest}
+              href={href}
+              onClick={(event) => {
+                if (!isPlainLeftClick(event)) {
+                  return;
+                }
+                event.preventDefault();
+                scrollToDocFragment(containerRef.current, href);
+              }}
+            />
+          );
+        }
+        const linkTarget =
+          typeof href === 'string'
+            ? resolveDocLinkTarget(href, path, sourcePath)
+            : null;
+        if (linkTarget == null) {
+          return <a {...rest} href={href} />;
+        }
+        return (
+          <a
+            {...rest}
+            href={linkTarget.url}
+            onClick={(event) => {
+              if (!isPlainLeftClick(event)) {
+                return;
+              }
+              // A qualified link back into this document is a section link.
+              if (linkTarget.path === path && linkTarget.hash !== '') {
+                event.preventDefault();
+                scrollToDocFragment(containerRef.current, linkTarget.hash);
+                return;
+              }
+              if (onOpenFile(linkTarget.path)) {
+                event.preventDefault();
+              }
+            }}
+          />
+        );
+      },
+    }),
+    [onOpenFile, path, sourcePath]
+  );
+  return (
+    <div
+      ref={containerRef}
+      className="cv-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain"
+    >
+      <div className="mx-auto w-full max-w-[920px] px-6 py-5">
+        <MarkdownContent
+          markdown={contents}
+          components={components}
+          extraRemarkPlugins={DOC_REMARK_PLUGINS}
+          rehypePluginsBeforeRaw={DOC_REHYPE_PLUGINS}
+        />
+      </div>
+    </div>
   );
 }

@@ -36,3 +36,22 @@ export function rehypeGitHubHeadingIds() {
 export function headingIdCandidates(fragment: string): string[] {
   return [`user-content-${fragment}`, fragment];
 }
+
+// Scrolls a rendered document to the heading a fragment names. A fragment
+// with no matching heading is a no-op, matching GitHub.
+export function scrollToDocFragment(
+  container: HTMLElement | null,
+  hash: string
+): void {
+  const fragment = decodeURIComponent(hash.replace(/^#/, ''));
+  if (container == null || fragment === '') {
+    return;
+  }
+  for (const id of headingIdCandidates(fragment)) {
+    const target = container.querySelector(`#${CSS.escape(id)}`);
+    if (target != null) {
+      target.scrollIntoView({ block: 'start' });
+      return;
+    }
+  }
+}

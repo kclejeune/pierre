@@ -102,6 +102,9 @@ export const diffshubChromeMapping: ChromeMapping = (chrome, theme) => {
   style['--diffshub-comment-add-fg'] = chrome.additionFg;
   style['--diffshub-comment-del-fg'] = chrome.deletionFg;
   style['--diffshub-diff-separator'] = chrome.separator;
+  if (chrome.editorBg != null) {
+    style['--diffshub-editor-bg'] = chrome.editorBg;
+  }
   if (chrome.scrollbarThumb != null) {
     style['--diffshub-scrollbar-thumb-bg'] = chrome.scrollbarThumb;
   }

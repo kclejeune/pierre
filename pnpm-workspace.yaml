@@ -134,6 +134,7 @@ catalog:
   'react-markdown': '10.1.0'
   'rehype-raw': '7.0.0'
   'rehype-sanitize': '6.0.0'
+  'remark-frontmatter': '5.0.0'
   'remark-gfm': '4.0.1'
   'shadcn': '3.3.1'
   'shiki': '4.4.1'

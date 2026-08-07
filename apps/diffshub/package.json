@@ -30,6 +30,7 @@
     "react-markdown": "catalog:",
     "rehype-raw": "catalog:",
     "rehype-sanitize": "catalog:",
+    "remark-frontmatter": "catalog:",
     "remark-gfm": "catalog:",
     "sonner": "catalog:",
     "tailwind-merge": "catalog:",

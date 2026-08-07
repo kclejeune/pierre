@@ -150,6 +150,10 @@ interface DiffsHubViewerProps {
   // Fired when the user clicks a file's header bar (not its controls), so the
   // parent can record/scroll the file target like a tree click.
   onFileHeaderSelect(itemId: string): void;
+  // Fired when a rendered-document link names a repository file; returns true
+  // when the file is part of the diff and was opened in the viewer, so the
+  // link's own navigation should be suppressed.
+  onOpenDocFile(path: string): boolean;
   onCommentDeleted(comment: DiffsHubDeletedCommentEvent): void;
   onCommentSaved(comment: DiffsHubSavedCommentEvent): void;
   // Batched-review integration: the number of comments currently pending (it
@@ -181,6 +185,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
   isFileReviewed,
   onSetFileReviewed,
   onFileHeaderSelect,
+  onOpenDocFile,
   onCommentDeleted,
   onCommentSaved,
   pendingReviewCount,
@@ -924,6 +929,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
             itemId={item.id}
             loadDiffFiles={loadDiffFiles}
             onCommentAtLine={handleCommentAtDocLine}
+            onOpenFile={onOpenDocFile}
             sourcePath={sourcePath}
             commentAnnotations={getDocRailComments(item)}
             renderComment={renderCommentCard}

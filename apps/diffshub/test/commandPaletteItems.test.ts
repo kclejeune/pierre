@@ -17,12 +17,16 @@ describe('buildPaletteItems', () => {
     });
     expect(sections.map((section) => section.heading)).toEqual([
       'Actions',
-      'Recent diffs',
+      'Recent',
       'Pinned repositories',
     ]);
     expect(sections[0]?.items[0]?.action).toEqual({
       type: 'navigate',
       path: '/pulls',
+    });
+    expect(sections[0]?.items[1]?.action).toEqual({
+      type: 'navigate',
+      path: '/browse',
     });
     expect(sections[1]?.items[0]).toMatchObject({
       label: 'Fix leak',
@@ -68,9 +72,57 @@ describe('buildPaletteItems', () => {
         { key: 'repo:oven-sh/bun', label: 'oven-sh/bun', fill: 'oven-sh/bun#' },
       ],
     });
+    // The file browser rides along after the narrowing results, so Enter
+    // still defaults to the pull search.
     expect(sections.map((section) => section.heading)).toEqual([
       'Repositories',
+      'Browse',
     ]);
+    expect(sections[1]?.items[0]?.action).toMatchObject({
+      type: 'navigate',
+      path: '/oven-sh/bun',
+    });
+  });
+
+  test('owner/repo@ref goes straight to the file browser', () => {
+    const sections = buildPaletteItems({
+      query: 'oven-sh/bun@feature/rope-strings',
+      recents: [],
+      pinned: [],
+      suggestions: [],
+    });
+    expect(sections.map((section) => section.heading)).toEqual(['Go to']);
+    expect(sections[0]?.items).toHaveLength(1);
+    expect(sections[0]?.items[0]?.action).toMatchObject({
+      type: 'navigate',
+      path: '/oven-sh/bun/tree/feature/rope-strings',
+    });
+  });
+
+  test('owner/repo@sha offers both the tree and the commit diff', () => {
+    const sections = buildPaletteItems({
+      query: 'oven-sh/bun@0ab12cd',
+      recents: [],
+      pinned: [],
+      suggestions: [],
+    });
+    expect(sections[0]?.items.map((item) => item.action)).toMatchObject([
+      { type: 'navigate', path: '/oven-sh/bun/tree/0ab12cd' },
+      { type: 'navigate', path: '/oven-sh/bun/commit/0ab12cd' },
+    ]);
+  });
+
+  test('owner/repo@ with no ref browses the default branch', () => {
+    const sections = buildPaletteItems({
+      query: 'oven-sh/bun@',
+      recents: [],
+      pinned: [],
+      suggestions: [],
+    });
+    expect(sections[0]?.items[0]?.action).toMatchObject({
+      type: 'navigate',
+      path: '/oven-sh/bun',
+    });
   });
 
   test('splits suggestions into pull and repo sections, pulls first', () => {

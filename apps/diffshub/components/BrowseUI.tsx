@@ -3,9 +3,16 @@
 import { useStableCallback } from '@pierre/diffs/react';
 import type { FileTree as FileTreeModel } from '@pierre/trees';
 import { useFileTree } from '@pierre/trees/react';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { AppNavbar } from './AppNavbar';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from './DropdownMenu';
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
 import { themeController } from './themeController';
 import { ThemedCodeView } from './ThemedCodeView';
@@ -13,17 +20,22 @@ import { ThemedFileTree } from './ThemedFileTree';
 import { ThemeSourceProvider } from './ThemeSourceProvider';
 import { useGitHubToken } from './useGitHubToken';
 import { useIsWorkerPoolReadyOrDisabled } from './useIsWorkerPoolReadyOrDisabled';
+import { useRepoRefs } from './useRepoRefs';
 import {
   BASE_FILE_TREE_OPTIONS,
   CODE_VIEW_FILE_TREE_ITEM_HEIGHT,
   FILE_TREE_DENSITY_STYLES,
 } from '@/lib/constants';
 import { encodePath } from '@/lib/githubDiffSource';
+import { recordRecentDiff } from '@/lib/recentDiffs';
 import {
   buildBrowseBlobPath,
   buildBrowseTreePath,
+  buildCommitDiffPath,
+  buildComparePath,
   fetchRepoFile,
   fetchRepoTree,
+  formatBrowseRecentTitle,
   type RepoFileData,
   type RepoTreeData,
 } from '@/lib/repoBrowser';
@@ -97,6 +109,16 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
       controller.abort();
     };
   }, [owner, repo, refAndPath, tokenState.hydrated, token]);
+
+  // Surface visited trees in the launcher's Recent section alongside diffs.
+  useEffect(() => {
+    if (treeData != null) {
+      recordRecentDiff({
+        path: buildBrowseTreePath({ owner, repo }, treeData.ref),
+        title: formatBrowseRecentTitle({ owner, repo }, treeData.ref),
+      });
+    }
+  }, [owner, repo, treeData]);
 
   // Open the file the URL names once the listing has resolved the ref/path
   // split. Tree URLs start with nothing selected.
@@ -175,6 +197,14 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
             Large repository — file list truncated.
           </span>
         )}
+        {treeData != null && (
+          <BrowseDiffMenu
+            owner={owner}
+            repo={repo}
+            treeData={treeData}
+            token={token}
+          />
+        )}
         <a
           className="text-muted-foreground hover:text-foreground whitespace-nowrap hover:underline"
           href={githubURL}
@@ -225,6 +255,83 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
         )}
       </div>
     </div>
+  );
+}
+
+// The tree→diff toggle: the head commit's own diff, or a GitHub-style
+// compare of this ref against any branch. Compare bases load lazily on
+// first open so tree views that never toggle pay nothing.
+function BrowseDiffMenu({
+  owner,
+  repo,
+  token,
+  treeData,
+}: {
+  owner: string;
+  repo: string;
+  token: string | undefined;
+  treeData: RepoTreeData;
+}) {
+  const [opened, setOpened] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
+  const repoRef = useMemo(() => ({ owner, repo }), [owner, repo]);
+  const refsState = useRepoRefs(repoRef, token, opened, reloadToken);
+  const bases = useMemo(
+    () =>
+      refsState.kind === 'ready'
+        ? refsState.data.branches.filter((branch) => branch !== treeData.ref)
+        : [],
+    [refsState, treeData.ref]
+  );
+  return (
+    <DropdownMenu
+      onOpenChange={(open) => {
+        if (open) {
+          setOpened(true);
+          if (refsState.kind === 'error') {
+            setReloadToken((current) => current + 1);
+          }
+        }
+      }}
+    >
+      <DropdownMenuTrigger className="text-muted-foreground hover:text-foreground cursor-pointer whitespace-nowrap hover:underline">
+        Diff…
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuItem asChild>
+          <a href={buildCommitDiffPath(repoRef, treeData.sha)}>
+            Commit diff ({treeData.sha.slice(0, 7)})
+          </a>
+        </DropdownMenuItem>
+        <DropdownMenuLabel className="text-muted-foreground text-xs">
+          Compare {treeData.ref} against…
+        </DropdownMenuLabel>
+        {(refsState.kind === 'idle' || refsState.kind === 'loading') && (
+          <p className="text-muted-foreground px-2 py-1.5 text-sm">
+            Loading branches…
+          </p>
+        )}
+        {refsState.kind === 'error' && (
+          <p className="text-muted-foreground px-2 py-1.5 text-sm">
+            Loading branches failed.
+          </p>
+        )}
+        {refsState.kind === 'ready' && bases.length === 0 && (
+          <p className="text-muted-foreground px-2 py-1.5 text-sm">
+            No other branches.
+          </p>
+        )}
+        <div className="max-h-72 overflow-y-auto">
+          {bases.map((base) => (
+            <DropdownMenuItem key={base} asChild>
+              <a href={buildComparePath(repoRef, base, treeData.ref)}>
+                <span className="truncate font-mono text-[12px]">{base}</span>
+              </a>
+            </DropdownMenuItem>
+          ))}
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

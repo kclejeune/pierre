@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   createDocAssetURL,
   resolveDocAssetPath,
+  resolveDocLinkTarget,
 } from '../lib/markdownDocAssets';
 
 describe('resolveDocAssetPath', () => {
@@ -51,6 +52,107 @@ describe('resolveDocAssetPath', () => {
     ).toBeNull();
     expect(resolveDocAssetPath('#section', 'docs/intro.md')).toBeNull();
     expect(resolveDocAssetPath('', 'docs/intro.md')).toBeNull();
+  });
+});
+
+describe('resolveDocLinkTarget', () => {
+  const WEB_URL = 'https://github.example.com';
+
+  test('points pull-source links at the refs/pull head ref', () => {
+    expect(
+      resolveDocLinkTarget(
+        './guide.md',
+        'docs/README.md',
+        'octo/demo/pull/41',
+        WEB_URL
+      )
+    ).toEqual({
+      path: 'docs/guide.md',
+      url: 'https://github.example.com/octo/demo/blob/refs/pull/41/head/docs/guide.md',
+    });
+  });
+
+  test('keeps the fragment and resolves parent segments', () => {
+    expect(
+      resolveDocLinkTarget(
+        '../CONTRIBUTING.md#setup',
+        'docs/README.md',
+        'octo/demo/pull/41',
+        WEB_URL
+      )
+    ).toEqual({
+      path: 'CONTRIBUTING.md',
+      url: 'https://github.example.com/octo/demo/blob/refs/pull/41/head/CONTRIBUTING.md#setup',
+    });
+  });
+
+  test('uses the sha for commit sources and the head for compares', () => {
+    expect(
+      resolveDocLinkTarget(
+        'a.md',
+        'README.md',
+        'octo/demo/commit/abc123',
+        WEB_URL
+      )
+    ).toEqual({
+      path: 'a.md',
+      url: 'https://github.example.com/octo/demo/blob/abc123/a.md',
+    });
+    expect(
+      resolveDocLinkTarget(
+        'a.md',
+        'README.md',
+        'octo/demo/compare/main...feat/thing',
+        WEB_URL
+      )
+    ).toEqual({
+      path: 'a.md',
+      url: 'https://github.example.com/octo/demo/blob/feat/thing/a.md',
+    });
+  });
+
+  test('leaves fork compare heads, absolute URLs, and anchors alone', () => {
+    expect(
+      resolveDocLinkTarget(
+        'a.md',
+        'README.md',
+        'octo/demo/compare/main...fork:branch',
+        WEB_URL
+      )
+    ).toBeNull();
+    expect(
+      resolveDocLinkTarget(
+        'https://example.com/a',
+        'README.md',
+        'octo/demo/pull/41',
+        WEB_URL
+      )
+    ).toBeNull();
+    expect(
+      resolveDocLinkTarget('#usage', 'README.md', 'octo/demo/pull/41', WEB_URL)
+    ).toBeNull();
+    expect(
+      resolveDocLinkTarget(
+        'mailto:dev@example.com',
+        'README.md',
+        'octo/demo/pull/41',
+        WEB_URL
+      )
+    ).toBeNull();
+  });
+
+  test('encodes path segments without encoding separators', () => {
+    expect(
+      resolveDocLinkTarget(
+        './release notes.md',
+        'docs/README.md',
+        'octo/demo/pull/41',
+        WEB_URL
+      )
+    ).toEqual({
+      path: 'docs/release notes.md',
+      url: 'https://github.example.com/octo/demo/blob/refs/pull/41/head/docs/release%20notes.md',
+    });
   });
 });
 

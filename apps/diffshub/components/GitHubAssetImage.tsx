@@ -2,6 +2,7 @@
 
 import { type ImgHTMLAttributes, useEffect, useState } from 'react';
 
+import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
 import { readStoredGitHubToken } from './useGitHubToken';
 
 // Object URLs keyed by proxy src so repeated renders of the same asset (the
@@ -12,10 +13,17 @@ import { readStoredGitHubToken } from './useGitHubToken';
 // resolves to the plain proxy URL so the server-token fallback still renders.
 const objectURLBySrc = new Map<string, Promise<string>>();
 
-function resolveAssetSrc(src: string): Promise<string> {
+// A data: URI that is not a decodable image: assigning it to <img src> fires
+// the element's native error event without issuing a network request. Stands
+// in for the plain proxy URL on require-login deployments, where the server
+// rejects every tokenless request with 401 (there is no fallback token), so
+// requesting it would only spam the console before reaching the same onError.
+const UNLOADABLE_ASSET_SRC = 'data:,';
+
+function resolveAssetSrc(src: string, requireLogin: boolean): Promise<string> {
   const token = readStoredGitHubToken();
   if (token === '') {
-    return Promise.resolve(src);
+    return Promise.resolve(requireLogin ? UNLOADABLE_ASSET_SRC : src);
   }
   let pending = objectURLBySrc.get(src);
   if (pending == null) {
@@ -28,7 +36,7 @@ function resolveAssetSrc(src: string): Promise<string> {
       })
       .catch(() => {
         objectURLBySrc.delete(src);
-        return src;
+        return requireLogin ? UNLOADABLE_ASSET_SRC : src;
       });
     objectURLBySrc.set(src, pending);
   }
@@ -43,17 +51,20 @@ function resolveAssetSrc(src: string): Promise<string> {
 // of requiring the server fallback token. Without a saved token (or when the
 // authorized fetch fails) the proxy URL is used directly, letting the server
 // fall back to its own token; if that fails too, the native onError fires so
-// callers can render a fallback.
+// callers can render a fallback. Require-login deployments skip the tokenless
+// request entirely — the server 401s it unconditionally — and jump straight
+// to onError.
 export function GitHubAssetImage({
   src,
   alt,
   ...rest
 }: ImgHTMLAttributes<HTMLImageElement> & { src: string }) {
+  const { requireLogin } = useGitHubEnvironment();
   const [resolvedSrc, setResolvedSrc] = useState<string>();
 
   useEffect(() => {
     let cancelled = false;
-    void resolveAssetSrc(src).then((resolved) => {
+    void resolveAssetSrc(src, requireLogin).then((resolved) => {
       if (!cancelled) {
         setResolvedSrc(resolved);
       }
@@ -61,7 +72,7 @@ export function GitHubAssetImage({
     return () => {
       cancelled = true;
     };
-  }, [src]);
+  }, [src, requireLogin]);
 
   return <img {...rest} alt={alt ?? ''} loading="lazy" src={resolvedSrc} />;
 }

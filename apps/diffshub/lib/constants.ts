@@ -1,5 +1,6 @@
 import type { CodeViewLayout } from '@pierre/diffs';
 import type { FileTreeOptions } from '@pierre/trees';
+import type { CSSProperties } from 'react';
 
 export const CODE_VIEW_LAYOUT: CodeViewLayout = {
   paddingTop: 0,
@@ -175,6 +176,18 @@ const FOLDER_LABEL_UNSAFE_CSS = `
     font-weight: 500;
   }
 `;
+
+// Layout-only file-tree overrides shared by the diff sidebar and the repo
+// browser. Colors flow through from the resolved Shiki theme (via
+// themeToTreeStyles) so the sidebar matches the diff theme, but the density
+// and padding stay tuned for the diffshub layout regardless of which theme
+// the user picks. `--trees-git-renamed-color-override` is set because most
+// Shiki themes don't define a "renamed" decoration color.
+export const FILE_TREE_DENSITY_STYLES = {
+  '--trees-density-override': 0.8,
+  '--trees-padding-inline-override': 8,
+  '--trees-git-renamed-color-override': 'light-dark(#007aff, #007aff)',
+} as CSSProperties;
 
 // Options shared across all mounts of this tree. Lives at module scope so the
 // reference stays stable and useFileTree() never churns its initial snapshot.

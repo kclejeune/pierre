@@ -18,7 +18,6 @@ import {
 import type { Components } from 'react-markdown';
 
 import { GitHubAssetImage } from './GitHubAssetImage';
-import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
 import { MarkdownContent, MarkdownImage } from './MarkdownContent';
 import { cn } from '@/lib/cn';
 import {
@@ -77,7 +76,6 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
   commentAnnotations,
   renderComment,
 }: MarkdownDocAnnotationProps) {
-  const { webURL } = useGitHubEnvironment();
   const contentsState = useMarkdownDocContents(fileDiff, loadDiffFiles);
   // Deleted files render the removed document; its lines no longer exist on
   // the additions side, so change markers and comment anchors are disabled.
@@ -161,7 +159,7 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
       a: ({ node: _node, href, ...rest }) => {
         const linkTarget =
           typeof href === 'string' && sourcePath != null
-            ? resolveDocLinkTarget(href, fileDiff.name, sourcePath, webURL)
+            ? resolveDocLinkTarget(href, fileDiff.name, sourcePath)
             : null;
         if (linkTarget == null) {
           return <a {...rest} href={href} />;
@@ -274,7 +272,6 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
       onOpenFile,
       rail,
       sourcePath,
-      webURL,
     ]
   );
 

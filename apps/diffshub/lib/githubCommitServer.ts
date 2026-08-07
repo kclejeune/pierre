@@ -126,7 +126,7 @@ function classifyGitHubWriteFailure(
   return 'github';
 }
 
-function repoPath(repo: GitRepoRef, suffix: string): string {
+export function repoPath(repo: GitRepoRef, suffix: string): string {
   return `/repos/${encodeURLSegment(repo.owner)}/${encodeURLSegment(repo.repo)}${suffix}`;
 }
 

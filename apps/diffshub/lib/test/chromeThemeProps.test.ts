@@ -8,9 +8,9 @@ import { chromeThemeProps } from '../theme/chromeThemeProps';
 import { diffshubChromeMapping } from '../theme/diffshubChromeMapping';
 
 // Golden chrome styles captured from the pre-theming buildThemeChromeStyle for
-// the two default Pierre soft themes. These are identical to the fixtures in
-// apps/docs/test/themeChromeStyle.test.ts and lock that the new
-// chromeThemeProps + diffshubChromeMapping pipeline is byte-for-byte identical.
+// the two default Pierre soft themes (plus the later --diffshub-editor-bg
+// addition). Locks that the chromeThemeProps + diffshubChromeMapping pipeline
+// stays byte-for-byte stable.
 const LIGHT_SOFT_CHROME: Record<string, string> = {
   backgroundColor: '#f7f7f7',
   color: '#737373',
@@ -71,6 +71,7 @@ const LIGHT_SOFT_CHROME: Record<string, string> = {
   '--diffshub-comment-add-fg': '#047857',
   '--diffshub-comment-del-fg': '#be123c',
   '--diffshub-diff-separator': 'color-mix(in srgb, #525252 22%, #ffffff)',
+  '--diffshub-editor-bg': '#ffffff',
   '--diffshub-scrollbar-thumb-bg': 'color-mix(in lab, #ffffff 85%, black)',
   '--diffshub-scrollbar-track-bg': '#ffffff',
 };
@@ -135,6 +136,7 @@ const DARK_SOFT_CHROME: Record<string, string> = {
   '--diffshub-comment-add-fg': '#34d399',
   '--diffshub-comment-del-fg': '#fb7185',
   '--diffshub-diff-separator': 'color-mix(in srgb, #8a8a8a 22%, #101010)',
+  '--diffshub-editor-bg': '#171717',
   '--diffshub-scrollbar-thumb-bg': 'color-mix(in lab, #171717 80%, white)',
   '--diffshub-scrollbar-track-bg': '#171717',
 };

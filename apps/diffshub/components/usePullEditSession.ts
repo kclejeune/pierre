@@ -67,6 +67,11 @@ interface UsePullEditSessionInput {
   hasDiffFileLoader: boolean;
   pullRequest: PullRequestRef | undefined;
   retryLoad(): void;
+  // Bumped at the start of every load cycle. The session resets and the
+  // capability re-fetches per generation so its headSha always describes the
+  // diff the user is looking at — a sha cached across reloads would make
+  // every commit after an external push fail its compare-and-swap forever.
+  viewerKey: number;
   viewerRef: RefObject<CodeViewHandle<CommentMetadata> | null>;
 }
 
@@ -77,6 +82,7 @@ export function usePullEditSession({
   hasDiffFileLoader,
   pullRequest,
   retryLoad,
+  viewerKey,
   viewerRef,
 }: UsePullEditSessionInput): PullEditSession {
   const [capability, setCapability] = useState<PullCommitCapability | null>(
@@ -96,7 +102,21 @@ export function usePullEditSession({
   // every character typed. `dirtyFiles` only tracks membership.
   const contentsRef = useRef(new Map<string, string>());
 
+  // Mirrors dirtyFiles so the reset effect below can detect discarded edits
+  // without depending on the state it clears.
+  const dirtyFilesRef = useRef<readonly DirtyFileEntry[]>([]);
+  dirtyFilesRef.current = dirtyFiles;
+
   useEffect(() => {
+    // A reload rebuilds every item from the fresh diff, so edits made against
+    // the previous generation have nothing to attach to — committing them
+    // blind would overwrite upstream changes the user never saw. Discard
+    // them, but say so: silent loss is worse than the reset.
+    if (dirtyFilesRef.current.length > 0) {
+      toast.warning(
+        `Reloading discarded uncommitted edits to ${dirtyFilesRef.current.length} file${dirtyFilesRef.current.length === 1 ? '' : 's'}.`
+      );
+    }
     setCapability(null);
     setEditingIds(new Set());
     setDirtyFiles([]);
@@ -123,7 +143,13 @@ export function usePullEditSession({
         // exactly as before.
       });
     return () => controller.abort();
-  }, [pullRequest, hasGitHubToken, githubTokenVersion, getGitHubToken]);
+  }, [
+    pullRequest,
+    hasGitHubToken,
+    githubTokenVersion,
+    getGitHubToken,
+    viewerKey,
+  ]);
 
   const canCommit = capability?.canCommit === true;
 

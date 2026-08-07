@@ -1,5 +1,7 @@
 import type { FileDiffMetadata } from '@pierre/diffs';
 
+import { readStoredJSON, writeStoredJSON } from './storedJSON';
+
 // Persistence for per-file "Viewed" marks, GitHub-style: each diff source
 // (PR, commit, patch URL) stores a map of file path → content fingerprint in
 // localStorage. A mark only holds while the file's fingerprint still matches,
@@ -33,42 +35,25 @@ export function getFileDiffFingerprint(fileDiff: FileDiffMetadata): string {
 }
 
 export function loadReviewedFiles(sourceKey: string): Map<string, string> {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_PREFIX + sourceKey);
-    if (raw == null) {
-      return new Map();
-    }
-    const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== 'object' || parsed == null) {
-      return new Map();
-    }
-    const map = new Map<string, string>();
-    for (const [path, fingerprint] of Object.entries(parsed)) {
-      if (typeof fingerprint === 'string') {
-        map.set(path, fingerprint);
-      }
-    }
+  const parsed = readStoredJSON(STORAGE_PREFIX + sourceKey);
+  const map = new Map<string, string>();
+  if (typeof parsed !== 'object' || parsed == null) {
     return map;
-  } catch {
-    return new Map();
   }
+  for (const [path, fingerprint] of Object.entries(parsed)) {
+    if (typeof fingerprint === 'string') {
+      map.set(path, fingerprint);
+    }
+  }
+  return map;
 }
 
 export function saveReviewedFiles(
   sourceKey: string,
   reviewed: ReadonlyMap<string, string>
 ): void {
-  try {
-    const key = STORAGE_PREFIX + sourceKey;
-    if (reviewed.size === 0) {
-      window.localStorage.removeItem(key);
-    } else {
-      window.localStorage.setItem(
-        key,
-        JSON.stringify(Object.fromEntries(reviewed))
-      );
-    }
-  } catch {
-    // Storage unavailable; marks still hold for this session.
-  }
+  writeStoredJSON(
+    STORAGE_PREFIX + sourceKey,
+    reviewed.size === 0 ? null : Object.fromEntries(reviewed)
+  );
 }

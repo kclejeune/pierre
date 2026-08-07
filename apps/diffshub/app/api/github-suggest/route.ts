@@ -4,6 +4,7 @@ import {
   createGitHubAPIURL,
   createGitHubJSONHeaders,
   getGitHubEnvironment,
+  rejectTokenlessRequestWhenLoginRequired,
   resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import {
@@ -18,6 +19,11 @@ import { createJSONResponse } from '@/lib/jsonResponse';
 // otherwise) so the browser never talks to the instance cross-origin.
 
 export async function GET(request: NextRequest) {
+  const rejection = rejectTokenlessRequestWhenLoginRequired(request);
+  if (rejection != null) {
+    return rejection;
+  }
+
   const params = request.nextUrl.searchParams;
   const kind = params.get('kind');
   const token = resolveRequestGitHubToken(request);

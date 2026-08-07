@@ -4,6 +4,7 @@ import {
   createGitHubAPIURL,
   createGitHubJSONHeaders,
   getGitHubEnvironment,
+  rejectTokenlessRequestWhenLoginRequired,
   resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import {
@@ -20,6 +21,11 @@ import { parseBearerToken } from '@/lib/parseBearerToken';
 // (GET /users/{login}), which supplies the display name behind avatar
 // initials.
 export async function GET(request: NextRequest) {
+  const rejection = rejectTokenlessRequestWhenLoginRequired(request);
+  if (rejection != null) {
+    return rejection;
+  }
+
   const token = parseBearerToken(request.headers.get('authorization'));
   const login = request.nextUrl.searchParams.get('login');
   if (login == null && token == null) {

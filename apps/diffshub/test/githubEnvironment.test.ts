@@ -1,8 +1,10 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import {
   createGitHubAPIURL,
+  rejectTokenlessRequestWhenLoginRequired,
   resolveGitHubEnvironment,
+  resolveRequestGitHubToken,
 } from '../lib/githubEnvironment';
 
 describe('resolveGitHubEnvironment', () => {
@@ -68,6 +70,72 @@ describe('resolveGitHubEnvironment', () => {
     expect(() => resolveGitHubEnvironment('ftp://ghe.corp.dev')).toThrow(
       'http(s)'
     );
+  });
+});
+
+// Request stub carrying only the headers surface the token policy reads.
+function createRequest(authorization?: string): {
+  headers: { get(name: string): string | null };
+} {
+  return {
+    headers: {
+      get: (name: string) =>
+        name.toLowerCase() === 'authorization' ? (authorization ?? null) : null,
+    },
+  };
+}
+
+describe('require-login token policy', () => {
+  const savedEnv: Record<string, string | undefined> = {};
+  const ENV_KEYS = [
+    'DIFFSHUB_REQUIRE_LOGIN',
+    'DIFFSHUB_GITHUB_TOKEN',
+    'GITHUB_TOKEN',
+    'GH_TOKEN',
+  ];
+
+  beforeEach(() => {
+    for (const key of ENV_KEYS) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      if (savedEnv[key] == null) {
+        delete process.env[key];
+      } else {
+        process.env[key] = savedEnv[key];
+      }
+    }
+  });
+
+  test('tokenless requests get the fallback token on open deployments', () => {
+    process.env.DIFFSHUB_GITHUB_TOKEN = 'server-token';
+    expect(resolveRequestGitHubToken(createRequest())).toBe('server-token');
+    expect(rejectTokenlessRequestWhenLoginRequired(createRequest())).toBeNull();
+  });
+
+  test('require-login refuses the fallback token for tokenless requests', () => {
+    process.env.DIFFSHUB_GITHUB_TOKEN = 'server-token';
+    process.env.DIFFSHUB_REQUIRE_LOGIN = '1';
+    expect(resolveRequestGitHubToken(createRequest())).toBeUndefined();
+
+    const rejection = rejectTokenlessRequestWhenLoginRequired(createRequest());
+    expect(rejection?.status).toBe(401);
+  });
+
+  test('require-login passes requests carrying their own bearer token', () => {
+    process.env.DIFFSHUB_REQUIRE_LOGIN = 'true';
+    const request = createRequest('Bearer user-token');
+    expect(resolveRequestGitHubToken(request)).toBe('user-token');
+    expect(rejectTokenlessRequestWhenLoginRequired(request)).toBeNull();
+  });
+
+  test('unset and falsy DIFFSHUB_REQUIRE_LOGIN leave the gate open', () => {
+    process.env.DIFFSHUB_REQUIRE_LOGIN = '0';
+    expect(rejectTokenlessRequestWhenLoginRequired(createRequest())).toBeNull();
   });
 });
 

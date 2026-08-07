@@ -28,6 +28,7 @@ import { ReviewSubmitControl } from './ReviewSubmitControl';
 import { ThemeSourceProvider } from './ThemeSourceProvider';
 import { useGitHubToken } from './useGitHubToken';
 import { usePatchLoader } from './usePatchLoader';
+import { usePendingReviewComments } from './usePendingReviewComments';
 import { usePullEditSession } from './usePullEditSession';
 import { usePullReviewThreads } from './usePullReviewThreads';
 import { useThemeCycle } from './useThemeCycle';
@@ -72,7 +73,6 @@ import type {
   DiffsHubDeletedCommentEvent,
   DiffsHubSavedCommentEntry,
   DiffsHubSavedCommentEvent,
-  PendingReviewComment,
   PullDiscussionComment,
 } from '@/lib/types';
 import { upsertSavedCommentSidebarEntry } from '@/lib/upsertSavedCommentSidebarEntry';
@@ -280,21 +280,9 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     hasGitHubToken,
     pullRequest,
     retryLoad,
+    viewerKey,
     viewerRef,
   });
-  // Warn before navigating away while edits are uncommitted; closing the tab
-  // is the one way to silently lose an edit session.
-  useEffect(() => {
-    if (editSession.dirtyFiles.length === 0) {
-      return;
-    }
-    const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-    };
-    window.addEventListener('beforeunload', onBeforeUnload);
-    return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [editSession.dirtyFiles.length]);
-
   // Conflict detection: once the pull's diff has loaded, ask the server
   // whether the branch conflicts with its base. Best-effort — a failed check
   // just hides the resolve affordance.
@@ -599,34 +587,41 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     },
     [setCommentSections]
   );
-  // The in-progress batched review, keyed by item id + annotation key. The
-  // viewer keeps this in sync as pending cards are added/edited/deleted; the
-  // header control submits the whole batch with a verdict.
-  const [pendingReviewComments, setPendingReviewComments] = useState<
-    ReadonlyMap<string, PendingReviewComment>
-  >(new Map());
-  const handlePendingReviewCommentUpserted = useCallback(
-    (entry: PendingReviewComment) => {
-      setPendingReviewComments((prev) =>
-        new Map(prev).set(`${entry.itemId} ${entry.key}`, entry)
-      );
-    },
-    []
-  );
-  const handlePendingReviewCommentRemoved = useCallback(
-    (itemId: string, key: string) => {
-      setPendingReviewComments((prev) => {
-        const mapKey = `${itemId} ${key}`;
-        if (!prev.has(mapKey)) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.delete(mapKey);
-        return next;
-      });
-    },
-    []
-  );
+  // The in-progress batched review: the viewer keeps the map in sync as
+  // pending cards are added/edited/deleted, the header control submits the
+  // whole batch with a verdict, and the hook persists it per pull request so
+  // a reload restores the cards instead of discarding them.
+  const {
+    clearPendingReviewComments,
+    handlePendingReviewCommentRemoved,
+    handlePendingReviewCommentUpserted,
+    pendingReviewComments,
+  } = usePendingReviewComments({
+    loadState,
+    onRestored: handleCommentSaved,
+    pathToItemId: treeSource?.pathToItemId ?? null,
+    pullRequest,
+    viewerKey,
+    viewerReadyTick,
+    viewerRef,
+  });
+  // Warn before navigating away while edits are uncommitted. The pending
+  // review batch survives a reload via its per-PR persistence, but edit
+  // sessions do not — and either way an accidental close mid-review deserves
+  // a prompt.
+  useEffect(() => {
+    if (
+      editSession.dirtyFiles.length === 0 &&
+      pendingReviewComments.size === 0
+    ) {
+      return;
+    }
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [editSession.dirtyFiles.length, pendingReviewComments.size]);
   const handleSubmitReview = useCallback(
     async (event: PullReviewEvent, body: string) => {
       const token = githubTokenRef.current;
@@ -649,18 +644,24 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
       );
       // Drop the local pending cards and their sidebar entries; the refetch
       // below re-injects the submitted comments as real GitHub threads and
-      // adds the review summary to the discussion feed. Removals are grouped
-      // per file so each item re-renders once, not once per comment.
+      // adds the review summary to the discussion feed. Entries carry only
+      // their file path, so each resolves its item id here; removals are
+      // grouped per file so each item re-renders once, not once per comment.
       const viewer = viewerRef.current;
+      const pathToItemId = treeSource?.pathToItemId;
       const keysByItemId = new Map<string, Set<string>>();
       for (const entry of entries) {
-        let keys = keysByItemId.get(entry.itemId);
+        const itemId = pathToItemId?.get(entry.path);
+        if (itemId == null) {
+          continue;
+        }
+        let keys = keysByItemId.get(itemId);
         if (keys == null) {
           keys = new Set();
-          keysByItemId.set(entry.itemId, keys);
+          keysByItemId.set(itemId, keys);
         }
         keys.add(entry.key);
-        handleCommentDeleted({ itemId: entry.itemId, key: entry.key });
+        handleCommentDeleted({ itemId, key: entry.key });
       }
       for (const [itemId, keys] of keysByItemId) {
         const item = viewer?.getItem(itemId);
@@ -681,11 +682,17 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
           viewer.updateItem(item);
         }
       }
-      setPendingReviewComments(new Map());
+      clearPendingReviewComments();
       setThreadsRefreshTick((tick) => tick + 1);
       toast.success('Review submitted.');
     },
-    [handleCommentDeleted, pendingReviewComments, pullRequest]
+    [
+      clearPendingReviewComments,
+      handleCommentDeleted,
+      pendingReviewComments,
+      pullRequest,
+      treeSource,
+    ]
   );
   const handleToggleFileTreeOverlay = useCallback(() => {
     setFileTreeOverlayOpen((open) => !open);

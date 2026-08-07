@@ -5,6 +5,7 @@ import {
   createGitHubJSONHeaders,
   getGitHubEnvironment,
   type GitHubEnvironment,
+  rejectTokenlessRequestWhenLoginRequired,
   resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import {
@@ -48,6 +49,11 @@ const MAX_COMMENT_PAGES = 10;
 const PER_PAGE = 100;
 
 export async function GET(request: NextRequest) {
+  const rejection = rejectTokenlessRequestWhenLoginRequired(request);
+  if (rejection != null) {
+    return rejection;
+  }
+
   const params = request.nextUrl.searchParams;
   const owner = params.get('owner');
   const repo = params.get('repo');

@@ -4,6 +4,7 @@ import { fetchAssetFollowingRedirects } from '@/lib/assetRedirects';
 import { createGitHubRawHeaders } from '@/lib/githubDiffFileServer';
 import {
   getGitHubEnvironment,
+  rejectTokenlessRequestWhenLoginRequired,
   resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import {
@@ -22,6 +23,11 @@ import { createJSONResponse } from '@/lib/jsonResponse';
 // this must not become an open proxy.
 
 export async function GET(request: NextRequest) {
+  const rejection = rejectTokenlessRequestWhenLoginRequired(request);
+  if (rejection != null) {
+    return rejection;
+  }
+
   const environment = getGitHubEnvironment();
   const url = request.nextUrl.searchParams.get('url');
   const assetURL =

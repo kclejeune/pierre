@@ -1,6 +1,7 @@
 import { type NextRequest } from 'next/server';
 
 import { loadGitHubDiffAssetResponse } from '@/lib/githubDiffFileServer';
+import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
 import { createInertAssetResponse } from '@/lib/inertAssetResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
@@ -11,11 +12,23 @@ import { parseBearerToken } from '@/lib/parseBearerToken';
 // that <img> requests cannot carry) — so the server fetches them at the
 // diff's resolved ref. Signed-in viewers fetch through here with their own
 // Bearer token (DocAssetImage adds the header); without one the server falls
-// back to its fallback token, granting anonymous visitors the same read
-// access that token already provides through diff loading and comment reads.
+// back to its fallback token so anonymous visitors still see doc images.
 // The response headers below keep even a crafted file inert on this origin.
 
+// Tokenless requests are served with the operator's fallback token, but this
+// endpoint can reach any file at the diff's refs — not just what the diff
+// shows. Restricting anonymous fetches to the image types a rendered doc
+// embeds keeps the fallback token from becoming an arbitrary-file reader for
+// unauthenticated visitors; signed-in viewers read with their own access.
+const ANONYMOUS_IMAGE_FILE_PATTERN =
+  /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i;
+
 export async function GET(request: NextRequest) {
+  const rejection = rejectTokenlessRequestWhenLoginRequired(request);
+  if (rejection != null) {
+    return rejection;
+  }
+
   const params = request.nextUrl.searchParams;
   const path = params.get('path');
   const file = params.get('file');
@@ -28,6 +41,12 @@ export async function GET(request: NextRequest) {
   }
 
   const token = parseBearerToken(request.headers.get('authorization'));
+  if (token == null && !ANONYMOUS_IMAGE_FILE_PATTERN.test(file)) {
+    return createJSONResponse(
+      { error: 'Anonymous asset requests are limited to image files.' },
+      { status: 401 }
+    );
+  }
   let upstream: Response;
   try {
     upstream = await loadGitHubDiffAssetResponse(

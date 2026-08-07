@@ -14,6 +14,7 @@ export function createFakeWindow() {
       },
       localStorage: {
         getItem: (key: string) => store.get(key) ?? null,
+        removeItem: (key: string) => void store.delete(key),
         setItem: (key: string, value: string) => void store.set(key, value),
       },
     } as unknown as Window & typeof globalThis,

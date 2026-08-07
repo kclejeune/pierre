@@ -21,6 +21,7 @@ import { encodePath, encodeURLSegment } from '@/lib/githubDiffSource';
 import {
   createGitHubAPIURL,
   getGitHubEnvironment,
+  rejectTokenlessRequestWhenLoginRequired,
   resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import { createJSONResponse } from '@/lib/jsonResponse';
@@ -54,6 +55,11 @@ type PullMergeContext = PullRefs & {
 };
 
 export async function GET(request: NextRequest) {
+  const rejection = rejectTokenlessRequestWhenLoginRequired(request);
+  if (rejection != null) {
+    return rejection;
+  }
+
   const params = request.nextUrl.searchParams;
   const owner = params.get('owner');
   const repo = params.get('repo');

@@ -157,7 +157,7 @@ interface DiffsHubViewerProps {
   // parent's batch in sync as pending annotations are created/edited/removed.
   pendingReviewCount: number;
   onPendingReviewCommentUpserted(entry: PendingReviewComment): void;
-  onPendingReviewCommentRemoved(itemId: string, key: string): void;
+  onPendingReviewCommentRemoved(key: string): void;
   overflow: 'wrap' | 'scroll';
   showBackgrounds: boolean;
   diffIndicators: DiffIndicators;
@@ -347,7 +347,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       if (removedAnnotation != null && isSavedAnnotation(removedAnnotation)) {
         onCommentDeleted({ itemId, key });
         if (removedAnnotation.metadata.pending === true) {
-          onPendingReviewCommentRemoved(itemId, key);
+          onPendingReviewCommentRemoved(key);
         }
       }
     }
@@ -532,7 +532,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
         return;
       }
       onPendingReviewCommentUpserted({
-        itemId,
+        author,
         key,
         message: trimmedMessage,
         path: saved.updatedItem.fileDiff.name,
@@ -704,7 +704,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       );
       if (nextAnnotation.metadata.pending === true) {
         onPendingReviewCommentUpserted({
-          itemId,
+          author: nextAnnotation.metadata.author,
           key,
           message,
           path: updatedItem.fileDiff.name,

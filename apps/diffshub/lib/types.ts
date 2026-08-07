@@ -36,9 +36,12 @@ export interface DraftCommentMetadata {
 }
 
 // One comment in the in-progress batched review: enough to rebuild the
-// GitHub anchor at submit time and to locate the pending annotation card.
+// GitHub anchor at submit time, to locate the pending annotation card, and —
+// with the author — to recreate the card after a reload from persisted state.
+// Carries no item id: item ids are load-scoped, so the file path is the
+// durable anchor and the item is re-resolved wherever one is needed.
 export interface PendingReviewComment {
-  itemId: string;
+  author: CommentAuthor;
   key: string;
   message: string;
   path: string;

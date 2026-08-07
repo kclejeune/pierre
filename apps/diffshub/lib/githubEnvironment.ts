@@ -15,6 +15,7 @@
 //                              OAuth app credentials enabling "Sign in with
 //                              GitHub" instead of pasting a PAT.
 
+import { createJSONResponse } from './jsonResponse';
 import { parseBearerToken } from './parseBearerToken';
 
 export const GITHUB_DOTCOM_WEB_URL = 'https://github.com';
@@ -45,8 +46,14 @@ export function createGitHubJSONHeaders(
 // Server-side fallback token for requests that carry no user token (raw file
 // hydration, public-repo comment reads). Never used to author, edit, or
 // delete anything on a visitor's behalf — writes always require the
-// requester's own token.
+// requester's own token. On require-login deployments there is no fallback at
+// all: the login gate is client-side (tokens live in localStorage), so
+// letting tokenless server-side reads borrow the operator's token would let a
+// direct request bypass the gate entirely.
 export function getFallbackGitHubToken(): string | undefined {
+  if (isLoginRequired()) {
+    return undefined;
+  }
   return (
     process.env.DIFFSHUB_GITHUB_TOKEN ??
     process.env.GITHUB_TOKEN ??
@@ -54,8 +61,15 @@ export function getFallbackGitHubToken(): string | undefined {
   );
 }
 
+// Whether DIFFSHUB_REQUIRE_LOGIN gates this deployment behind a saved token.
+export function isLoginRequired(): boolean {
+  const value = process.env.DIFFSHUB_REQUIRE_LOGIN?.trim().toLowerCase();
+  return value === '1' || value === 'true';
+}
+
 // The token a read-only route should act with: the requester's own Bearer
-// token when the request carries one, the server fallback token otherwise.
+// token when the request carries one, the server fallback token otherwise
+// (absent on require-login deployments — see getFallbackGitHubToken).
 // Write paths must NOT use this — they take the parsed request token alone so
 // the fallback can never author changes on a visitor's behalf.
 export function resolveRequestGitHubToken(request: {
@@ -65,6 +79,34 @@ export function resolveRequestGitHubToken(request: {
     parseBearerToken(request.headers.get('authorization')) ??
     getFallbackGitHubToken()
   );
+}
+
+export const LOGIN_REQUIRED_MESSAGE =
+  'This deployment requires signing in to load GitHub data.';
+
+// Server-side enforcement of DIFFSHUB_REQUIRE_LOGIN for API routes: true when
+// a tokenless request must be refused on a require-login deployment. Every
+// anonymously reachable read route checks this before doing upstream work, so
+// the client-side login gate cannot be bypassed by requesting the APIs
+// directly.
+export function isTokenlessRequestBlocked(request: {
+  headers: { get(name: string): string | null };
+}): boolean {
+  return (
+    isLoginRequired() &&
+    parseBearerToken(request.headers.get('authorization')) == null
+  );
+}
+
+// The JSON form of the refusal: a 401 when the request must be blocked, null
+// when it may proceed.
+export function rejectTokenlessRequestWhenLoginRequired(request: {
+  headers: { get(name: string): string | null };
+}): Response | null {
+  if (!isTokenlessRequestBlocked(request)) {
+    return null;
+  }
+  return createJSONResponse({ error: LOGIN_REQUIRED_MESSAGE }, { status: 401 });
 }
 
 export interface GitHubEnvironment {
@@ -89,8 +131,9 @@ export interface GitHubClientEnvironment {
   oauthEnabled: boolean;
   // When DIFFSHUB_REQUIRE_LOGIN is set, every page is gated behind a saved
   // token: anonymous visitors are redirected to /login and returned to their
-  // original URL after signing in. The check is client-side because the token
-  // lives in localStorage.
+  // original URL after signing in. The redirect is client-side (the token
+  // lives in localStorage); the API routes enforce the same rule server-side
+  // via rejectTokenlessRequestWhenLoginRequired.
   requireLogin: boolean;
   webURL: string;
 }
@@ -165,12 +208,11 @@ export function getGitHubClientEnvironment(): GitHubClientEnvironment {
   // requiring the secret there would force it into build environments and
   // image layers. A missing secret surfaces at the login route instead.
   const clientId = process.env.DIFFSHUB_GITHUB_CLIENT_ID?.trim();
-  const requireLogin = process.env.DIFFSHUB_REQUIRE_LOGIN?.trim().toLowerCase();
   return {
     host: environment.host,
     isGitHubDotCom: environment.isGitHubDotCom,
     oauthEnabled: clientId != null && clientId !== '',
-    requireLogin: requireLogin === '1' || requireLogin === 'true',
+    requireLogin: isLoginRequired(),
     webURL: environment.webURL,
   };
 }

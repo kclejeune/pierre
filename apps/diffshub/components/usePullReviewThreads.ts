@@ -3,8 +3,7 @@
 import type { CodeViewHandle } from '@pierre/diffs/react';
 import { type RefObject, useEffect, useRef, useState } from 'react';
 
-import { incrementItemVersion } from '@/lib/incrementItemVersion';
-import { isDiffItem } from '@/lib/isDiffItem';
+import { applyViewerAnnotations } from '@/lib/applyViewerAnnotations';
 import {
   fetchPullComments,
   type PullRequestRef,
@@ -113,51 +112,14 @@ export function usePullReviewThreads({
     }
     appliedViewerKeyRef.current = viewerKey;
 
-    // Batch per file: each updateItem call is a synchronous layout/render
-    // pass, so append all of an item's threads in one update.
-    const threadsByItemId = new Map<string, PullReviewThread[]>();
-    for (const thread of threads) {
-      const itemId = pathToItemId.get(thread.path);
-      if (itemId == null) {
-        continue;
-      }
-      const itemThreads = threadsByItemId.get(itemId);
-      if (itemThreads == null) {
-        threadsByItemId.set(itemId, [thread]);
-      } else {
-        itemThreads.push(thread);
-      }
-    }
-
-    for (const [itemId, itemThreads] of threadsByItemId) {
-      const item = viewer.getItem(itemId);
-      if (item == null || !isDiffItem(item)) {
-        continue;
-      }
-      const annotations = item.annotations ?? [];
-      const existingKeys = new Set(
-        annotations.map((annotation) => annotation.metadata.key)
-      );
-      const freshThreads = itemThreads.filter(
-        (thread) => !existingKeys.has(thread.key)
-      );
-      if (freshThreads.length === 0) {
-        continue;
-      }
-      item.annotations = [
-        ...annotations,
-        ...freshThreads.map(createThreadAnnotation),
-      ];
-      incrementItemVersion(item);
-      if (!viewer.updateItem(item)) {
-        continue;
-      }
-
-      for (const thread of freshThreads) {
+    applyViewerAnnotations(viewer, pathToItemId, threads, {
+      createAnnotation: createThreadAnnotation,
+      getKey: (thread) => thread.key,
+      getPath: (thread) => thread.path,
+      onApplied: (fileDiff, itemId, thread) =>
         onThreadAppliedRef.current(
-          createThreadSavedCommentEvent(item.fileDiff, itemId, thread)
-        );
-      }
-    }
+          createThreadSavedCommentEvent(fileDiff, itemId, thread)
+        ),
+    });
   }, [loadState, pathToItemId, threads, viewerKey, viewerReadyTick, viewerRef]);
 }

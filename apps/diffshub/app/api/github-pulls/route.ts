@@ -5,6 +5,7 @@ import {
   createGitHubAPIURL,
   createGitHubJSONHeaders,
   getGitHubEnvironment,
+  rejectTokenlessRequestWhenLoginRequired,
   resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import {
@@ -26,6 +27,11 @@ import { isValidRepoName, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
 // following the active bucket tab), and per-repo open pull lists.
 
 export async function GET(request: NextRequest) {
+  const rejection = rejectTokenlessRequestWhenLoginRequired(request);
+  if (rejection != null) {
+    return rejection;
+  }
+
   const params = request.nextUrl.searchParams;
   const bucket = params.get('bucket');
   const repo = params.get('repo');

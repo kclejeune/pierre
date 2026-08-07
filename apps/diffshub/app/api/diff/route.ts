@@ -11,6 +11,8 @@ import {
   getGitHubEnvironment,
   GITHUB_API_VERSION,
   GITHUB_USER_AGENT,
+  isTokenlessRequestBlocked,
+  LOGIN_REQUIRED_MESSAGE,
 } from '@/lib/githubEnvironment';
 import { parseBearerToken } from '@/lib/parseBearerToken';
 
@@ -88,6 +90,12 @@ interface PatchFetchResult {
 // returns a streaming proxy response so the client can render files as they
 // arrive instead of waiting for the full patch text.
 export async function GET(request: NextRequest) {
+  // This route answers in plain text, so it checks the predicate directly
+  // instead of using the shared JSON rejection.
+  if (isTokenlessRequestBlocked(request)) {
+    return createTextResponse(LOGIN_REQUIRED_MESSAGE, { status: 401 });
+  }
+
   const searchParams = request.nextUrl.searchParams;
   const path = searchParams.get('path');
   const domain = searchParams.get('domain');

@@ -17,6 +17,12 @@
 /.next/
 /out/
 
+# cloudflare (opennextjs-cloudflare build output, wrangler scratch space,
+# local-only worker env)
+/.open-next/
+/.wrangler/
+.dev.vars
+
 # production
 /build
 

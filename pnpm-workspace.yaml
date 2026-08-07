@@ -59,6 +59,7 @@ catalog:
   '@octokit/auth-app': '8.1.1'
   '@octokit/openapi-types': '26.0.0'
   '@octokit/rest': '22.0.0'
+  '@opennextjs/cloudflare': '1.20.2'
   '@pierre/icons': '0.7.1'
   '@pierre/storage': '0.0.10'
   '@pierre/vscode-icons': '0.0.9'
@@ -149,6 +150,7 @@ catalog:
   'typescript': '6.0.3'
   'unist-util-visit': '5.0.0'
   'vite': '8.1.0'
+  'wrangler': '4.115.0'
   'zod': '4.1.11'
 
 overrides:
@@ -170,6 +172,10 @@ overrides:
 allowBuilds:
   '@tailwindcss/oxide': true
   '@vscode/vsce-sign': true
+  # esbuild and workerd fetch their platform binaries in postinstall; wrangler
+  # and the OpenNext build are inert without them.
+  'esbuild': true
   'keytar': true
   'msw': true
   'sharp': true
+  'workerd': true

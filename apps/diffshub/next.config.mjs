@@ -1,4 +1,10 @@
+import { initOpenNextCloudflareForDev } from '@opennextjs/cloudflare';
+
 import { loadWorktreeEnv } from '../../scripts/load-worktree-env.mjs';
+
+// No-op outside `next dev`; in dev it proxies Cloudflare bindings so code
+// paths that will run on Workers can be exercised locally.
+void initOpenNextCloudflareForDev();
 
 // `next dev` runs under Node, which (like Bun) only auto-loads the standard
 // `.env*` names. Our worktree helper writes `PIERRE_WORKTREE_SLUG` /

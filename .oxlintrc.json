@@ -97,6 +97,8 @@
     "packages/tree-test-data/*-files.json",
     "{packages,apps}/*/node_modules/**",
     "{packages,apps}/*/.next/**",
+    "{packages,apps}/*/.open-next/**",
+    "{packages,apps}/*/.wrangler/**",
     "{packages,apps}/*/out/**",
     "{packages,apps}/*/build/**",
     "{packages,apps}/*/next-env.d.ts",

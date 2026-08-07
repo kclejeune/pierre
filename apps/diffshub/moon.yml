@@ -57,3 +57,28 @@ tasks:
       persistent: true
       runInCI: 'skip'
       envFile: '/.env.worktree'
+
+  # Bundles the app for Cloudflare Workers (see wrangler.toml). OpenNext runs
+  # its own standalone-mode `next build` (buildCommand in open-next.config.ts)
+  # rather than reusing the `build` task's output, which is not standalone.
+  # Workers Builds uses this as its build command; deploys stay with the
+  # dashboard default (npx wrangler deploy).
+  cf-build:
+    command: 'opennextjs-cloudflare build'
+    deps:
+      - '^:build'
+    outputs:
+      - '.open-next/**/*'
+    options:
+      runInCI: 'always'
+
+  # Serves the .open-next bundle in the workerd runtime locally — the closest
+  # thing to the deployed Worker without deploying.
+  cf-preview:
+    command: 'opennextjs-cloudflare preview'
+    deps:
+      - 'cf-build'
+    options:
+      cache: false
+      persistent: true
+      runInCI: 'skip'

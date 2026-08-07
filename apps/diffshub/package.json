@@ -4,6 +4,7 @@
   "private": true,
   "license": "apache-2.0",
   "dependencies": {
+    "@opennextjs/cloudflare": "catalog:",
     "@pierre/diffs": "workspace:*",
     "@pierre/icons": "catalog:",
     "@pierre/theme": "workspace:*",
@@ -45,6 +46,7 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "jsdom": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "wrangler": "catalog:"
   }
 }

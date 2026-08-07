@@ -18,6 +18,7 @@ import {
 import type { Components } from 'react-markdown';
 
 import { GitHubAssetImage } from './GitHubAssetImage';
+import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
 import { MarkdownContent, MarkdownImage } from './MarkdownContent';
 import { cn } from '@/lib/cn';
 import {
@@ -28,6 +29,7 @@ import {
 import {
   createDocAssetURL,
   resolveDocAssetPath,
+  resolveDocLinkTarget,
 } from '@/lib/markdownDocAssets';
 import type { CommentMetadata } from '@/lib/types';
 
@@ -36,6 +38,10 @@ interface MarkdownDocAnnotationProps {
   itemId: string;
   loadDiffFiles?: FileDiffContentsLoader;
   onCommentAtLine(itemId: string, line: number): void;
+  // Called when a plain click on a document link names a repository file;
+  // returning true means the file was opened in the viewer and the link's
+  // navigation should be suppressed.
+  onOpenFile?(path: string): boolean;
   // The diff-source path (e.g. owner/repo/pull/123) on the configured GitHub
   // instance; enables serving the doc's relative image references through the
   // asset proxy. Unset for arbitrary-domain patch URLs.
@@ -66,10 +72,12 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
   itemId,
   loadDiffFiles,
   onCommentAtLine,
+  onOpenFile,
   sourcePath,
   commentAnnotations,
   renderComment,
 }: MarkdownDocAnnotationProps) {
+  const { webURL } = useGitHubEnvironment();
   const contentsState = useMarkdownDocContents(fileDiff, loadDiffFiles);
   // Deleted files render the removed document; its lines no longer exist on
   // the additions side, so change markers and comment anchors are disabled.
@@ -144,6 +152,45 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
           }
         }
         return <MarkdownImage {...rest} alt={alt} src={src} />;
+      },
+      // Relative links name repository files, so left alone they would
+      // resolve against the DiffsHub origin and 404. Point them at the file
+      // on the GitHub instance at this diff's head ref; a plain left-click on
+      // a file that is part of the diff opens it in the viewer instead, the
+      // same way selecting it in the file tree would.
+      a: ({ node: _node, href, ...rest }) => {
+        const linkTarget =
+          typeof href === 'string' && sourcePath != null
+            ? resolveDocLinkTarget(href, fileDiff.name, sourcePath, webURL)
+            : null;
+        if (linkTarget == null) {
+          return <a {...rest} href={href} />;
+        }
+        return (
+          <a
+            {...rest}
+            href={linkTarget.url}
+            rel="noreferrer noopener"
+            target="_blank"
+            onClick={(event) => {
+              // Modified clicks (new tab, download, …) keep browser behavior
+              // and follow the href.
+              if (
+                event.defaultPrevented ||
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              ) {
+                return;
+              }
+              if (onOpenFile?.(linkTarget.path) === true) {
+                event.preventDefault();
+              }
+            }}
+          />
+        );
       },
       div: (props) => {
         const { node } = props;
@@ -224,8 +271,10 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
       isDeletedDoc,
       itemId,
       onCommentAtLine,
+      onOpenFile,
       rail,
       sourcePath,
+      webURL,
     ]
   );
 

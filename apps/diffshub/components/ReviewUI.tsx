@@ -408,6 +408,20 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     },
     [recordViewTarget]
   );
+  // A rendered-document link naming a file that is part of this diff opens
+  // it in the viewer, same as selecting it in the tree; anything else keeps
+  // the link's own navigation to the GitHub instance.
+  const handleOpenDocFile = useCallback(
+    (path: string): boolean => {
+      const itemId = treeSource?.pathToItemId.get(path);
+      if (itemId == null) {
+        return false;
+      }
+      handleFileHeaderSelect(itemId);
+      return true;
+    },
+    [handleFileHeaderSelect, treeSource]
+  );
   const handleSelectTreeItem = useCallback(
     (itemId: string) => {
       setFileTreeOverlayOpen(false);
@@ -853,6 +867,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
               onCommentDeleted={handleCommentDeleted}
               onCommentSaved={handleCommentSaved}
               onFileHeaderSelect={handleFileHeaderSelect}
+              onOpenDocFile={handleOpenDocFile}
               onLineLinkChange={onLineLinkChange}
               onPendingReviewCommentRemoved={handlePendingReviewCommentRemoved}
               onPendingReviewCommentUpserted={

@@ -98,6 +98,9 @@ interface UsePatchLoaderResult {
   onViewerReady(): void;
   recordViewTarget(itemId: string, range?: SelectedLineRange): void;
   retryLoad(): void;
+  // Scrolls a file to the top with the post-click settle loop; pair with
+  // recordViewTarget so the click also lands in the URL hash.
+  scrollToItem(itemId: string): void;
   setCommentSections: Dispatch<SetStateAction<DiffsHubSavedCommentItem[]>>;
   setFileReviewed(itemId: string, reviewed: boolean): void;
   treeSource: DiffsHubFileTreeSource | null;
@@ -372,11 +375,15 @@ export function usePatchLoader({
 
   // Re-issues the restore scroll for a short window after the first apply.
   // The initial scroll fires while the page is still settling — virtualized
-  // neighbors re-measure as they mount and review threads inject annotation
-  // height once they load — all of which shift the target away from a
+  // neighbors re-measure as they mount, review threads inject annotation
+  // height once they load, and rendered markdown documents fetch their full
+  // contents and re-measure — all of which shift the target away from a
   // one-shot scroll. Any manual scroll input cancels the loop immediately.
   const settleLineHashScroll = useStableCallback(
-    (target: DiffsHubLineHashTarget) => {
+    (
+      target: DiffsHubLineHashTarget,
+      behavior: 'instant' | 'smooth' = 'instant'
+    ) => {
       cancelLineHashSettleRef.current?.();
       let ticks = 0;
       let timer: number | undefined;
@@ -405,19 +412,31 @@ export function usePatchLoader({
           return;
         }
         if (target.range == null) {
-          viewer.scrollTo({
-            type: 'item',
-            id: target.itemId,
-            align: 'start',
-            behavior: 'instant',
-          });
+          // getTopForItem returns the exact offset scrollTo(align: 'start')
+          // targets, so skip the re-issue once the viewer already sits there
+          // — the loop only acts while late-measuring content is still
+          // shifting the item.
+          const instance = viewer.getInstance();
+          const itemTop = instance?.getTopForItem(target.itemId);
+          if (
+            instance == null ||
+            itemTop == null ||
+            Math.abs(itemTop - instance.getScrollTop()) > 1
+          ) {
+            viewer.scrollTo({
+              type: 'item',
+              id: target.itemId,
+              align: 'start',
+              behavior,
+            });
+          }
         } else {
           viewer.scrollTo({
             type: 'range',
             id: target.itemId,
             range: target.range,
             align: 'center',
-            behavior: 'instant',
+            behavior,
           });
         }
         timer = window.setTimeout(tick, 300);
@@ -425,6 +444,21 @@ export function usePatchLoader({
       timer = window.setTimeout(tick, 300);
     }
   );
+
+  // Scrolls a file to the top of the viewer for a file-tree or file-header
+  // click. A one-shot scroll lands short on markdown items whose rendered
+  // document materializes after the click, so this re-anchors through the
+  // same settle loop the hash restore uses; smooth re-issues blend into the
+  // in-flight scroll animation instead of restarting it.
+  const scrollToItem = useStableCallback((itemId: string) => {
+    viewerRef.current?.scrollTo({
+      type: 'item',
+      id: itemId,
+      align: 'start',
+      behavior: 'smooth',
+    });
+    settleLineHashScroll({ itemId, range: null }, 'smooth');
+  });
 
   // Writes a hash into the URL (via replaceState, so no history entry) and
   // marks it as already applied so the restore path doesn't scroll-jump the
@@ -767,6 +801,7 @@ export function usePatchLoader({
     onViewerReady: tryApplyLineHashTarget,
     recordViewTarget,
     retryLoad,
+    scrollToItem,
     setCommentSections,
     setFileReviewed,
     treeSource,

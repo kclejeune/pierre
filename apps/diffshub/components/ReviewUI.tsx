@@ -265,6 +265,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     onViewerReady,
     recordViewTarget,
     retryLoad,
+    scrollToItem,
     setCommentSections,
     setFileReviewed,
     treeSource,
@@ -406,15 +407,10 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
   // the file to the top and record it as the URL hash target.
   const handleFileHeaderSelect = useCallback(
     (itemId: string) => {
-      viewerRef.current?.scrollTo({
-        type: 'item',
-        id: itemId,
-        align: 'start',
-        behavior: 'smooth',
-      });
       recordViewTarget(itemId);
+      scrollToItem(itemId);
     },
-    [recordViewTarget]
+    [recordViewTarget, scrollToItem]
   );
   // A rendered-document link naming a file that is part of this diff opens
   // it in the viewer, same as selecting it in the tree; anything else keeps

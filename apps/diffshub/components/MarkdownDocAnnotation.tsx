@@ -18,8 +18,13 @@ import {
 import type { Components } from 'react-markdown';
 
 import { GitHubAssetImage } from './GitHubAssetImage';
-import { MarkdownContent, MarkdownImage } from './MarkdownContent';
+import {
+  DOC_REMARK_PLUGINS,
+  MarkdownContent,
+  MarkdownImage,
+} from './MarkdownContent';
 import { cn } from '@/lib/cn';
+import { isPlainLeftClick } from '@/lib/isPlainLeftClick';
 import {
   buildNewFileChangeMap,
   findCommentableNewLine,
@@ -31,8 +36,8 @@ import {
   resolveDocLinkTarget,
 } from '@/lib/markdownDocAssets';
 import {
-  headingIdCandidates,
   rehypeGitHubHeadingIds,
+  scrollToDocFragment,
 } from '@/lib/markdownHeadingIds';
 import type { CommentMetadata } from '@/lib/types';
 
@@ -331,6 +336,7 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
         {contentsState.kind === 'ready' && (
           <MarkdownContent
             markdown={contentsState.contents}
+            extraRemarkPlugins={DOC_REMARK_PLUGINS}
             rehypePluginsBeforeRaw={rehypePlugins}
             components={components}
           />
@@ -461,41 +467,6 @@ function useMarkdownDocContents(
     return { kind: 'ready', contents: localContents };
   }
   return fetchedState ?? { kind: 'loading' };
-}
-
-// Whether a click should be handled in-app; modified clicks (new tab,
-// download, …) keep browser behavior and follow the href.
-function isPlainLeftClick(event: React.MouseEvent): boolean {
-  return (
-    !event.defaultPrevented &&
-    event.button === 0 &&
-    !event.metaKey &&
-    !event.ctrlKey &&
-    !event.shiftKey &&
-    !event.altKey
-  );
-}
-
-// Scrolls the rendered document to the heading a fragment names. Heading ids
-// are GitHub slugs (stamped by rehypeGitHubHeadingIds) that sanitization
-// renamed to `user-content-<slug>`; the bare form is tried too for anchors
-// embedded HTML carried itself. A fragment with no matching heading is a
-// no-op, matching GitHub.
-function scrollToDocFragment(
-  container: HTMLElement | null,
-  hash: string
-): void {
-  const fragment = decodeURIComponent(hash.replace(/^#/, ''));
-  if (container == null || fragment === '') {
-    return;
-  }
-  for (const id of headingIdCandidates(fragment)) {
-    const target = container.querySelector(`#${CSS.escape(id)}`);
-    if (target != null) {
-      target.scrollIntoView({ block: 'start' });
-      return;
-    }
-  }
 }
 
 // The wrapper attributes round-trip through rehype-raw's HTML re-parse, which

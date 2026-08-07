@@ -20,6 +20,9 @@ export interface ChromeTokens {
   border: string;
   borderOpaque: string;
   deletionFg: string;
+  // The code surface (editor.background); lets panes that sit under a
+  // CodeView extend its background past the end of the content.
+  editorBg?: string;
   fg: string;
   mutedFg: string;
   ring: string;
@@ -122,6 +125,7 @@ export function deriveChromeTokens(theme: ThemeLike): ChromeTokens | undefined {
     border: `color-mix(in srgb, ${fg} 20%, transparent)`,
     borderOpaque,
     deletionFg: surfaceIsDark ? '#fb7185' : '#be123c',
+    editorBg: editorBg ?? undefined,
     fg,
     mutedFg: muted,
     ring: fg,

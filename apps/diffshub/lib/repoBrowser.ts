@@ -1,4 +1,8 @@
-import { encodePath, type GitHubRepo } from './githubDiffSource';
+import {
+  encodePath,
+  type GitHubDiffSource,
+  type GitHubRepo,
+} from './githubDiffSource';
 import { buildHeaders, requestJSON } from './pullCommentsClient';
 
 // Shared shapes and pure logic for the repo file browser: a plain tree +
@@ -35,6 +39,12 @@ export interface RepoRefSplit {
 const PULL_REF_PATTERN = /^(refs\/pull\/\d+\/(?:head|merge))(?:\/(.*))?$/;
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
 
+// Whether a ref reads as an abbreviated or full commit sha — used to offer
+// "view this commit's diff" alongside "browse files here" for typed refs.
+export function isCommitShaLike(ref: string): boolean {
+  return COMMIT_SHA_PATTERN.test(ref);
+}
+
 // The advertised head ref of a pull request — the form PULL_REF_PATTERN
 // above splits without asking the repository, so links built with it resolve
 // client-side for free.
@@ -45,6 +55,10 @@ export function formatPullHeadRef(number: string): string {
 // App-relative browse URLs. The grammar deliberately mirrors GitHub's own
 // /owner/repo/{tree,blob}/{ref}/{path} shape, so prefixing the instance's
 // webURL onto the same path yields the matching GitHub link.
+export function buildBrowseRepoPath(repo: GitHubRepo): string {
+  return `/${encodePath(`${repo.owner}/${repo.repo}`)}`;
+}
+
 export function buildBrowseBlobPath(
   repo: GitHubRepo,
   ref: string,
@@ -55,6 +69,69 @@ export function buildBrowseBlobPath(
 
 export function buildBrowseTreePath(repo: GitHubRepo, ref: string): string {
   return `/${encodePath(`${repo.owner}/${repo.repo}`)}/tree/${encodePath(ref)}`;
+}
+
+// Viewer paths for the diff side of a ref: a commit's own diff, or a
+// GitHub-style base...head compare.
+export function buildCommitDiffPath(repo: GitHubRepo, sha: string): string {
+  return `/${encodePath(`${repo.owner}/${repo.repo}`)}/commit/${encodePath(sha)}`;
+}
+
+export function buildComparePath(
+  repo: GitHubRepo,
+  base: string,
+  head: string
+): string {
+  return `/${encodePath(`${repo.owner}/${repo.repo}`)}/compare/${encodePath(base)}...${encodePath(head)}`;
+}
+
+// The diff a ref carries: a commit's own diff for sha-like refs, otherwise
+// the ref compared against the given base (typically the default branch).
+// The single home for this policy — the dashboard, tree view, and palette
+// all route through it.
+export function buildRefDiffPath(
+  repo: GitHubRepo,
+  ref: string,
+  base: string
+): string {
+  return isCommitShaLike(ref)
+    ? buildCommitDiffPath(repo, ref)
+    : buildComparePath(repo, base, ref);
+}
+
+// The repo file browser path for a diff source's head, or null when the head
+// has no client-resolvable ref (fork compare heads).
+export function buildDiffHeadTreePath(source: GitHubDiffSource): string | null {
+  const ref = resolveDiffHeadRef(source);
+  return ref == null ? null : buildBrowseTreePath(source.repo, ref);
+}
+
+// The recents-list title for a browse visit. One format shared by the
+// palette and the browse view so the same destination never shows up twice
+// under different labels.
+export function formatBrowseRecentTitle(
+  repo: GitHubRepo,
+  ref: string | null
+): string {
+  return `${repo.owner}/${repo.repo}${ref == null || ref === '' ? '' : `@${ref}`} · files`;
+}
+
+// The head ref of a diff source in a form both the repo browser and the
+// GitHub web UI resolve: every PR advertises refs/pull/N/head, commits use
+// their own sha, and same-repo compares use the head side of the range. Fork
+// compare heads (owner:branch) live in another repository, so they resolve
+// to nothing.
+export function resolveDiffHeadRef(source: GitHubDiffSource): string | null {
+  switch (source.kind) {
+    case 'pull':
+      return formatPullHeadRef(source.number);
+    case 'commit':
+      return source.sha;
+    case 'compare': {
+      const head = source.range.split(/\.{2,3}/).pop() ?? '';
+      return head === '' || head.includes(':') ? null : head;
+    }
+  }
 }
 
 // Splits a `ref/path` URL remainder when the ref's shape is recognizable

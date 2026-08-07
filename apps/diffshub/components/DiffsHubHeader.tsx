@@ -13,6 +13,7 @@ import {
   IconExpandAll,
   IconEyeSlash,
   IconFileTreeFill,
+  IconFolder,
   IconGearFill,
   IconPin,
   IconShare,
@@ -78,6 +79,10 @@ interface HeaderProps {
   // "owner/name" of the GitHub repo being viewed, when there is one; enables
   // the pin-to-dashboard toggle. Absent for arbitrary-domain patch URLs.
   pinnableRepo?: string;
+  // App-relative path to the repo file browser at this diff's head ref —
+  // the diff→tree side of the browse/diff toggle. Absent when the head has
+  // no client-resolvable ref (fork compare heads, arbitrary domains).
+  browseFilesPath?: string;
   // PR-only review submission control (pending-count badge + verdict panel),
   // provided by the parent so the header stays source-agnostic.
   reviewControl?: ReactNode;
@@ -115,6 +120,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
   markdownView,
   overflow,
   pinnableRepo,
+  browseFilesPath,
   reviewControl,
   onClearGitHubToken,
   onCollapsePatternsChange,
@@ -207,6 +213,20 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
               onClick={() => pinnedRepos.toggle(pinnableRepo)}
             >
               <IconPin className="size-4 md:size-3" />
+            </Button>
+          )}
+          {browseFilesPath != null && (
+            <Button
+              asChild
+              variant="ghost"
+              size="icon-md"
+              aria-label="Browse files at this ref"
+              title="Browse files at this ref"
+              className={cn(CHROME_ICON_BUTTON_CLASS, 'hidden md:flex')}
+            >
+              <Link href={browseFilesPath}>
+                <IconFolder className="size-4 md:size-3" />
+              </Link>
             </Button>
           )}
           {showExternalLink && (

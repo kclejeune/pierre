@@ -119,6 +119,9 @@ function getMermaidSource(node: HastElement | undefined): string | null {
 // cards and the rendered-document view.
 export const MARKDOWN_PROSE_CLASS = cn(
   'text-[14px] leading-relaxed break-words',
+  // Fragment links scroll headings to the top of the viewer; the margin keeps
+  // the target clear of the code view's sticky file header.
+  '[&_:is(h1,h2,h3,h4,h5,h6)]:scroll-mt-12',
   '[&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:border-b [&_h1]:border-border [&_h1]:pb-1 [&_h1]:text-[1.6em] [&_h1]:font-semibold first:[&_h1]:mt-0',
   '[&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:border-b [&_h2]:border-border [&_h2]:pb-1 [&_h2]:text-[1.35em] [&_h2]:font-semibold first:[&_h2]:mt-0',
   '[&_h3]:mt-3 [&_h3]:mb-2 [&_h3]:text-[1.15em] [&_h3]:font-semibold',

@@ -61,6 +61,7 @@ describe('resolveDocLinkTarget', () => {
       resolveDocLinkTarget('./guide.md', 'docs/README.md', 'octo/demo/pull/41')
     ).toEqual({
       path: 'docs/guide.md',
+      hash: '',
       url: '/octo/demo/blob/refs/pull/41/head/docs/guide.md',
     });
   });
@@ -74,6 +75,7 @@ describe('resolveDocLinkTarget', () => {
       )
     ).toEqual({
       path: 'CONTRIBUTING.md',
+      hash: '#setup',
       url: '/octo/demo/blob/refs/pull/41/head/CONTRIBUTING.md#setup',
     });
   });
@@ -83,6 +85,7 @@ describe('resolveDocLinkTarget', () => {
       resolveDocLinkTarget('a.md', 'README.md', 'octo/demo/commit/abc123')
     ).toEqual({
       path: 'a.md',
+      hash: '',
       url: '/octo/demo/blob/abc123/a.md',
     });
     expect(
@@ -93,6 +96,7 @@ describe('resolveDocLinkTarget', () => {
       )
     ).toEqual({
       path: 'a.md',
+      hash: '',
       url: '/octo/demo/blob/feat/thing/a.md',
     });
   });
@@ -133,6 +137,7 @@ describe('resolveDocLinkTarget', () => {
       )
     ).toEqual({
       path: 'docs/release notes.md',
+      hash: '',
       url: '/octo/demo/blob/refs/pull/41/head/docs/release%20notes.md',
     });
   });

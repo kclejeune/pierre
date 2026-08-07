@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound, redirect } from 'next/navigation';
 
+import { BrowseUI } from '@/components/BrowseUI';
 import { ReviewUI } from '@/components/ReviewUI';
 import { describeDiffTarget } from '@/lib/describeDiffTarget';
 import { getGitHubEnvironment } from '@/lib/githubEnvironment';
@@ -81,6 +82,17 @@ export async function DiffsHubViewByPathPage({
 
   if (route.kind === 'not-found') {
     notFound();
+  }
+
+  if (route.kind === 'browse') {
+    return (
+      <BrowseUI
+        owner={route.owner}
+        repo={route.repo}
+        view={route.view}
+        refAndPath={route.refAndPath}
+      />
+    );
   }
 
   return (

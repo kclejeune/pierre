@@ -3,6 +3,7 @@ import {
   type GitHubDiffSource,
   parseGitHubDiffSource,
 } from './githubDiffSource';
+import { buildBrowseBlobPath, formatPullHeadRef } from './repoBrowser';
 
 // URL handling for references made by a rendered markdown document. The
 // document lives at a path inside the repository, so relative references
@@ -67,8 +68,8 @@ export function createDocAssetURL(
 export interface DocLinkTarget {
   // The repository path the link names, for looking the file up in the diff.
   path: string;
-  // The file on the GitHub instance at the diff's head ref, so the link
-  // resolves even when the file is not part of the diff.
+  // The file in the app's own repo browser at the diff's head ref, so the
+  // link resolves even when the file is not part of the diff.
   url: string;
 }
 
@@ -78,8 +79,7 @@ export interface DocLinkTarget {
 export function resolveDocLinkTarget(
   href: string,
   docPath: string,
-  sourcePath: string,
-  webURL: string
+  sourcePath: string
 ): DocLinkTarget | null {
   const resolved = resolveDocRelativeURL(href, docPath);
   if (resolved == null) {
@@ -97,22 +97,24 @@ export function resolveDocLinkTarget(
   if (ref == null) {
     return null;
   }
-  // Directory links land on /blob/ too; the instance redirects them to the
-  // tree view. The fragment survives so heading links keep their target.
+  // Directory links land on /blob/ too; the browser shows the tree with the
+  // directory revealed. The fragment survives so heading links keep their
+  // target.
   return {
     path,
-    url: `${webURL}/${encodePath(`${source.repo.owner}/${source.repo.repo}`)}/blob/${ref}/${encodePath(path)}${resolved.hash}`,
+    url: `${buildBrowseBlobPath(source.repo, ref, path)}${resolved.hash}`,
   };
 }
 
-// The diff's head ref in a form the GitHub web UI resolves in blob URLs:
-// every PR advertises refs/pull/N/head, commits use their own sha, and
-// same-repo compares use the head side of the range. Fork compare heads
-// (owner:branch) live in another repository, so those links get no target.
+// The diff's head ref in a form both the app's repo browser and the GitHub
+// web UI resolve: every PR advertises refs/pull/N/head, commits use their
+// own sha, and same-repo compares use the head side of the range. Fork
+// compare heads (owner:branch) live in another repository, so those links
+// get no target.
 function resolveHeadRefName(source: GitHubDiffSource): string | null {
   switch (source.kind) {
     case 'pull':
-      return `refs/pull/${source.number}/head`;
+      return formatPullHeadRef(source.number);
     case 'commit':
       return source.sha;
     case 'compare': {

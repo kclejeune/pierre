@@ -462,7 +462,10 @@ async function fetchGitHubFile(
   };
 }
 
-async function fetchGitHubFileContents(
+// Raw file contents at a ref: the contents API when acting with a request
+// token (private-repo access), the raw host with the fallback token
+// otherwise. Also consumed by the repo browser's file loader.
+export async function fetchGitHubFileContents(
   repoRef: GitHubRepoRef,
   path: string,
   fetcher: GitHubServerFetch,

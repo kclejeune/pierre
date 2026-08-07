@@ -1,7 +1,7 @@
 'use client';
 
 import { type DiffIndicators } from '@pierre/diffs';
-import { type CodeViewHandle, useWorkerPool } from '@pierre/diffs/react';
+import { type CodeViewHandle } from '@pierre/diffs/react';
 import { type ColorMode } from '@pierre/theming';
 import { useThemeController } from '@pierre/theming/react';
 import {
@@ -27,6 +27,7 @@ import {
 import { ReviewSubmitControl } from './ReviewSubmitControl';
 import { ThemeSourceProvider } from './ThemeSourceProvider';
 import { useGitHubToken } from './useGitHubToken';
+import { useIsWorkerPoolReadyOrDisabled } from './useIsWorkerPoolReadyOrDisabled';
 import { usePatchLoader } from './usePatchLoader';
 import { usePendingReviewComments } from './usePendingReviewComments';
 import { usePullEditSession } from './usePullEditSession';
@@ -965,26 +966,6 @@ function scrollDocCommentIntoView(key: string): void {
     timer = window.setTimeout(tick, 120);
   };
   tick();
-}
-
-function useIsWorkerPoolReadyOrDisabled() {
-  const workerPool = useWorkerPool();
-  const [isReady, setIsReady] = useState(
-    () => workerPool?.isInitialized() ?? true
-  );
-  const isReadyRef = useRef(isReady);
-  useEffect(() => {
-    // The callback will always be fired immediately with the new state, so we
-    // don't need to check for it in the effect
-    return workerPool?.subscribeToStatChanges((stats) => {
-      const isReady = stats.managerState === 'initialized';
-      if (isReady !== isReadyRef.current) {
-        setIsReady(isReady);
-        isReadyRef.current = isReady;
-      }
-    });
-  }, [workerPool]);
-  return isReady;
 }
 
 interface ReviewGridProps {

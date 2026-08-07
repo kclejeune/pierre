@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 
+import { BrowseUI } from '@/components/BrowseUI';
 import { ReviewUI } from '@/components/ReviewUI';
 import { getGitHubEnvironment } from '@/lib/githubEnvironment';
 import { resolveDiffshubViewerRoute } from '@/lib/resolveDiffshubViewerRoute';
@@ -24,6 +25,17 @@ export async function DiffsHubViewByPathPage({
 
   if (route.kind === 'redirect') {
     redirect(route.target);
+  }
+
+  if (route.kind === 'browse') {
+    return (
+      <BrowseUI
+        owner={route.owner}
+        repo={route.repo}
+        view={route.view}
+        refAndPath={route.refAndPath}
+      />
+    );
   }
 
   return (

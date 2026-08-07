@@ -183,4 +183,57 @@ describe('resolveDiffshubViewerRoute', () => {
       });
     });
   });
+
+  describe('repo browser paths', () => {
+    test('tree and blob paths browse with the ref remainder joined', () => {
+      expect(
+        resolveDiffshubViewerRoute(
+          ['owner', 'repo', 'tree', 'main', 'docs'],
+          undefined
+        )
+      ).toEqual({
+        kind: 'browse',
+        owner: 'owner',
+        repo: 'repo',
+        view: 'tree',
+        refAndPath: 'main/docs',
+      });
+      expect(
+        resolveDiffshubViewerRoute(
+          ['owner', 'repo', 'blob', 'refs', 'pull', '41', 'head', 'README.md'],
+          undefined
+        )
+      ).toEqual({
+        kind: 'browse',
+        owner: 'owner',
+        repo: 'repo',
+        view: 'blob',
+        refAndPath: 'refs/pull/41/head/README.md',
+      });
+    });
+
+    test('a bare owner/repo path browses the default-branch root', () => {
+      expect(resolveDiffshubViewerRoute(['owner', 'repo'], undefined)).toEqual({
+        kind: 'browse',
+        owner: 'owner',
+        repo: 'repo',
+        view: 'tree',
+        refAndPath: '',
+      });
+    });
+
+    test('alternate domains never browse', () => {
+      expect(
+        resolveDiffshubViewerRoute(
+          ['owner', 'repo', 'tree', 'main'],
+          'gitlab.com'
+        )
+      ).toEqual({
+        domain: 'gitlab.com',
+        kind: 'render',
+        upstreamPath: '/owner/repo/tree/main',
+        url: 'https://gitlab.com/owner/repo/tree/main',
+      });
+    });
+  });
 });

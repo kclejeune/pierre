@@ -13,18 +13,18 @@
 name = "diffs"
 main = ".open-next/worker.js"
 
+# nodejs_compat is required by the OpenNext runtime; the date is past
+# 2025-04-01 so Worker vars/secrets auto-populate process.env, which is how
+# lib/githubEnvironment.ts reads all of its configuration.
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+
 # Plain-text vars must live here, not in the dashboard: every `wrangler deploy`
 # replaces the Worker's vars with this block, wiping dashboard-set ones.
 # DIFFSHUB_GITHUB_URL is omitted (defaults to https://github.com), as is
 # DIFFSHUB_PUBLIC_ORIGIN (the Worker sees the real request origin).
 [vars]
 DIFFSHUB_GITHUB_CLIENT_ID = "Ov23liNSMB9Nj1jWUU3n"
-
-# nodejs_compat is required by the OpenNext runtime; the date is past
-# 2025-04-01 so Worker vars/secrets auto-populate process.env, which is how
-# lib/githubEnvironment.ts reads all of its configuration.
-compatibility_date = "2025-04-01"
-compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 
 [assets]
 directory = ".open-next/assets"

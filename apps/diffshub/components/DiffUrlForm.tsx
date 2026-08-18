@@ -184,7 +184,14 @@ export function DiffUrlForm({
         )}
         enterKeyHint="go"
         value={url}
-        type="url"
+        // Plain text, not `type="url"`: the committed value is often the
+        // `owner/repo#N` shorthand rather than a URL, and native URL
+        // validation is not what decides acceptance (getPatchViewerHref is).
+        type="text"
+        inputMode="url"
+        autoCapitalize="off"
+        autoCorrect="off"
+        spellCheck={false}
         role="combobox"
         aria-autocomplete="list"
         aria-expanded={suggestionsOpen}

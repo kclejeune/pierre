@@ -11,17 +11,16 @@ interface DiffRefsBadgeProps {
   refs: DiffRefs;
 }
 
-// Header display of what the loaded diff compares: the base ref on the left,
-// the head ref on the right, each labeled outright so the direction never
-// has to be inferred from an arrow. Left-to-right matches the split view
-// (base/old on the left, head/new on the right) and GitHub's own
-// `base...head` compare grammar. Refs that resolve in the file browser link
-// there, so "what does this branch look like?" is one click.
+// Header display of what the loaded diff compares: the head ref on the left,
+// an arrow, and the base ref on the right — the direction the changes flow,
+// as in GitHub's "merge <head> into <base>". Each pill is labeled outright so
+// the reading never depends on the arrow alone. Refs that resolve in the file
+// browser link there, so "what does this branch look like?" is one click.
 export function DiffRefsBadge({ className, refs }: DiffRefsBadgeProps) {
   const description =
     refs.base == null
-      ? `Showing changes on ${refs.head.label} (head) against the default branch`
-      : `Showing changes on ${refs.head.label} (head) relative to ${refs.base.label} (base)`;
+      ? `Changes on ${refs.head.label} (head) against the default branch`
+      : `Changes on ${refs.head.label} (head) into ${refs.base.label} (base)`;
   return (
     <div
       role="group"
@@ -29,16 +28,16 @@ export function DiffRefsBadge({ className, refs }: DiffRefsBadgeProps) {
       aria-label={description}
       title={description}
     >
+      <RefPill kind="head" end={refs.head} />
       {refs.base != null && (
         <>
-          <RefPill kind="base" end={refs.base} />
           <IconArrowRightShort
             aria-hidden="true"
             className="text-muted-foreground size-3 shrink-0"
           />
+          <RefPill kind="base" end={refs.base} />
         </>
       )}
-      <RefPill kind="head" end={refs.head} />
     </div>
   );
 }

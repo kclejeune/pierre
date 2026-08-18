@@ -74,6 +74,9 @@ interface HeaderProps {
   // arbitrary-domain patches, and pulls whose metadata has not loaded.
   diffRefs?: DiffRefs | null;
   diffStyle: 'split' | 'unified';
+  // The full upstream URL of the loaded diff. Its hostname is shown as a chip
+  // beside the URL input, which itself holds only the in-repo shorthand.
+  upstreamUrl: string;
   fileTreeAvailable: boolean;
   fileTreeOverlayOpen: boolean;
   githubTokenActive: boolean;
@@ -118,6 +121,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
   diffIndicators,
   diffRefs,
   diffStyle,
+  upstreamUrl,
   fileTreeAvailable,
   fileTreeOverlayOpen,
   githubTokenActive,
@@ -182,11 +186,16 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
         <DiffsHubLogo />
       </Link>
       <div className="order-last flex w-full min-w-0 flex-col gap-2 md:order-none md:mr-auto md:w-auto md:flex-row md:items-center md:gap-3">
-        <DiffUrlForm
-          initialUrl={initialUrl}
-          onUrlChange={setCurrentUrl}
-          inputClassName="w-full md:w-auto"
-        />
+        <div className="flex min-w-0 items-center gap-1.5">
+          <UpstreamHostChip url={upstreamUrl} />
+          <DiffUrlForm
+            initialUrl={initialUrl}
+            onUrlChange={setCurrentUrl}
+            // The committed value is the short in-repo form, so the input can
+            // hug it; the home page keeps the wider default for full URLs.
+            inputClassName="w-full md:w-auto md:min-w-[12ch]"
+          />
+        </div>
         {diffRefs != null && <DiffRefsBadge refs={diffRefs} />}
       </div>
       <div className="flex w-full items-center justify-between gap-2 md:w-auto md:justify-end">
@@ -705,5 +714,33 @@ function ThemeList({
         ))}
       </div>
     </>
+  );
+}
+
+// The instance the loaded diff came from, as a bare hostname. The URL input
+// next to it holds only the in-repo shorthand, so this is where github.com vs
+// a GHE deployment is told apart; it links to the upstream page so copying
+// or opening the full URL stays one click.
+function UpstreamHostChip({ url }: { url: string }) {
+  const host = useMemo(() => {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return null;
+    }
+  }, [url]);
+  if (host == null) {
+    return null;
+  }
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      title={`Open on ${host}`}
+      className="text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex h-6 shrink-0 items-center rounded-md border border-[var(--diffshub-card-border,var(--color-border))] bg-[var(--diffshub-card-bg,var(--color-muted))] px-1.5 font-mono text-[11px] outline-none hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2"
+    >
+      {host}
+    </a>
   );
 }

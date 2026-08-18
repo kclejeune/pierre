@@ -14,6 +14,7 @@ import {
   parsePullRefs,
   readStringPath,
   updateRef,
+  waitForPullHead,
 } from '@/lib/githubCommitServer';
 import { encodeURLSegment } from '@/lib/githubDiffSource';
 import { createJSONResponse } from '@/lib/jsonResponse';
@@ -161,6 +162,9 @@ export async function POST(request: NextRequest) {
       treeSha,
     });
     await updateRef(headRepo, token, refs.headRef, commitSha);
+    // Hold the response until GitHub has picked up the new head so the
+    // client's reload sees the committed diff rather than the previous one.
+    await waitForPullHead(repo, body.pull, commitSha, token);
     return createJSONResponse({
       commit: { sha: commitSha },
       headSha: commitSha,

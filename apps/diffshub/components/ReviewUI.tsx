@@ -44,7 +44,7 @@ import {
   parseCollapsePatterns,
   saveCollapsePatternsText,
 } from '@/lib/collapsePatterns';
-import { describeDiffRefs } from '@/lib/diffRefs';
+import { describeDiffRefs, formatDiffSourceShorthand } from '@/lib/diffRefs';
 import {
   loadDisplaySettings,
   saveDisplaySettings,
@@ -800,7 +800,12 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
           diffIndicators={diffIndicators}
           diffRefs={diffRefs}
           diffStyle={diffStyle}
-          initialUrl={initialUrl}
+          initialUrl={
+            githubSource == null
+              ? initialUrl
+              : formatDiffSourceShorthand(githubSource)
+          }
+          upstreamUrl={initialUrl}
           lightThemeName={lightThemeName}
           lineNumbers={lineNumbers}
           markdownView={markdownView}

@@ -87,3 +87,20 @@ function formatPullHeadLabel(refs: PullRefs): string {
     ? refs.headRef
     : `${refs.headRepo.owner}:${refs.headRef}`;
 }
+
+// The header's committed value for the URL input: the shortest string
+// `getPatchViewerHref` round-trips back to this source, so the hostname (which
+// the header shows separately) and the `/pull/` boilerplate stay out of the
+// field until the user edits it. Pulls use GitHub's `owner/repo#N` shorthand;
+// commits and compares keep their path form since that is their shorthand.
+export function formatDiffSourceShorthand(source: GitHubDiffSource): string {
+  const repo = `${source.repo.owner}/${source.repo.repo}`;
+  switch (source.kind) {
+    case 'pull':
+      return `${repo}#${source.number}`;
+    case 'commit':
+      return `${repo}/commit/${source.sha}`;
+    case 'compare':
+      return `${repo}/compare/${source.range}`;
+  }
+}

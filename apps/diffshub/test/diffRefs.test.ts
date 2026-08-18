@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import { describeDiffRefs } from '../lib/diffRefs';
+import { describeDiffRefs, formatDiffSourceShorthand } from '../lib/diffRefs';
+import { getPatchViewerHref } from '../lib/getPatchViewerHref';
 import type { PullInfo } from '../lib/pullInfoClient';
 
 const repo = { owner: 'acme', repo: 'widgets' };
@@ -108,5 +109,28 @@ describe('describeDiffRefs', () => {
     expect(refs?.head.label).toBe('forker:topic');
     // The base repo still advertises the pull head, so it stays browsable.
     expect(refs?.head.browsePath).toBe('/acme/widgets/tree/refs/pull/42/head');
+  });
+});
+
+describe('formatDiffSourceShorthand', () => {
+  test('pulls use owner/repo#N', () => {
+    expect(
+      formatDiffSourceShorthand({ kind: 'pull', number: '42', repo })
+    ).toBe('acme/widgets#42');
+  });
+
+  test('every shorthand resolves back to its own viewer path', () => {
+    const sources = [
+      { kind: 'pull', number: '42', repo },
+      { kind: 'commit', repo, sha: 'deadbeef' },
+      { kind: 'compare', range: 'main...forker:topic', repo },
+    ] as const;
+    expect(
+      sources.map((s) => getPatchViewerHref(formatDiffSourceShorthand(s)))
+    ).toEqual([
+      '/acme/widgets/pull/42',
+      '/acme/widgets/commit/deadbeef',
+      '/acme/widgets/compare/main...forker:topic',
+    ]);
   });
 });

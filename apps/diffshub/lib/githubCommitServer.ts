@@ -408,6 +408,68 @@ export function fetchPullData(
   );
 }
 
+// Live tip of a branch. The pull payload's `base.sha` is a snapshot from
+// when GitHub last re-synced the pull, not the branch head — it can lag the
+// real base tip by many commits, which would make a merge plan built from it
+// miss every base-side change.
+export async function fetchBranchTipSha(
+  repo: GitRepoRef,
+  branch: string,
+  token: string | undefined,
+  fetcher: ServerFetch = fetch
+): Promise<string> {
+  const payload = await fetchGitHubJSON(
+    repoPath(repo, `/git/ref/heads/${encodePath(branch)}`),
+    token,
+    fetcher
+  );
+  const sha = readStringPath(payload, ['object', 'sha']);
+  if (sha == null) {
+    throw new GitHubCommitError(
+      `The branch ${branch} could not be resolved.`,
+      'github',
+      502
+    );
+  }
+  return sha;
+}
+
+// After a commit lands on the head branch, GitHub updates the pull's head sha
+// and regenerates its diff/mergeability in the background. Reloading before
+// that finishes serves the pre-commit diff, so both commit routes wait until
+// the pull reports the new head and a computed `mergeable`, bounded so a
+// slow GitHub never wedges the response. Best-effort: timeouts and errors
+// fall through and the client reloads regardless.
+export async function waitForPullHead(
+  repo: GitRepoRef,
+  pull: string,
+  expectedHeadSha: string,
+  token: string | undefined,
+  options: { intervalMs?: number; maxAttempts?: number } = {},
+  fetcher: ServerFetch = fetch
+): Promise<void> {
+  const intervalMs = options.intervalMs ?? 750;
+  const maxAttempts = options.maxAttempts ?? 12;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    try {
+      const payload = await fetchPullData(repo, pull, token, fetcher);
+      const headSha = readStringPath(payload, ['head', 'sha']);
+      const mergeable =
+        typeof payload === 'object' && payload != null
+          ? (payload as Record<string, unknown>).mergeable
+          : undefined;
+      if (headSha === expectedHeadSha && typeof mergeable === 'boolean') {
+        return;
+      }
+    } catch {
+      return;
+    }
+  }
+}
+
 // Extracts the ref/sha/repo pairs from a pulls/{n} payload, throwing the 502
 // GitHubCommitError both routes report when GitHub's response is malformed.
 // `fallbackRepo` covers payloads whose repo objects are absent (deleted fork).

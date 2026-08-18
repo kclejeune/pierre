@@ -5,8 +5,10 @@ import {
   createCommit,
   createTree,
   createTreeEntryResolver,
+  fetchBranchTipSha,
   GitHubCommitError,
   updateRef,
+  waitForPullHead,
 } from '@/lib/githubCommitServer';
 
 const REPO = { owner: 'acme', repo: 'widgets' };
@@ -177,5 +179,84 @@ describe('createTreeEntryResolver', () => {
     await resolve('root', 'src/other.ts');
     // root and src each listed exactly once despite three resolutions.
     expect(requests).toHaveLength(2);
+  });
+});
+
+describe('fetchBranchTipSha', () => {
+  test('reads the live tip from git/ref/heads, keeping slashes in the name', async () => {
+    const { fetcher, requests } = createFetchStub(() =>
+      jsonResponse({ object: { sha: 'live', type: 'commit' } })
+    );
+    expect(
+      await fetchBranchTipSha(REPO, 'release/2026-08', 'tok', fetcher)
+    ).toBe('live');
+    expect(requests[0]?.url).toContain(
+      '/repos/acme/widgets/git/ref/heads/release/2026-08'
+    );
+  });
+
+  test('throws a 502 GitHubCommitError when the payload lacks a sha', async () => {
+    const { fetcher } = createFetchStub(() => jsonResponse({}));
+    let caught: unknown;
+    try {
+      await fetchBranchTipSha(REPO, 'main', undefined, fetcher);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(GitHubCommitError);
+    expect((caught as GitHubCommitError).status).toBe(502);
+  });
+});
+
+describe('waitForPullHead', () => {
+  test('polls until the pull reports the new head and computed mergeability', async () => {
+    const payloads = [
+      { head: { sha: 'old' }, mergeable: false },
+      { head: { sha: 'new' }, mergeable: null },
+      { head: { sha: 'new' }, mergeable: true },
+      { head: { sha: 'new' }, mergeable: true },
+    ];
+    let index = 0;
+    const { fetcher, requests } = createFetchStub(() =>
+      jsonResponse(payloads[index++])
+    );
+    await waitForPullHead(
+      REPO,
+      '7',
+      'new',
+      'tok',
+      { intervalMs: 0, maxAttempts: 10 },
+      fetcher
+    );
+    expect(requests).toHaveLength(3);
+    expect(requests[0]?.url).toContain('/repos/acme/widgets/pulls/7');
+  });
+
+  test('gives up after maxAttempts and on request failure', async () => {
+    const stale = createFetchStub(() =>
+      jsonResponse({ head: { sha: 'old' }, mergeable: true })
+    );
+    await waitForPullHead(
+      REPO,
+      '7',
+      'new',
+      'tok',
+      { intervalMs: 0, maxAttempts: 3 },
+      stale.fetcher
+    );
+    expect(stale.requests).toHaveLength(3);
+
+    const failing = createFetchStub(
+      () => new Response('nope', { status: 500 })
+    );
+    await waitForPullHead(
+      REPO,
+      '7',
+      'new',
+      'tok',
+      { intervalMs: 0, maxAttempts: 3 },
+      failing.fetcher
+    );
+    expect(failing.requests).toHaveLength(1);
   });
 });

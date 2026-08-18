@@ -3,6 +3,15 @@ export interface GitHubRepo {
   repo: string;
 }
 
+// GitHub owner and repo names are case-insensitive, so fork detection and
+// same-repo checks compare them case-folded.
+export function isSameGitHubRepo(a: GitHubRepo, b: GitHubRepo): boolean {
+  return (
+    a.owner.toLowerCase() === b.owner.toLowerCase() &&
+    a.repo.toLowerCase() === b.repo.toLowerCase()
+  );
+}
+
 export type GitHubDiffSource =
   | { kind: 'pull'; number: string; repo: GitHubRepo }
   | { kind: 'commit'; repo: GitHubRepo; sha: string }

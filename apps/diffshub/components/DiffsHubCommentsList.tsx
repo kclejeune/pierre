@@ -2,7 +2,19 @@
 
 import type { AnnotationSide } from '@pierre/diffs';
 import { IconArrowUpRight, IconConvoFill, IconPlus } from '@pierre/icons';
-import { memo, type MouseEvent, useState } from 'react';
+import {
+  createContext,
+  type HTMLAttributes,
+  memo,
+  type MouseEvent,
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { CommentComposer } from './CommentComposer';
@@ -38,6 +50,112 @@ const CARD_ROW_CLASS = cn(
   CARD_BORDER_CLASS,
   'border-b bg-[var(--diffshub-card-bg,var(--color-card))] first:rounded-t-lg last:rounded-b-lg last:border-b-0'
 );
+
+// Comment bodies in sidebar rows render as markdown at the row's 14px size,
+// with the prose spacing tightened so a one-line comment stays one line.
+const SIDEBAR_MARKDOWN_CLASS =
+  'text-foreground w-full text-[14px] leading-normal [&_p]:my-0! [&_p+p]:mt-2! [&_pre]:my-1.5! [&_ul]:my-1! [&_ol]:my-1! [&_blockquote]:my-1! [&_img]:max-h-40 [&_h1]:text-[1.15em]! [&_h2]:text-[1.1em]! [&_h3]:text-[1em]! [&_:is(h1,h2,h3)]:my-1.5!';
+
+// Rows that are not expanded clamp the rendered body to a few lines so long
+// descriptions do not swallow the list while the formatting still reads at a
+// glance. `-webkit-line-clamp` counts lines across the nested markdown blocks,
+// so paragraphs, lists, and code all clamp together. Merged once here so the
+// per-row `className` stays referentially stable across list re-renders.
+const COLLAPSED_SIDEBAR_MARKDOWN_CLASS = cn(
+  SIDEBAR_MARKDOWN_CLASS,
+  'line-clamp-6'
+);
+
+// Visibility tracking for the sidebar rows, shared through context so the
+// list owns one IntersectionObserver rooted at its own scroll container.
+// The root must be the scroller, not the viewport: rows outside the
+// scroller's box are clipped by it regardless of any viewport margin, so a
+// viewport-rooted observer could not pre-render rows before they scroll in.
+// The default (no list above) reports every row visible immediately.
+type ObserveRow = (element: Element, onVisible: () => void) => () => void;
+const RowVisibilityContext = createContext<ObserveRow>((_, onVisible) => {
+  onVisible();
+  return () => {};
+});
+
+// Creates the observer lazily on first use — child effects run before the
+// parent's, but the scroller ref is already attached by then — and tears
+// it down with the list. The generous margin renders rows well before they
+// come into view, so the plain-text → markdown swap happens off-screen.
+function useRowVisibilityObserver(
+  scrollerRef: RefObject<HTMLDivElement | null>
+): ObserveRow {
+  const observerRef = useRef<{
+    callbacks: WeakMap<Element, () => void>;
+    observer: IntersectionObserver;
+  } | null>(null);
+  useEffect(
+    () => () => {
+      observerRef.current?.observer.disconnect();
+      observerRef.current = null;
+    },
+    []
+  );
+  return useCallback(
+    (element, onVisible) => {
+      if (observerRef.current == null) {
+        const callbacks = new WeakMap<Element, () => void>();
+        const observer = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (entry.isIntersecting) {
+                callbacks.get(entry.target)?.();
+              }
+            }
+          },
+          { root: scrollerRef.current, rootMargin: '1000px 0px' }
+        );
+        observerRef.current = { callbacks, observer };
+      }
+      const { callbacks, observer } = observerRef.current;
+      callbacks.set(element, onVisible);
+      observer.observe(element);
+      return () => {
+        callbacks.delete(element);
+        observer.unobserve(element);
+      };
+    },
+    [scrollerRef]
+  );
+}
+
+// Renders a comment body as markdown once its row nears the viewport, and as
+// plain text until then. Parsing markdown for every row up front costs
+// seconds of main-thread time on pulls with a thousand comments, almost all
+// of them never scrolled to; the deferral keeps the tab switch instant while
+// every row the user actually sees is rendered. Once rendered, a row stays
+// rendered (its subtree is memoized) so scrolling back never re-parses.
+function DeferredMarkdown({
+  className,
+  markdown,
+}: {
+  className?: string;
+  markdown: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const observeRow = useContext(RowVisibilityContext);
+  const [rendered, setRendered] = useState(false);
+  useEffect(() => {
+    const element = ref.current;
+    if (rendered || element == null) {
+      return;
+    }
+    return observeRow(element, () => setRendered(true));
+  }, [observeRow, rendered]);
+  if (rendered) {
+    return <MarkdownContent className={className} markdown={markdown} />;
+  }
+  return (
+    <div ref={ref} className={cn(className, 'break-words whitespace-pre-wrap')}>
+      {markdown}
+    </div>
+  );
+}
 
 // Write access to the PR-level conversation, provided only on pull-request
 // views. `canWrite` mirrors the thread cards' meaning: a token is saved, so
@@ -148,9 +266,63 @@ function handleRowClick(event: MouseEvent<HTMLElement>, run: () => void): void {
   run();
 }
 
+// A clickable card row whose body may contain its own interactive content
+// (markdown links, moderation buttons, an edit composer). A real <button>
+// cannot legally contain those, so the row is a div with button semantics:
+// clicks on interactive descendants are theirs, everything else — and
+// Enter/Space on the row itself — activates the row.
+function CommentRow({
+  children,
+  className,
+  onActivate,
+  ...rest
+}: {
+  children: ReactNode;
+  className?: string;
+  onActivate(): void;
+} & Omit<HTMLAttributes<HTMLDivElement>, 'onClick' | 'onKeyDown'>) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      {...rest}
+      // No `transition-colors` here: the bg / border / text colors are
+      // driven by CSS variables that flip the entire chrome on every theme
+      // swap, so a smooth color transition on each card visibly trails the
+      // rest of the UI (header, file tree, diff body) which snap instantly.
+      className={cn(
+        CARD_ROW_CLASS,
+        'focus-visible:ring-ring flex w-full cursor-pointer items-start gap-2 p-3 text-left text-sm outline-none hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2',
+        className
+      )}
+      onClick={(event) => {
+        const target = event.target as HTMLElement;
+        if (
+          target !== event.currentTarget &&
+          target.closest('a, button, form') != null
+        ) {
+          return;
+        }
+        handleRowClick(event, onActivate);
+      }}
+      onKeyDown={(event) => {
+        if (
+          (event.key === 'Enter' || event.key === ' ') &&
+          event.target === event.currentTarget
+        ) {
+          event.preventDefault();
+          onActivate();
+        }
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 // A PR-level conversation entry. There is no diff anchor to scroll to, so the
-// row's default click expands the body in place — collapsed rows show a
-// clamped plain-text preview, expanded rows render the full markdown — so
+// row's default click expands the body in place — collapsed rows clamp the
+// rendered markdown to a few lines, expanded rows show all of it — so
 // reading the comment stays in-app. The upstream GitHub permalink is an
 // explicit arrow affordance, matching the embedded thread cards, rather than
 // the whole-row default. Signed-in authors get edit/delete on their own
@@ -181,36 +353,10 @@ function DiscussionRow({
   };
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <CommentRow
       aria-expanded={expanded}
-      className={cn(
-        CARD_ROW_CLASS,
-        'group/discussion focus-visible:ring-ring flex w-full cursor-pointer items-start gap-2 p-3 text-left text-sm outline-none hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2'
-      )}
-      onClick={(event) => {
-        // Interactive descendants — markdown links, the edit composer, the
-        // action buttons — handle their own clicks; only clicks on the row
-        // itself (or inert text) toggle expansion.
-        const target = event.target as HTMLElement;
-        if (
-          target !== event.currentTarget &&
-          target.closest('a, button, form') != null
-        ) {
-          return;
-        }
-        handleRowClick(event, toggleExpanded);
-      }}
-      onKeyDown={(event) => {
-        if (
-          (event.key === 'Enter' || event.key === ' ') &&
-          event.target === event.currentTarget
-        ) {
-          event.preventDefault();
-          toggleExpanded();
-        }
-      }}
+      className="group/discussion"
+      onActivate={toggleExpanded}
     >
       <CommentAuthorAvatar author={comment.author} className="size-5" />
       <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 select-text">
@@ -253,13 +399,16 @@ function DiscussionRow({
               onEdit={(body) => actions.onEdit(comment.id, body)}
             />
           </div>
-        ) : expanded ? (
-          <MarkdownContent className="w-full" markdown={comment.body} />
         ) : (
           preview !== '' && (
-            <p className="text-foreground line-clamp-6 w-full break-words whitespace-pre-wrap">
-              {preview}
-            </p>
+            <DeferredMarkdown
+              className={
+                expanded
+                  ? SIDEBAR_MARKDOWN_CLASS
+                  : COLLAPSED_SIDEBAR_MARKDOWN_CLASS
+              }
+              markdown={preview}
+            />
           )
         )}
         {moderation.isConfirmingDelete && actions != null && (
@@ -268,7 +417,7 @@ function DiscussionRow({
           </div>
         )}
       </div>
-    </div>
+    </CommentRow>
   );
 }
 
@@ -320,6 +469,8 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
   onSelectComment,
   onSelectItem,
 }: DiffsHubCommentsListProps) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const observeRow = useRowVisibilityObserver(scrollerRef);
   // On pull-request views the Conversation section always renders (its
   // composer is how PR-level comments get written), so the empty state only
   // applies when there is nothing to show AND nothing to write.
@@ -343,118 +494,114 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
   }
 
   return (
-    <div
-      className={cn(
-        'cv-mini-scrollbar',
-        'h-full min-h-0 overflow-auto overscroll-contain pl-3 pb-3 pr-[max(0px,calc(12px-var(--cv-mini-gutter-vertical)))]'
-      )}
-    >
-      {showConversation && (
-        <section>
-          <div className="text-muted-foreground p-3 pb-2 text-sm font-medium">
-            Conversation
-          </div>
-          <div className={cn(CARD_BORDER_CLASS, 'rounded-lg border')}>
-            {discussion.map((comment) => (
-              <DiscussionRow
-                key={`${comment.kind}-${comment.id}`}
-                actions={discussionActions}
-                comment={comment}
-              />
-            ))}
-            {discussionActions != null && (
-              <DiscussionComposerRow actions={discussionActions} />
-            )}
-          </div>
-        </section>
-      )}
-      {commentSections.map((section) => (
-        <section key={section.itemId}>
-          {onSelectItem != null ? (
-            <button
-              type="button"
-              className="text-muted-foreground hover:text-foreground focus-visible:ring-ring block w-full cursor-pointer p-3 pb-2 text-left text-sm font-medium break-all outline-none focus-visible:ring-2"
-              onClick={(event) =>
-                handleRowClick(event, () => onSelectItem(section.itemId))
-              }
-            >
-              <span className="select-text">{section.path}</span>
-            </button>
-          ) : (
-            <div className="text-muted-foreground p-3 pb-2 text-sm font-medium break-all">
-              {section.path}
+    <RowVisibilityContext value={observeRow}>
+      <div
+        ref={scrollerRef}
+        className={cn(
+          'cv-mini-scrollbar',
+          'h-full min-h-0 overflow-auto overscroll-contain pl-3 pb-3 pr-[max(0px,calc(12px-var(--cv-mini-gutter-vertical)))]'
+        )}
+      >
+        {showConversation && (
+          <section>
+            <div className="text-muted-foreground p-3 pb-2 text-sm font-medium">
+              Conversation
             </div>
-          )}
-          <div className={cn(CARD_BORDER_CLASS, 'rounded-lg border')}>
-            {section.comments.map((comment) => (
+            <div className={cn(CARD_BORDER_CLASS, 'rounded-lg border')}>
+              {discussion.map((comment) => (
+                <DiscussionRow
+                  key={`${comment.kind}-${comment.id}`}
+                  actions={discussionActions}
+                  comment={comment}
+                />
+              ))}
+              {discussionActions != null && (
+                <DiscussionComposerRow actions={discussionActions} />
+              )}
+            </div>
+          </section>
+        )}
+        {commentSections.map((section) => (
+          <section key={section.itemId}>
+            {onSelectItem != null ? (
               <button
-                key={comment.key}
                 type="button"
-                // No `transition-colors` here: the bg / border / text
-                // colors are driven by CSS variables that flip the entire
-                // chrome on every theme swap, so a smooth color transition
-                // on each card visibly trails the rest of the UI (header,
-                // file tree, diff body) which snap instantly. Hover bg is
-                // snappy enough without an interpolated transition.
-                className={cn(
-                  CARD_ROW_CLASS,
-                  'focus-visible:ring-ring flex w-full cursor-pointer items-start gap-2 p-3 text-left text-sm outline-none hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2'
-                )}
+                className="text-muted-foreground hover:text-foreground focus-visible:ring-ring block w-full cursor-pointer p-3 pb-2 text-left text-sm font-medium break-all outline-none focus-visible:ring-2"
                 onClick={(event) =>
-                  handleRowClick(event, () => onSelectComment?.(comment))
+                  handleRowClick(event, () => onSelectItem(section.itemId))
                 }
               >
-                <CommentAuthorAvatar
-                  author={comment.author}
-                  className="size-5"
-                />
-                <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 select-text">
-                  <div className="text-muted-foreground flex flex-wrap gap-x-1">
-                    <span className="text-foreground font-medium">
-                      @{comment.author.login}
-                    </span>
-                    <span>commented on</span>
-                    <span
-                      className={cn(
-                        getCommentLineClassName(comment.side, comment.lineType),
-                        'font-medium'
-                      )}
-                    >
-                      {getCommentLineLabel(
-                        comment.side,
-                        comment.lineNumber,
-                        comment.lineType
-                      )}
-                    </span>
-                  </div>
-                  <p className="text-foreground w-full break-words whitespace-pre-wrap">
-                    {comment.message}
-                  </p>
-                  {comment.replyCount > 0 && (
-                    <div className="text-muted-foreground mt-1 flex items-center gap-1.5 text-[12px]">
-                      <span className="flex -space-x-1.5">
-                        {comment.participants.slice(0, 4).map((participant) => (
-                          <CommentAuthorAvatar
-                            key={participant.login}
-                            author={participant}
-                            className="size-4 text-[8px] ring-2 ring-[var(--diffshub-card-bg,var(--color-card))]"
-                          />
-                        ))}
+                <span className="select-text">{section.path}</span>
+              </button>
+            ) : (
+              <div className="text-muted-foreground p-3 pb-2 text-sm font-medium break-all">
+                {section.path}
+              </div>
+            )}
+            <div className={cn(CARD_BORDER_CLASS, 'rounded-lg border')}>
+              {section.comments.map((comment) => (
+                <CommentRow
+                  key={comment.key}
+                  onActivate={() => onSelectComment?.(comment)}
+                >
+                  <CommentAuthorAvatar
+                    author={comment.author}
+                    className="size-5"
+                  />
+                  <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 select-text">
+                    <div className="text-muted-foreground flex flex-wrap gap-x-1">
+                      <span className="text-foreground font-medium">
+                        @{comment.author.login}
                       </span>
-                      <span>
-                        {comment.replyCount}{' '}
-                        {comment.replyCount === 1 ? 'reply' : 'replies'}
-                        {comment.participants.length > 1 &&
-                          ` · ${comment.participants.length} participants`}
+                      <span>commented on</span>
+                      <span
+                        className={cn(
+                          getCommentLineClassName(
+                            comment.side,
+                            comment.lineType
+                          ),
+                          'font-medium'
+                        )}
+                      >
+                        {getCommentLineLabel(
+                          comment.side,
+                          comment.lineNumber,
+                          comment.lineType
+                        )}
                       </span>
                     </div>
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
-        </section>
-      ))}
-    </div>
+                    <DeferredMarkdown
+                      className={COLLAPSED_SIDEBAR_MARKDOWN_CLASS}
+                      markdown={comment.message}
+                    />
+                    {comment.replyCount > 0 && (
+                      <div className="text-muted-foreground mt-1 flex items-center gap-1.5 text-[12px]">
+                        <span className="flex -space-x-1.5">
+                          {comment.participants
+                            .slice(0, 4)
+                            .map((participant) => (
+                              <CommentAuthorAvatar
+                                key={participant.login}
+                                author={participant}
+                                className="size-4 text-[8px] ring-2 ring-[var(--diffshub-card-bg,var(--color-card))]"
+                              />
+                            ))}
+                        </span>
+                        <span>
+                          {comment.replyCount}{' '}
+                          {comment.replyCount === 1 ? 'reply' : 'replies'}
+                          {comment.participants.length > 1 &&
+                            ` · ${comment.participants.length} participants`}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </CommentRow>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    </RowVisibilityContext>
   );
 });

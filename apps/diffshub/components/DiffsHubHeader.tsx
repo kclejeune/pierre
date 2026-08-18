@@ -34,6 +34,7 @@ import {
 } from 'react';
 
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
+import { DiffRefsBadge } from './DiffRefsBadge';
 import { DiffsHubLogo } from './DiffsHubLogo';
 import { DiffUrlForm } from './DiffUrlForm';
 import { useChromeThemeProps } from './useChromeThemeProps';
@@ -50,6 +51,7 @@ import { GitHubTokenControl } from '@/components/GitHubTokenControl';
 import { Switch } from '@/components/Switch';
 import { docsThemeCatalog } from '@/components/themeCatalog';
 import { cn } from '@/lib/cn';
+import type { DiffRefs } from '@/lib/diffRefs';
 import { isRepoPinned } from '@/lib/pinnedRepos';
 import { diffshubChromeMapping } from '@/lib/theme/diffshubChromeMapping';
 import { getDropdownThemeStyle } from '@/lib/theme/dropdownChromeStyle';
@@ -67,6 +69,10 @@ interface HeaderProps {
   colorMode: ColorMode;
   darkThemeName: DarkThemeName;
   diffIndicators: DiffIndicators;
+  // The base/head refs the diff compares, shown beside the URL so the
+  // direction of the comparison is explicit. Absent for single commits,
+  // arbitrary-domain patches, and pulls whose metadata has not loaded.
+  diffRefs?: DiffRefs | null;
   diffStyle: 'split' | 'unified';
   fileTreeAvailable: boolean;
   fileTreeOverlayOpen: boolean;
@@ -110,6 +116,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
   colorMode,
   darkThemeName,
   diffIndicators,
+  diffRefs,
   diffStyle,
   fileTreeAvailable,
   fileTreeOverlayOpen,
@@ -174,12 +181,14 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
       >
         <DiffsHubLogo />
       </Link>
-      <DiffUrlForm
-        className="order-last md:order-none md:mr-auto"
-        initialUrl={initialUrl}
-        onUrlChange={setCurrentUrl}
-        inputClassName="w-full md:w-auto"
-      />
+      <div className="order-last flex w-full min-w-0 flex-col gap-2 md:order-none md:mr-auto md:w-auto md:flex-row md:items-center md:gap-3">
+        <DiffUrlForm
+          initialUrl={initialUrl}
+          onUrlChange={setCurrentUrl}
+          inputClassName="w-full md:w-auto"
+        />
+        {diffRefs != null && <DiffRefsBadge refs={diffRefs} />}
+      </div>
       <div className="flex w-full items-center justify-between gap-2 md:w-auto md:justify-end">
         <Button
           type="button"

@@ -128,10 +128,30 @@ export function resolveDiffHeadRef(source: GitHubDiffSource): string | null {
     case 'commit':
       return source.sha;
     case 'compare': {
-      const head = source.range.split(/\.{2,3}/).pop() ?? '';
-      return head === '' || head.includes(':') ? null : head;
+      const { head } = splitCompareRange(source.range);
+      return head === '' || isForkQualifiedRef(head) ? null : head;
     }
   }
+}
+
+// Splits GitHub's `base...head` (or two-dot `base..head`) compare range. A
+// range with no separator is GitHub's "compare against the default branch"
+// shorthand: the whole string is the head and the base is null.
+export function splitCompareRange(range: string): {
+  base: string | null;
+  head: string;
+} {
+  const match = /^(.*?)\.{2,3}(.*)$/.exec(range);
+  if (match == null) {
+    return { base: null, head: range };
+  }
+  return { base: match[1] === '' ? null : match[1], head: match[2] ?? '' };
+}
+
+// `owner:branch` compare refs name a branch in a fork; the file browser has
+// no way to resolve them against the source repository.
+export function isForkQualifiedRef(ref: string): boolean {
+  return ref.includes(':');
 }
 
 // Splits a `ref/path` URL remainder when the ref's shape is recognizable

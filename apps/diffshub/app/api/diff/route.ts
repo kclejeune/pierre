@@ -4,6 +4,7 @@ import {
   encodeURLSegment,
   type GitHubDiffSource,
   type GitHubRepo,
+  isSameGitHubRepo,
   parseGitHubDiffSource,
 } from '@/lib/githubDiffSource';
 import {
@@ -778,13 +779,6 @@ function readRepoFullName(
     owner: fullName.slice(0, separatorIndex),
     repo: fullName.slice(separatorIndex + 1),
   };
-}
-
-function isSameGitHubRepo(a: GitHubRepo, b: GitHubRepo): boolean {
-  return (
-    a.owner.toLowerCase() === b.owner.toLowerCase() &&
-    a.repo.toLowerCase() === b.repo.toLowerCase()
-  );
 }
 
 function readStringPath(

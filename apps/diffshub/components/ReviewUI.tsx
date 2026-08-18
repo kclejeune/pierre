@@ -31,6 +31,7 @@ import { useIsWorkerPoolReadyOrDisabled } from './useIsWorkerPoolReadyOrDisabled
 import { usePatchLoader } from './usePatchLoader';
 import { usePendingReviewComments } from './usePendingReviewComments';
 import { usePullEditSession } from './usePullEditSession';
+import { usePullInfo } from './usePullInfo';
 import { usePullReviewThreads } from './usePullReviewThreads';
 import { useThemeCycle } from './useThemeCycle';
 import {
@@ -43,6 +44,7 @@ import {
   parseCollapsePatterns,
   saveCollapsePatternsText,
 } from '@/lib/collapsePatterns';
+import { describeDiffRefs } from '@/lib/diffRefs';
 import {
   loadDisplaySettings,
   saveDisplaySettings,
@@ -281,6 +283,21 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     path,
     viewerRef,
   });
+
+  // What the diff compares, for the header's base/head display. Compare
+  // ranges carry both refs in the URL; pulls need their metadata fetched.
+  const pullInfo = usePullInfo({
+    getGitHubToken,
+    githubTokenVersion,
+    pullRequest,
+    tokenHydrated: githubTokenHydrated,
+    viewerKey,
+  });
+  const diffRefs = useMemo(
+    () =>
+      githubSource == null ? null : describeDiffRefs(githubSource, pullInfo),
+    [githubSource, pullInfo]
+  );
 
   const editSession = usePullEditSession({
     getGitHubToken,
@@ -781,6 +798,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
           colorMode={colorMode}
           darkThemeName={darkThemeName}
           diffIndicators={diffIndicators}
+          diffRefs={diffRefs}
           diffStyle={diffStyle}
           initialUrl={initialUrl}
           lightThemeName={lightThemeName}

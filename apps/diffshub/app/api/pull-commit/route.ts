@@ -16,7 +16,7 @@ import {
   updateRef,
   waitForPullHead,
 } from '@/lib/githubCommitServer';
-import { encodeURLSegment } from '@/lib/githubDiffSource';
+import { encodeURLSegment, isSameGitHubRepo } from '@/lib/githubDiffSource';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
 
@@ -84,7 +84,7 @@ export async function GET(request: NextRequest) {
     if (
       !canPush &&
       maintainerCanModify &&
-      !isSameRepo(refs.headRepo, refs.baseRepo)
+      !isSameGitHubRepo(refs.headRepo, refs.baseRepo)
     ) {
       canPush = await fetchViewerCanPush(refs.baseRepo, token);
     }
@@ -172,13 +172,6 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return commitErrorResponse(error);
   }
-}
-
-function isSameRepo(a: GitRepoRef, b: GitRepoRef): boolean {
-  return (
-    a.owner.toLowerCase() === b.owner.toLowerCase() &&
-    a.repo.toLowerCase() === b.repo.toLowerCase()
-  );
 }
 
 function validateCommitBody(body: PullCommitRequestBody): string | undefined {

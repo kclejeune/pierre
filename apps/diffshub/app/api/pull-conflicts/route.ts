@@ -6,6 +6,7 @@ import {
   createCommit,
   createTree,
   createTreeEntryResolver,
+  fetchBranchTipSha,
   fetchGitHubJSON,
   fetchPullData,
   getCommitTreeSha,
@@ -15,6 +16,7 @@ import {
   parsePullRefs,
   type PullRefs,
   updateRef,
+  waitForPullHead,
 } from '@/lib/githubCommitServer';
 import { createGitHubRawAPIHeaders } from '@/lib/githubDiffFileServer';
 import { encodePath, encodeURLSegment } from '@/lib/githubDiffSource';
@@ -79,7 +81,7 @@ export async function GET(request: NextRequest) {
       return createJSONResponse({ conflicted: false });
     }
     const context = await buildMergeContext(
-      parsePullRefs(data.payload, repoRef),
+      await resolveLiveBaseTip(parsePullRefs(data.payload, repoRef), token),
       token
     );
     const files: {
@@ -184,9 +186,9 @@ export async function POST(request: NextRequest) {
 
   try {
     const repoRef = { owner: body.owner, repo: body.repo };
-    const refs = parsePullRefs(
-      await fetchPullData(repoRef, body.pull, token),
-      repoRef
+    const refs = await resolveLiveBaseTip(
+      parsePullRefs(await fetchPullData(repoRef, body.pull, token), repoRef),
+      token
     );
     if (
       refs.headSha !== body.expectedHeadSha ||
@@ -298,6 +300,9 @@ export async function POST(request: NextRequest) {
       treeSha,
     });
     await updateRef(context.headRepo, token, context.headRef, commitSha);
+    // Hold the response until GitHub has picked up the new head so the
+    // client's reload sees the merged diff rather than the pre-merge one.
+    await waitForPullHead(repoRef, body.pull, commitSha, token);
     return createJSONResponse({
       commit: { sha: commitSha },
       headSha: commitSha,
@@ -327,6 +332,18 @@ async function fetchPullDataWithMergeable(
     }
     await new Promise((resolve) => setTimeout(resolve, 800));
   }
+}
+
+// Swaps the pull payload's snapshot `base.sha` for the branch's live tip;
+// see fetchBranchTipSha for why the payload value cannot be trusted.
+async function resolveLiveBaseTip(
+  refs: PullRefs,
+  token: string | undefined
+): Promise<PullRefs> {
+  return {
+    ...refs,
+    baseSha: await fetchBranchTipSha(refs.baseRepo, refs.baseRef, token),
+  };
 }
 
 async function buildMergeContext(

@@ -9,8 +9,8 @@ import { createJSONResponse } from './jsonResponse';
 // Git Data API helpers for writing commits: blob/tree/commit creation and the
 // non-force ref update that lands them. Used by the pull-commit and
 // pull-conflicts routes. Every function takes an explicit token — writes are
-// always authored as the requester, never the deployment fallback token — and
-// an injectable fetch so the request/response contracts are unit-testable.
+// always authored as the requester — and an injectable fetch so the
+// request/response contracts are unit-testable.
 
 type ServerFetch = (
   input: Parameters<typeof fetch>[0],

@@ -6,7 +6,6 @@ import {
   createGitHubJSONHeaders,
   getGitHubEnvironment,
   rejectTokenlessRequestWhenLoginRequired,
-  resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import {
   createGitHubFailureResponse,
@@ -62,9 +61,8 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
-    // The @me qualifiers resolve to whoever the token belongs to, so the
-    // deployment fallback token must never stand in here: it would silently
-    // return the fallback identity's pull requests to anonymous viewers.
+    // The @me qualifiers resolve to whoever the token belongs to, so there
+    // is nothing to list without one.
     const token = parseBearerToken(request.headers.get('authorization'));
     if (token == null) {
       return createJSONResponse(
@@ -112,7 +110,7 @@ export async function GET(request: NextRequest) {
           state: 'open',
         }
       ),
-      resolveRequestGitHubToken(request)
+      parseBearerToken(request.headers.get('authorization'))
     );
     if (result.error != null) {
       return result.error;

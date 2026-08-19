@@ -11,7 +11,6 @@ import {
 import {
   createGitHubAPIURL as createEnvironmentAPIURL,
   createGitHubJSONHeaders,
-  getFallbackGitHubToken,
   getGitHubEnvironment,
   GITHUB_API_VERSION,
   GITHUB_USER_AGENT,
@@ -144,9 +143,8 @@ export function clearGitHubDiffFileServerCache(): void {
 
 // Streams a repository file (e.g. an image referenced by a rendered markdown
 // document) at the diff's resolved ref for the given side. Serves <img>
-// requests, which cannot carry the user's bearer token, so authentication is
-// limited to the server fallback token — private-repo assets need
-// DIFFSHUB_GITHUB_TOKEN configured.
+// requests; GitHubAssetImage forwards the viewer's bearer token when one is
+// saved, and the fetch is anonymous otherwise (public repos only).
 export async function loadGitHubDiffAssetResponse(
   request: {
     file: string;
@@ -464,8 +462,8 @@ async function fetchGitHubFile(
 }
 
 // Raw file contents at a ref: the contents API when acting with a request
-// token (private-repo access), the raw host with the fallback token
-// otherwise. Also consumed by the repo browser's file loader.
+// token (private-repo access), the raw host anonymously otherwise. Also
+// consumed by the repo browser's file loader.
 export async function fetchGitHubFileContents(
   repoRef: GitHubRepoRef,
   path: string,
@@ -490,7 +488,7 @@ export async function fetchGitHubFileContents(
 
   const url = `${getGitHubEnvironment().rawURL}/${encodeURLSegment(repoRef.owner)}/${encodeURLSegment(repoRef.repo)}/${encodeURLSegment(repoRef.ref)}/${encodePath(path)}`;
   const response = await fetcher(url, {
-    headers: createGitHubRawHeaders(options.token ?? getFallbackGitHubToken()),
+    headers: createGitHubRawHeaders(options.token),
   });
   await assertGitHubResponseOK(
     response,
@@ -505,7 +503,7 @@ async function fetchGitHubJSON(
   options: GitHubDiffFileServerOptions
 ): Promise<unknown> {
   const response = await fetcher(url, {
-    headers: createGitHubJSONHeaders(options.token ?? getFallbackGitHubToken()),
+    headers: createGitHubJSONHeaders(options.token),
   });
   await assertGitHubResponseOK(response, `GitHub API ${url}`);
   return response.json();

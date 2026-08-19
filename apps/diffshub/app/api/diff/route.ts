@@ -12,6 +12,7 @@ import {
   getGitHubEnvironment,
   GITHUB_API_VERSION,
   GITHUB_USER_AGENT,
+  isConfiguredGitHubInstanceURL,
   isTokenlessRequestBlocked,
   LOGIN_REQUIRED_MESSAGE,
 } from '@/lib/githubEnvironment';
@@ -172,10 +173,17 @@ function resolvePatchURLInput(
 
   // Absolute URLs on the configured GitHub instance are treated as GitHub
   // paths. Origin comparison (not hostname) keeps custom GHES ports working
-  // while still rejecting lookalike origins.
+  // while still rejecting lookalike origins. The instance root's own path
+  // prefix (if any) is stripped so it is not doubled when the path is joined
+  // back onto webURL.
   const environment = getGitHubEnvironment();
-  if (parsedURL.origin === environment.webURL) {
-    return resolveGitHubPatchRequest(parsedURL.pathname, token);
+  if (isConfiguredGitHubInstanceURL(parsedURL.href)) {
+    const rootPath = new URL(environment.webURL).pathname.replace(/\/$/, '');
+    const instancePath =
+      rootPath !== '' && parsedURL.pathname.startsWith(`${rootPath}/`)
+        ? parsedURL.pathname.slice(rootPath.length)
+        : parsedURL.pathname;
+    return resolveGitHubPatchRequest(instancePath, token);
   }
 
   if (!isAllowedHTTPSURL(parsedURL)) {
@@ -255,11 +263,16 @@ function resolveGitHubPatchRequest(
   return publicRequest;
 }
 
+// The authenticated retry of a web patch URL. Credentials are attached only
+// when the target is the configured GitHub instance: resolveGitHubPath can
+// answer with a third-party CDN URL for the cached example patches, and
+// forwarding a viewer's GitHub token to a host that is not their GitHub
+// instance would hand that host a working credential.
 function createAuthenticatedGitHubWebTarget(
   patchURL: string | undefined,
   token: string
 ): DirectPatchFetchTarget | undefined {
-  if (patchURL == null) {
+  if (patchURL == null || !isConfiguredGitHubInstanceURL(patchURL)) {
     return undefined;
   }
   return {
@@ -306,10 +319,20 @@ function isPatchFetchTarget(
   return target != null;
 }
 
+// Resolves a patch URL on one of the alternate (non-GitHub) patch hosts.
+//
+// These hosts are a github.com-deployment affordance. A self-hosted deployment
+// gets none of them: reaching outside the GitHub instance it was configured
+// for is unwanted egress on an internal network, and on a segmented one the
+// request would only hang on a host it cannot route to anyway.
 function resolveDomainPatchURL(
   domain: string,
   path: string
 ): string | undefined {
+  if (!getGitHubEnvironment().isGitHubDotCom) {
+    return undefined;
+  }
+
   const domainRule = getHiddenPatchDomainRule(domain);
   if (domainRule == null) {
     return undefined;
@@ -713,7 +736,7 @@ async function getGitHubAuthFailureHint(
     return ` GitHub accepted the token but blocked access to ${source.repo.owner}/${source.repo.repo}. Check SSO authorization, rate limits, or token policy.`;
   }
   if (repoStatus === 404) {
-    return ` GitHub accepted the token, but it cannot access ${source.repo.owner}/${source.repo.repo}. For a fine-grained token, select this repository and grant Contents: read and Pull requests: read.`;
+    return ` GitHub accepted the token, but it cannot access ${source.repo.owner}/${source.repo.repo}. For a fine-grained token, select this repository and grant Contents: read and Pull requests: read. For GitHub App sign-in, the app must be installed on the repository's owner.`;
   }
 
   if (source.kind === 'pull') {

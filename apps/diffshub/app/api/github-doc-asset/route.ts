@@ -11,14 +11,13 @@ import { parseBearerToken } from '@/lib/parseBearerToken';
 // cannot fetch from the raw host directly (private repos and GHES need auth
 // that <img> requests cannot carry) — so the server fetches them at the
 // diff's resolved ref. Signed-in viewers fetch through here with their own
-// Bearer token (DocAssetImage adds the header); without one the server falls
-// back to its fallback token so anonymous visitors still see doc images.
-// The response headers below keep even a crafted file inert on this origin.
+// Bearer token (DocAssetImage adds the header); without one the fetch is
+// anonymous, which on github.com still serves public-repo images. The
+// response headers below keep even a crafted file inert on this origin.
 
-// Tokenless requests are served with the operator's fallback token, but this
-// endpoint can reach any file at the diff's refs — not just what the diff
-// shows. Restricting anonymous fetches to the image types a rendered doc
-// embeds keeps the fallback token from becoming an arbitrary-file reader for
+// This endpoint can reach any file at the diff's refs — not just what the
+// diff shows. Restricting anonymous fetches to the image types a rendered doc
+// embeds keeps it from becoming a general-purpose file reader for
 // unauthenticated visitors; signed-in viewers read with their own access.
 const ANONYMOUS_IMAGE_FILE_PATTERN =
   /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i;

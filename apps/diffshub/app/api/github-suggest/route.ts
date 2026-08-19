@@ -5,18 +5,18 @@ import {
   createGitHubJSONHeaders,
   getGitHubEnvironment,
   rejectTokenlessRequestWhenLoginRequired,
-  resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import {
   createGitHubFailureResponse,
   createUnreachableResponse,
 } from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
+import { parseBearerToken } from '@/lib/parseBearerToken';
 
 // Autocomplete data for the diff URL bar: repository name search while the
 // user types "owner/rep…", and the open pull requests of a repo once one is
-// selected. Both proxy the GitHub API with the viewer's token (fallback token
-// otherwise) so the browser never talks to the instance cross-origin.
+// selected. Both proxy the GitHub API with the viewer's token so the browser
+// never talks to the instance cross-origin.
 
 export async function GET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
   const params = request.nextUrl.searchParams;
   const kind = params.get('kind');
-  const token = resolveRequestGitHubToken(request);
+  const token = parseBearerToken(request.headers.get('authorization'));
   const environment = getGitHubEnvironment();
 
   if (kind === 'repos') {

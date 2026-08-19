@@ -1,14 +1,12 @@
 import { type NextRequest } from 'next/server';
 
-import {
-  rejectTokenlessRequestWhenLoginRequired,
-  resolveRequestGitHubToken,
-} from '@/lib/githubEnvironment';
+import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
 import {
   loadRepoBrowserFile,
   repoBrowserErrorResponse,
 } from '@/lib/githubRepoBrowserServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
+import { parseBearerToken } from '@/lib/parseBearerToken';
 
 // Fetches one file's contents for the browse view, at the commit sha the
 // tree listing resolved (so contents always match the listing).
@@ -41,7 +39,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const payload = await loadRepoBrowserFile({ owner, repo }, ref, file, {
-      token: resolveRequestGitHubToken(request),
+      token: parseBearerToken(request.headers.get('authorization')),
     });
     // The tree listing pins `ref` to a commit sha, so the contents can never
     // change — let the browser cache them for as long as it likes.

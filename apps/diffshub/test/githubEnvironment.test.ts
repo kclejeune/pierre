@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import {
   createGitHubAPIURL,
+  isConfiguredGitHubInstanceURL,
+  isLoginRequired,
   rejectTokenlessRequestWhenLoginRequired,
+  resetGitHubEnvironmentCache,
   resolveGitHubEnvironment,
-  resolveRequestGitHubToken,
 } from '../lib/githubEnvironment';
 
 describe('resolveGitHubEnvironment', () => {
@@ -85,20 +87,16 @@ function createRequest(authorization?: string): {
   };
 }
 
-describe('require-login token policy', () => {
+describe('require-login policy', () => {
   const savedEnv: Record<string, string | undefined> = {};
-  const ENV_KEYS = [
-    'DIFFSHUB_REQUIRE_LOGIN',
-    'DIFFSHUB_GITHUB_TOKEN',
-    'GITHUB_TOKEN',
-    'GH_TOKEN',
-  ];
+  const ENV_KEYS = ['DIFFSHUB_REQUIRE_LOGIN', 'DIFFSHUB_GITHUB_URL'];
 
   beforeEach(() => {
     for (const key of ENV_KEYS) {
       savedEnv[key] = process.env[key];
       delete process.env[key];
     }
+    resetGitHubEnvironmentCache();
   });
 
   afterEach(() => {
@@ -109,19 +107,16 @@ describe('require-login token policy', () => {
         process.env[key] = savedEnv[key];
       }
     }
+    resetGitHubEnvironmentCache();
   });
 
-  test('tokenless requests get the fallback token on open deployments', () => {
-    process.env.DIFFSHUB_GITHUB_TOKEN = 'server-token';
-    expect(resolveRequestGitHubToken(createRequest())).toBe('server-token');
+  test('github.com deployments leave the gate open by default', () => {
+    expect(isLoginRequired()).toBe(false);
     expect(rejectTokenlessRequestWhenLoginRequired(createRequest())).toBeNull();
   });
 
-  test('require-login refuses the fallback token for tokenless requests', () => {
-    process.env.DIFFSHUB_GITHUB_TOKEN = 'server-token';
+  test('require-login rejects tokenless requests', () => {
     process.env.DIFFSHUB_REQUIRE_LOGIN = '1';
-    expect(resolveRequestGitHubToken(createRequest())).toBeUndefined();
-
     const rejection = rejectTokenlessRequestWhenLoginRequired(createRequest());
     expect(rejection?.status).toBe(401);
   });
@@ -129,12 +124,34 @@ describe('require-login token policy', () => {
   test('require-login passes requests carrying their own bearer token', () => {
     process.env.DIFFSHUB_REQUIRE_LOGIN = 'true';
     const request = createRequest('Bearer user-token');
-    expect(resolveRequestGitHubToken(request)).toBe('user-token');
     expect(rejectTokenlessRequestWhenLoginRequired(request)).toBeNull();
   });
 
-  test('unset and falsy DIFFSHUB_REQUIRE_LOGIN leave the gate open', () => {
+  test('falsy DIFFSHUB_REQUIRE_LOGIN leaves the gate open', () => {
     process.env.DIFFSHUB_REQUIRE_LOGIN = '0';
+    expect(rejectTokenlessRequestWhenLoginRequired(createRequest())).toBeNull();
+  });
+
+  // A self-hosted instance is private by definition: there is nothing an
+  // anonymous caller could read, so the gate defaults on and turns the wall
+  // of upstream 401s into a sign-in prompt.
+  test('self-hosted deployments require login by default', () => {
+    process.env.DIFFSHUB_GITHUB_URL = 'https://ghe.corp.dev';
+    expect(isLoginRequired()).toBe(true);
+    expect(
+      rejectTokenlessRequestWhenLoginRequired(createRequest())?.status
+    ).toBe(401);
+    expect(
+      rejectTokenlessRequestWhenLoginRequired(
+        createRequest('Bearer user-token')
+      )
+    ).toBeNull();
+  });
+
+  test('an explicit DIFFSHUB_REQUIRE_LOGIN=0 opens a self-hosted gate', () => {
+    process.env.DIFFSHUB_GITHUB_URL = 'https://ghe.corp.dev';
+    process.env.DIFFSHUB_REQUIRE_LOGIN = 'false';
+    expect(isLoginRequired()).toBe(false);
     expect(rejectTokenlessRequestWhenLoginRequired(createRequest())).toBeNull();
   });
 });
@@ -159,5 +176,68 @@ describe('createGitHubAPIURL', () => {
     ).toBe(
       'https://api.github.com/repos/owner/repo/contents/src/a.ts?ref=abc123'
     );
+  });
+});
+
+// The gate every outbound request must clear before it may carry a viewer's
+// token. The CDN case is the one that matters: resolveGitHubPath answers with
+// diffshub.pierrecdn.com for the cached example patches, and the authenticated
+// retry of one of those must not inherit the token.
+describe('isConfiguredGitHubInstanceURL', () => {
+  const savedURL = process.env.DIFFSHUB_GITHUB_URL;
+
+  afterEach(() => {
+    if (savedURL == null) {
+      delete process.env.DIFFSHUB_GITHUB_URL;
+    } else {
+      process.env.DIFFSHUB_GITHUB_URL = savedURL;
+    }
+    resetGitHubEnvironmentCache();
+  });
+
+  function useInstance(url?: string): void {
+    if (url == null) {
+      delete process.env.DIFFSHUB_GITHUB_URL;
+    } else {
+      process.env.DIFFSHUB_GITHUB_URL = url;
+    }
+    resetGitHubEnvironmentCache();
+  }
+
+  test('accepts URLs on the configured instance', () => {
+    useInstance();
+    expect(
+      isConfiguredGitHubInstanceURL('https://github.com/owner/repo/pull/1.diff')
+    ).toBe(true);
+
+    useInstance('https://ghe.corp.dev');
+    expect(
+      isConfiguredGitHubInstanceURL('https://ghe.corp.dev/owner/repo/pull/1')
+    ).toBe(true);
+  });
+
+  test('rejects the cached-patch CDN and other foreign hosts', () => {
+    useInstance();
+    expect(
+      isConfiguredGitHubInstanceURL(
+        'https://diffshub.pierrecdn.com/patches/30412.diff'
+      )
+    ).toBe(false);
+    expect(
+      isConfiguredGitHubInstanceURL(
+        'https://patch-diff.githubusercontent.com/raw/o/r/pull/1.diff'
+      )
+    ).toBe(false);
+    expect(
+      isConfiguredGitHubInstanceURL('https://github.com.evil.example/x')
+    ).toBe(false);
+  });
+
+  test('matches a path-prefixed root by origin, and rejects unparseable input', () => {
+    useInstance('https://ghe.corp.dev/github');
+    expect(
+      isConfiguredGitHubInstanceURL('https://ghe.corp.dev/owner/repo/pull/1')
+    ).toBe(true);
+    expect(isConfiguredGitHubInstanceURL('not a url')).toBe(false);
   });
 });

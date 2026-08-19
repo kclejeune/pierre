@@ -25,6 +25,21 @@ describe('sanitizeReturnTo', () => {
     expect(sanitizeReturnTo('')).toBe('/');
     expect(sanitizeReturnTo(null)).toBe('/');
   });
+
+  // The URL parser strips every ASCII tab, LF, and CR before parsing, so each
+  // of these loads as https://evil.example despite starting with one slash.
+  test('rejects targets whitespace turns protocol-relative', () => {
+    expect(sanitizeReturnTo('/\n/evil.example')).toBe('/');
+    expect(sanitizeReturnTo('/\r/evil.example')).toBe('/');
+    expect(sanitizeReturnTo('/\t/evil.example')).toBe('/');
+    expect(sanitizeReturnTo('/\n\\evil.example')).toBe('/');
+    expect(sanitizeReturnTo('java\nscript:alert(1)')).toBe('/');
+  });
+
+  test('normalizes a surviving path to its resolved form', () => {
+    expect(sanitizeReturnTo('/owner/repo/../pull/1')).toBe('/owner/pull/1');
+    expect(sanitizeReturnTo('/')).toBe('/');
+  });
 });
 
 describe('OAuth state round trip', () => {

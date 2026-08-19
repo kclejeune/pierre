@@ -24,7 +24,6 @@ import {
   createGitHubAPIURL,
   getGitHubEnvironment,
   rejectTokenlessRequestWhenLoginRequired,
-  resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
@@ -40,7 +39,7 @@ import {
 // GET detects whether the pull conflicts with its base and, if so, computes
 // the three-way merge server-side: merge base via the compare API, diff3 per
 // both-changed file, and git-style conflict markers for the files needing a
-// human. Reads may use the deployment fallback token.
+// human.
 //
 // POST commits the merge: it re-verifies both branch tips, re-runs the merge
 // plan (client-resolved contents are accepted only for genuinely conflicted
@@ -72,7 +71,7 @@ export async function GET(request: NextRequest) {
       { status: 400 }
     );
   }
-  const token = resolveRequestGitHubToken(request);
+  const token = parseBearerToken(request.headers.get('authorization'));
 
   try {
     const repoRef = { owner, repo };

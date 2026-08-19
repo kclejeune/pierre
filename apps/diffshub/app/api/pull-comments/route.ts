@@ -6,7 +6,6 @@ import {
   getGitHubEnvironment,
   type GitHubEnvironment,
   rejectTokenlessRequestWhenLoginRequired,
-  resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import {
   createGitHubFailureResponse,
@@ -40,10 +39,9 @@ import type {
 // read-only here: GitHub only permits deleting pending reviews, and editing
 // them goes through a different review-scoped endpoint.
 //
-// Reads may fall back to the server-side token (same as diff loading) so
-// public-repo threads render for anonymous visitors. Writes always require
-// the requester's own token — the server token must never author, edit, or
-// delete comments on a visitor's behalf.
+// Reads act with the requester's token when one is sent and anonymously
+// otherwise (public-repo threads on github.com). Writes always require the
+// requester's own token.
 
 const MAX_COMMENT_PAGES = 10;
 const PER_PAGE = 100;
@@ -65,7 +63,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const token = resolveRequestGitHubToken(request);
+  const token = parseBearerToken(request.headers.get('authorization'));
   const environment = getGitHubEnvironment();
 
   // Review comments are the core payload — their failures fail the request.

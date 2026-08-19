@@ -1,15 +1,13 @@
 import { type NextRequest } from 'next/server';
 
-import {
-  rejectTokenlessRequestWhenLoginRequired,
-  resolveRequestGitHubToken,
-} from '@/lib/githubEnvironment';
+import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
 import {
   readRepoParams,
   repoBrowserErrorResponse,
 } from '@/lib/githubRepoBrowserServer';
 import { loadRepoRefs } from '@/lib/githubRepoRefsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
+import { parseBearerToken } from '@/lib/parseBearerToken';
 
 // Lists a repository's default branch, branches, and tags for the /browse
 // dashboard's ref picker.
@@ -26,7 +24,9 @@ export async function GET(request: NextRequest) {
 
   try {
     return createJSONResponse(
-      await loadRepoRefs(repo, { token: resolveRequestGitHubToken(request) })
+      await loadRepoRefs(repo, {
+        token: parseBearerToken(request.headers.get('authorization')),
+      })
     );
   } catch (error) {
     return repoBrowserErrorResponse(error);

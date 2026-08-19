@@ -1,7 +1,9 @@
 // Server-side pieces of the "Sign in with GitHub" flow. DiffsHub uses the
-// standard OAuth web application flow: the login route redirects the browser
-// to GitHub's authorize page with a random state pinned in an httpOnly cookie,
-// and the callback route exchanges the returned code for a user access token.
+// standard OAuth web application flow, which is the same for an OAuth App and
+// a GitHub App (user-to-server authorization): the login route redirects the
+// browser to GitHub's authorize page with a random state pinned in an
+// httpOnly cookie, and the callback route exchanges the returned code for a
+// user access token.
 // The token is then handed to the browser through a URL fragment on the
 // /auth/github completion page (fragments never reach server logs), which
 // stores it in the same localStorage slot the manual PAT flow uses — so every
@@ -19,6 +21,9 @@ const OAUTH_COMPLETION_PATH = '/auth/github';
 
 // Read requests can see private repository diffs, so ask for classic `repo`
 // scope — OAuth apps (unlike fine-grained PATs) have no read-only repo scope.
+// GitHub Apps ignore this parameter entirely: their tokens carry the
+// permissions configured on the app (Contents and Pull requests read/write),
+// narrowed to the repositories where the app is installed.
 const OAUTH_SCOPE = 'repo';
 
 export interface OAuthStatePayload {
@@ -33,21 +38,36 @@ type OAuthFetch = (
   init?: Parameters<typeof fetch>[1]
 ) => ReturnType<typeof fetch>;
 
+// Throwaway origin the return path is resolved against. Reserved TLD (RFC
+// 2606) so it can never collide with a real deployment host.
+const RETURN_TO_PROBE_ORIGIN = 'https://diffshub.invalid';
+
 // Only allow redirecting back to a same-origin path. Anything else (absolute
 // URLs, protocol-relative //host paths, backslash tricks) falls back to the
 // home page so the OAuth flow cannot be used as an open redirect.
+//
+// The value is resolved against a throwaway origin rather than prefix-matched,
+// because the URL parser strips every ASCII tab, LF, and CR from its input
+// before parsing: "/\n/evil.example" passes a startsWith('//') test but the
+// browser still loads it as https://evil.example. Resolving first means the
+// value is judged the way the browser will actually interpret it, and the
+// return value is rebuilt from the parsed parts so only a path survives.
 export function sanitizeReturnTo(value: string | null | undefined): string {
   if (value == null || value === '') {
     return '/';
   }
-  if (
-    !value.startsWith('/') ||
-    value.startsWith('//') ||
-    value.startsWith('/\\')
-  ) {
+
+  let resolved: URL;
+  try {
+    resolved = new URL(value, RETURN_TO_PROBE_ORIGIN);
+  } catch {
     return '/';
   }
-  return value;
+  if (resolved.origin !== RETURN_TO_PROBE_ORIGIN) {
+    return '/';
+  }
+
+  return `${resolved.pathname}${resolved.search}${resolved.hash}`;
 }
 
 export function serializeOAuthState(payload: OAuthStatePayload): string {

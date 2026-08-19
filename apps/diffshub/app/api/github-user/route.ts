@@ -5,7 +5,6 @@ import {
   createGitHubJSONHeaders,
   getGitHubEnvironment,
   rejectTokenlessRequestWhenLoginRequired,
-  resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import {
   createGitHubFailureResponse,
@@ -51,7 +50,7 @@ export async function GET(request: NextRequest) {
       `/users/${encodeURIComponent(login)}`
     );
     init = {
-      headers: createGitHubJSONHeaders(resolveRequestGitHubToken(request)),
+      headers: createGitHubJSONHeaders(token),
       next: { revalidate: 300 },
     };
   }

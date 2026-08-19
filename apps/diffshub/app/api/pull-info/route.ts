@@ -5,18 +5,15 @@ import {
   fetchPullData,
   parsePullRefs,
 } from '@/lib/githubCommitServer';
-import {
-  rejectTokenlessRequestWhenLoginRequired,
-  resolveRequestGitHubToken,
-} from '@/lib/githubEnvironment';
+import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
 import { createJSONResponse } from '@/lib/jsonResponse';
+import { parseBearerToken } from '@/lib/parseBearerToken';
 import type { PullInfo } from '@/lib/pullInfoClient';
 
 // The pull request's base/head branches, with their repositories (which
 // differ for fork pulls). The patch stream carries none of this, so the
-// header's base/head display reads it here. Read-only; anonymous visitors may
-// use the deployment fallback token so public-repo pulls label their branches
-// without a login.
+// header's base/head display reads it here. Read-only; on github.com
+// anonymous visitors still get public-repo pulls labelled without a login.
 export async function GET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
@@ -38,7 +35,7 @@ export async function GET(request: NextRequest) {
     const data = await fetchPullData(
       { owner, repo },
       pull,
-      resolveRequestGitHubToken(request)
+      parseBearerToken(request.headers.get('authorization'))
     );
     const payload: PullInfo = {
       ...parsePullRefs(data, { owner, repo }),

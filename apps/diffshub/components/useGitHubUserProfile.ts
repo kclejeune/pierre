@@ -1,6 +1,6 @@
 'use client';
 
-import { storedGitHubTokenHeaders } from './useGitHubToken';
+import { storedGitHubTokenHeaders } from './githubSession';
 import { createCachedLookup } from '@/lib/cachedLookup';
 
 // A user's profile as served by /api/github-user?login=: the display name

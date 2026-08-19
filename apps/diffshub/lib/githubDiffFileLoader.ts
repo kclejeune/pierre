@@ -6,15 +6,11 @@ import type {
 } from '@pierre/diffs';
 
 import { parseGitHubDiffSource } from './githubDiffSource';
-
-type GitHubFileLoaderFetch = (
-  input: Parameters<typeof fetch>[0],
-  init?: Parameters<typeof fetch>[1]
-) => ReturnType<typeof fetch>;
+import { type PlainFetch } from './plainFetch';
 
 interface GitHubDiffFileLoaderOptions {
   endpoint?: string;
-  fetch?: GitHubFileLoaderFetch;
+  fetch?: PlainFetch;
   getAuthVersion?(): number | string;
   getToken?(): string | undefined;
 }
@@ -93,7 +89,7 @@ async function fetchLoadedDiffFiles(
   name: string,
   prevName: string | undefined,
   token: string | undefined,
-  fetcher: GitHubFileLoaderFetch
+  fetcher: PlainFetch
 ): Promise<FileDiffLoadedFiles> {
   const response = await fetcher(
     createEndpointURL(endpoint, sourcePath, type, name, prevName),

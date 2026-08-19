@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-import { storedGitHubTokenHeaders } from './useGitHubToken';
+import { storedGitHubTokenHeaders } from './githubSession';
 import {
   deriveSuggestQuery,
   filterPullSuggestions,

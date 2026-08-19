@@ -281,6 +281,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     markdownView,
     onLoadStart: handlePatchLoadStart,
     path,
+    tokenHydrated: githubTokenHydrated,
     viewerRef,
   });
 

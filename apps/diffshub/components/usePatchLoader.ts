@@ -80,6 +80,13 @@ interface UsePatchLoaderOptions {
   markdownView?: 'rendered' | 'raw';
   onLoadStart(): void;
   path: string;
+  // False until the stored GitHub token has been read (and refreshed if it
+  // had expired) after mount. The patch fetch waits for it: on a hard load the
+  // first effect pass runs before the token store has been re-read on the
+  // client, so fetching immediately would go out anonymously — and since the
+  // token version does not change when the stored token is first read, it
+  // would never be retried with credentials.
+  tokenHydrated: boolean;
   viewerRef: RefObject<CodeViewHandle<CommentMetadata> | null>;
 }
 
@@ -116,6 +123,7 @@ export function usePatchLoader({
   markdownView = 'raw',
   onLoadStart,
   path,
+  tokenHydrated,
   viewerRef,
 }: UsePatchLoaderOptions): UsePatchLoaderResult {
   const [initialItems, setInitialItems] = useState<
@@ -493,6 +501,9 @@ export function usePatchLoader({
   );
 
   useEffect(() => {
+    if (!tokenHydrated) {
+      return;
+    }
     const patchRequestKey =
       domain == null || domain === '' ? path : `${domain}${path}`;
     const patchSearchParams = new URLSearchParams({ path });
@@ -770,6 +781,7 @@ export function usePatchLoader({
     loadAttempt,
     onLoadStart,
     path,
+    tokenHydrated,
     tryApplyLineHashTarget,
     viewerRef,
   ]);

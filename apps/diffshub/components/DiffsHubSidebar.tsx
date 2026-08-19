@@ -97,6 +97,19 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
   viewerRef,
 }: DiffsHubSidebarProps) {
   const [activeTab, setActiveTab] = useState<SidebarTab>('files');
+  // The comments list mounts the first time its tab is opened and stays
+  // mounted after (so composer state survives tab switches). Rendering it
+  // from the start — hidden — meant a row, avatar, and deferred-markdown
+  // observer per review thread on large PRs before the user ever asked for
+  // the list; the tab's count badge needs only the section totals.
+  const [commentsTabVisited, setCommentsTabVisited] = useState(false);
+  const handleTabChange = (value: string) => {
+    const tab = value as SidebarTab;
+    setActiveTab(tab);
+    if (tab === 'comments') {
+      setCommentsTabVisited(true);
+    }
+  };
   let totalCommentCount = discussion.length;
   for (const section of commentSections) {
     totalCommentCount += section.comments.length;
@@ -229,7 +242,7 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
             className="mr-auto flex min-w-0 gap-3 bg-transparent md:gap-2"
             variant="ghost"
             value={activeTab}
-            onValueChange={(value) => setActiveTab(value as SidebarTab)}
+            onValueChange={handleTabChange}
           >
             <ButtonGroupItem
               value="files"
@@ -310,13 +323,15 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
             hidden={activeTab !== 'comments'}
             className="h-full min-h-0"
           >
-            <DiffsHubCommentsList
-              commentSections={commentSections}
-              discussion={discussion}
-              discussionActions={discussionActions}
-              onSelectComment={onSelectComment}
-              onSelectItem={onSelectItem}
-            />
+            {commentsTabVisited && (
+              <DiffsHubCommentsList
+                commentSections={commentSections}
+                discussion={discussion}
+                discussionActions={discussionActions}
+                onSelectComment={onSelectComment}
+                onSelectItem={onSelectItem}
+              />
+            )}
           </div>
         </div>
         <DiffsHubDiffStats

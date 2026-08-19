@@ -24,7 +24,7 @@ import {
   CommentModerationButtons,
   useCommentModeration,
 } from './CommentModeration';
-import { MarkdownContent } from './MarkdownContent';
+import { MarkdownContent, RawMarkdownFallback } from './MarkdownContent';
 import { useGitHubUser } from './useGitHubUser';
 import { cn } from '@/lib/cn';
 import { createCommentSidebarPreview } from '@/lib/commentSidebarPreview';
@@ -151,9 +151,7 @@ function DeferredMarkdown({
     return <MarkdownContent className={className} markdown={markdown} />;
   }
   return (
-    <div ref={ref} className={cn(className, 'break-words whitespace-pre-wrap')}>
-      {markdown}
-    </div>
+    <RawMarkdownFallback ref={ref} className={className} markdown={markdown} />
   );
 }
 

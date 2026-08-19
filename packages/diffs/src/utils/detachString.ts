@@ -1,11 +1,15 @@
 const stringDetachEncoder = new TextEncoder();
 const stringDetachDecoder = new TextDecoder('utf-8', { ignoreBOM: true });
-const SURROGATE_CODE_UNIT_PATTERN = /[\uD800-\uDFFF]/;
+// A surrogate code unit outside a valid high+low pair. Paired surrogates
+// (emoji) round-trip losslessly through TextEncoder/TextDecoder, so only
+// genuinely ill-formed input needs the slower JSON path.
+const LONE_SURROGATE_PATTERN =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 const STRING_DETACH_INITIAL_BUFFER_SIZE = 1024;
 let stringDetachBuffer = new Uint8Array(STRING_DETACH_INITIAL_BUFFER_SIZE);
 
-// Drops the reusable scratch buffer after a parsing run so one unusually long
-// line does not pin that peak allocation for the lifetime of the process.
+// Drops the reusable scratch buffer after a parsing run so one unusually large
+// input does not pin that peak allocation for the lifetime of the process.
 export function releaseStringDetachBuffer(): void {
   if (stringDetachBuffer.length !== STRING_DETACH_INITIAL_BUFFER_SIZE) {
     stringDetachBuffer = new Uint8Array(STRING_DETACH_INITIAL_BUFFER_SIZE);
@@ -22,20 +26,33 @@ export function detachString(value: string): string {
   // TextEncoder replaces lone surrogate code units with U+FFFD, but diff input
   // can contain arbitrary text. JSON round-tripping preserves those code units
   // while still forcing V8 to allocate a fresh backing string.
-  if (SURROGATE_CODE_UNIT_PATTERN.test(value)) {
+  if (LONE_SURROGATE_PATTERN.test(value)) {
     return JSON.parse(JSON.stringify(value)) as string;
   }
 
-  // Without surrogates, each UTF-16 code unit encodes to at most 3 UTF-8 bytes.
-  // Reusing this scratch buffer avoids allocating a new Uint8Array for every
-  // parsed line while keeping retained line strings detached from the raw patch.
-  const requiredByteLength = value.length * 3;
-  if (stringDetachBuffer.length < requiredByteLength) {
-    stringDetachBuffer = new Uint8Array(requiredByteLength);
+  // Encode into a reusable scratch buffer, then decode only the written bytes
+  // so the result is a compact, freshly allocated string. The buffer is sized
+  // for the common case (one byte per code unit) rather than the 3-byte UTF-8
+  // worst case, and grows only when the input turns out to need more: inputs
+  // are now whole files, and a 3x scratch for a multi-megabyte file would be a
+  // large transient allocation for text that is almost always ASCII.
+  if (stringDetachBuffer.length < value.length) {
+    stringDetachBuffer = new Uint8Array(value.length);
   }
-
-  const { written } = stringDetachEncoder.encodeInto(value, stringDetachBuffer);
-  // Decoding only the written bytes materializes a compact string, preserving
-  // the low post-GC memory profile that the old TextEncoder/TextDecoder path had.
+  const first = stringDetachEncoder.encodeInto(value, stringDetachBuffer);
+  let written = first.written;
+  if (first.read < value.length) {
+    // The optimistic buffer ran out. Remaining code units encode to at most 3
+    // bytes each (encodeInto never stops mid-code-point, so the slice below
+    // starts on a boundary), meaning one exact-worst-case growth always
+    // finishes the encode.
+    const grown = new Uint8Array(written + (value.length - first.read) * 3);
+    grown.set(stringDetachBuffer.subarray(0, written));
+    stringDetachBuffer = grown;
+    written += stringDetachEncoder.encodeInto(
+      value.slice(first.read),
+      grown.subarray(written)
+    ).written;
+  }
   return stringDetachDecoder.decode(stringDetachBuffer.subarray(0, written));
 }

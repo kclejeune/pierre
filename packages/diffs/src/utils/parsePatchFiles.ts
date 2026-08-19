@@ -133,6 +133,14 @@ function _processFile(
     throwOnError = false,
   }: ProcessFileOptions = {}
 ): FileDiffMetadata | undefined {
+  // Every string kept on the result (names, hunk specs, line contents) is a
+  // slice of the input, so detaching the input once up front is what keeps
+  // the result from pinning the caller's raw patch text (or, when streaming,
+  // the transport buffer the file was cut from). Detaching the whole file
+  // here instead of every line separately costs one encode/decode per file
+  // rather than one per line — with the same retention, since all the slices
+  // share this single detached copy.
+  fileDiffString = detachString(fileDiffString);
   let lastHunkEnd = 0;
   const hunks = splitAtLinePrefix(fileDiffString, '@@ ');
   let currentFile: FileDiffMetadata | undefined;
@@ -203,9 +211,9 @@ function _processFile(
             }
             continue;
           }
-          currentFile.name = detachString(name.trim());
+          currentFile.name = name.trim();
           if (prevName !== name) {
-            currentFile.prevName = detachString(prevName.trim());
+            currentFile.prevName = prevName.trim();
           }
           continue;
         }
@@ -219,36 +227,28 @@ function _processFile(
         if (filenameMatch != null) {
           const [, type, fileName] = filenameMatch;
           if (type === '---' && fileName !== '/dev/null') {
-            const detachedFileName = detachString(fileName.trim());
-            currentFile.prevName = detachedFileName;
-            currentFile.name = detachedFileName;
+            const trimmedFileName = fileName.trim();
+            currentFile.prevName = trimmedFileName;
+            currentFile.name = trimmedFileName;
           } else if (type === '+++' && fileName !== '/dev/null') {
-            currentFile.name = detachString(fileName.trim());
+            currentFile.name = fileName.trim();
           }
         }
         // Git diffs have a bunch of additional metadata we can pull from
         else if (isGitDiff) {
           if (line.startsWith('new mode ')) {
-            currentFile.mode = detachString(
-              line.slice('new mode'.length).trim()
-            );
+            currentFile.mode = line.slice('new mode'.length).trim();
           }
           if (line.startsWith('old mode ')) {
-            currentFile.prevMode = detachString(
-              line.slice('old mode'.length).trim()
-            );
+            currentFile.prevMode = line.slice('old mode'.length).trim();
           }
           if (line.startsWith('new file mode')) {
             currentFile.type = 'new';
-            currentFile.mode = detachString(
-              line.slice('new file mode'.length).trim()
-            );
+            currentFile.mode = line.slice('new file mode'.length).trim();
           }
           if (line.startsWith('deleted file mode')) {
             currentFile.type = 'deleted';
-            currentFile.mode = detachString(
-              line.slice('deleted file mode'.length).trim()
-            );
+            currentFile.mode = line.slice('deleted file mode'.length).trim();
           }
           if (line.startsWith('similarity index')) {
             if (line.startsWith('similarity index 100%')) {
@@ -261,26 +261,22 @@ function _processFile(
             const [, prevObjectId, newObjectId, mode] =
               line.trim().match(INDEX_LINE_METADATA) ?? [];
             if (prevObjectId != null) {
-              currentFile.prevObjectId = detachString(prevObjectId);
+              currentFile.prevObjectId = prevObjectId;
             }
             if (newObjectId != null) {
-              currentFile.newObjectId = detachString(newObjectId);
+              currentFile.newObjectId = newObjectId;
             }
             if (mode != null) {
-              currentFile.mode = detachString(mode);
+              currentFile.mode = mode;
             }
           }
           // We have to handle these for pure renames because there won't be
           // --- and +++ lines
           if (line.startsWith('rename from ')) {
-            currentFile.prevName = detachString(
-              line.slice('rename from '.length).trim()
-            );
+            currentFile.prevName = line.slice('rename from '.length).trim();
           }
           if (line.startsWith('rename to ')) {
-            currentFile.name = detachString(
-              line.slice('rename to '.length).trim()
-            );
+            currentFile.name = line.slice('rename to '.length).trim();
           }
         }
       }
@@ -328,8 +324,8 @@ function _processFile(
       additionLineIndex,
 
       hunkContent: [],
-      hunkContext: maybeDetachOptionalString(fileHeader.hunkContext),
-      hunkSpecs: detachString(firstLine),
+      hunkContext: fileHeader.hunkContext,
+      hunkSpecs: firstLine,
 
       noEOFCRAdditions: false,
       noEOFCRDeletions: false,
@@ -641,12 +637,10 @@ function hasCommitMetadataBoundary(data: string): boolean {
   return data.startsWith('From ') || data.includes('\nFrom ');
 }
 
+// Lines are slices of `contents`; detaching it once keeps them from pinning
+// whatever larger buffer the caller cut the contents from.
 function splitFileContents(contents: string): string[] {
-  const lines = splitWithNewlines(contents);
-  for (let index = 0; index < lines.length; index++) {
-    lines[index] = detachString(lines[index]);
-  }
-  return lines;
+  return splitWithNewlines(detachString(contents));
 }
 
 function splitWithNewlines(contents: string): string[] {
@@ -969,7 +963,7 @@ function parseRawLineType(
 
 function getParsedLineContent(rawLine: string): string {
   const processedLine = rawLine.slice(1);
-  return detachString(processedLine === '' ? '\n' : processedLine);
+  return processedLine === '' ? '\n' : processedLine;
 }
 
 function createContentGroup(

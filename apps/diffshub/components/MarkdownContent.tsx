@@ -2,7 +2,7 @@
 
 import { IconImage } from '@pierre/icons';
 import type { Element as HastElement } from 'hast';
-import { memo, useState } from 'react';
+import { memo, useDeferredValue, useState } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
@@ -185,5 +185,46 @@ export const MarkdownContent = memo(function MarkdownContent({
         {markdown}
       </Markdown>
     </div>
+  );
+});
+
+// Plain-text stand-in shown while a markdown parse is deferred. Shared by the
+// deferral wrappers here and in DiffsHubCommentsList so their fallback markup
+// cannot drift apart.
+export function RawMarkdownFallback({
+  className,
+  markdown,
+  ref,
+}: {
+  className?: string;
+  markdown: string;
+  ref?: React.Ref<HTMLDivElement>;
+}) {
+  return (
+    <div ref={ref} className={cn(className, 'break-words whitespace-pre-wrap')}>
+      {markdown}
+    </div>
+  );
+}
+
+// MarkdownContent whose parse is taken off the mounting render: the raw text
+// renders first, and the parsed markdown replaces it at deferred priority. For
+// annotation cards this matters because the viewer mounts them inside a
+// synchronous flush — when a large PR's review threads land all at once,
+// parsing every visible card's markdown in that flush blocked the main thread
+// for hundreds of milliseconds. The raw text is close enough in height that
+// the swap rarely shifts layout, and the viewer re-measures either way.
+export const DeferredMarkdownContent = memo(function DeferredMarkdownContent(
+  props: MarkdownContentProps
+) {
+  const parsed = useDeferredValue(true, false);
+  if (parsed) {
+    return <MarkdownContent {...props} />;
+  }
+  return (
+    <RawMarkdownFallback
+      className={cn(MARKDOWN_PROSE_CLASS, props.className)}
+      markdown={props.markdown}
+    />
   );
 });

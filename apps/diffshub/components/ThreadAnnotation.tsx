@@ -12,7 +12,7 @@ import {
   CommentModerationButtons,
   useCommentModeration,
 } from './CommentModeration';
-import { MarkdownContent } from './MarkdownContent';
+import { DeferredMarkdownContent } from './MarkdownContent';
 import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
 import { annotationCardBase } from '@/lib/annotation';
@@ -133,7 +133,7 @@ function ThreadComment({
             onEdit={onEdit}
           />
         ) : (
-          <MarkdownContent markdown={comment.body} />
+          <DeferredMarkdownContent markdown={comment.body} />
         )}
         {moderation.isConfirmingDelete && (
           <CommentDeleteConfirm moderation={moderation} />

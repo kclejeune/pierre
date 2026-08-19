@@ -12,8 +12,8 @@
 //                              <base>/raw on GHES; set https://raw.<host> for
 //                              subdomain isolation.
 //   DIFFSHUB_GITHUB_CLIENT_ID / DIFFSHUB_GITHUB_CLIENT_SECRET
-//                              OAuth app credentials enabling "Sign in with
-//                              GitHub" instead of pasting a PAT.
+//                              GitHub App or OAuth App credentials enabling
+//                              "Sign in with GitHub" instead of pasting a PAT.
 
 import { createJSONResponse } from './jsonResponse';
 import { parseBearerToken } from './parseBearerToken';
@@ -43,42 +43,22 @@ export function createGitHubJSONHeaders(
   return headers;
 }
 
-// Server-side fallback token for requests that carry no user token (raw file
-// hydration, public-repo comment reads). Never used to author, edit, or
-// delete anything on a visitor's behalf — writes always require the
-// requester's own token. On require-login deployments there is no fallback at
-// all: the login gate is client-side (tokens live in localStorage), so
-// letting tokenless server-side reads borrow the operator's token would let a
-// direct request bypass the gate entirely.
-export function getFallbackGitHubToken(): string | undefined {
-  if (isLoginRequired()) {
-    return undefined;
-  }
-  return (
-    process.env.DIFFSHUB_GITHUB_TOKEN ??
-    process.env.GITHUB_TOKEN ??
-    process.env.GH_TOKEN
-  );
-}
-
-// Whether DIFFSHUB_REQUIRE_LOGIN gates this deployment behind a saved token.
+// Whether this deployment gates pages and API routes behind a saved token.
+// DIFFSHUB_REQUIRE_LOGIN=1/true forces it on and 0/false forces it off; when
+// unset, self-hosted (non-github.com) deployments default to requiring login.
+// A GitHub Enterprise instance is private by definition, so there is nothing
+// an anonymous visitor could usefully read there — every request is served
+// with the caller's own token or not at all, and the gate simply turns the
+// resulting wall of 401s into a sign-in prompt.
 export function isLoginRequired(): boolean {
   const value = process.env.DIFFSHUB_REQUIRE_LOGIN?.trim().toLowerCase();
-  return value === '1' || value === 'true';
-}
-
-// The token a read-only route should act with: the requester's own Bearer
-// token when the request carries one, the server fallback token otherwise
-// (absent on require-login deployments — see getFallbackGitHubToken).
-// Write paths must NOT use this — they take the parsed request token alone so
-// the fallback can never author changes on a visitor's behalf.
-export function resolveRequestGitHubToken(request: {
-  headers: { get(name: string): string | null };
-}): string | undefined {
-  return (
-    parseBearerToken(request.headers.get('authorization')) ??
-    getFallbackGitHubToken()
-  );
+  if (value === '1' || value === 'true') {
+    return true;
+  }
+  if (value === '0' || value === 'false') {
+    return false;
+  }
+  return !getGitHubEnvironment().isGitHubDotCom;
 }
 
 export const LOGIN_REQUIRED_MESSAGE =
@@ -185,6 +165,31 @@ export function getGitHubEnvironment(): GitHubEnvironment {
     process.env.DIFFSHUB_GITHUB_RAW_URL
   );
   return cachedEnvironment;
+}
+
+// Drops the memoized environment so a test can point the deployment at a
+// different instance mid-run. Production never needs this: the variables are
+// fixed for the process lifetime.
+export function resetGitHubEnvironmentCache(): void {
+  cachedEnvironment = undefined;
+}
+
+// Whether a URL sits on the configured instance's web origin. Every code path
+// that attaches a viewer's token to an outbound request must pass this first,
+// so a credential is never handed to a host that is not the viewer's own
+// GitHub instance — some upstream URLs are derived rather than typed (the
+// cached example patches resolve to a CDN), and those must not inherit auth.
+//
+// Compares origins rather than the raw webURL string so a path-prefixed root
+// (https://ghes.example.com/github) still matches its own hosts.
+export function isConfiguredGitHubInstanceURL(url: string): boolean {
+  try {
+    return (
+      new URL(url).origin === new URL(getGitHubEnvironment().webURL).origin
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function getGitHubOAuthConfig(): GitHubOAuthConfig | undefined {

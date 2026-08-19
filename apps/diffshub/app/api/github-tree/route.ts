@@ -1,15 +1,13 @@
 import { type NextRequest } from 'next/server';
 
-import {
-  rejectTokenlessRequestWhenLoginRequired,
-  resolveRequestGitHubToken,
-} from '@/lib/githubEnvironment';
+import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
 import {
   loadRepoBrowserTree,
   readRepoParams,
   repoBrowserErrorResponse,
 } from '@/lib/githubRepoBrowserServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
+import { parseBearerToken } from '@/lib/parseBearerToken';
 
 // Lists a repository's file tree for the browse view: resolves the `ref`
 // remainder (branch, tag, sha, or refs/pull/… plus an optional sub-path)
@@ -29,7 +27,7 @@ export async function GET(request: NextRequest) {
   try {
     return createJSONResponse(
       await loadRepoBrowserTree(repo, ref, {
-        token: resolveRequestGitHubToken(request),
+        token: parseBearerToken(request.headers.get('authorization')),
       })
     );
   } catch (error) {

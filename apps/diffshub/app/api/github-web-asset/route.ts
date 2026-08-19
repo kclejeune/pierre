@@ -5,7 +5,6 @@ import { createGitHubRawHeaders } from '@/lib/githubDiffFileServer';
 import {
   getGitHubEnvironment,
   rejectTokenlessRequestWhenLoginRequired,
-  resolveRequestGitHubToken,
 } from '@/lib/githubEnvironment';
 import {
   matchGitHubWebAsset,
@@ -13,14 +12,14 @@ import {
 } from '@/lib/githubWebAssets';
 import { createInertAssetResponse } from '@/lib/inertAssetResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
+import { parseBearerToken } from '@/lib/parseBearerToken';
 
 // Same-origin proxy for assets the GitHub instance serves outside the repo
 // tree: comment-author avatars and pasted user-attachment images. On a
 // private-mode GHES these routes require auth that cross-origin <img>
 // requests cannot carry, so the browser fetches them through here with the
-// viewer's Bearer token (falling back to the server token for anonymous
-// visitors). Only allow-listed paths on the configured instance are fetched —
-// this must not become an open proxy.
+// viewer's Bearer token. Only allow-listed paths on the configured instance
+// are fetched — this must not become an open proxy.
 
 export async function GET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
@@ -43,7 +42,9 @@ export async function GET(request: NextRequest) {
   try {
     upstream = await fetchAssetFollowingRedirects(
       resolveGitHubWebAssetUpstreamURL(assetURL, environment),
-      createGitHubRawHeaders(resolveRequestGitHubToken(request))
+      createGitHubRawHeaders(
+        parseBearerToken(request.headers.get('authorization'))
+      )
     );
   } catch (error) {
     return createJSONResponse(

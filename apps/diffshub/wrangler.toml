@@ -8,8 +8,7 @@
 #   deploy command:  (default) npx wrangler deploy
 #
 # Runtime secrets (dashboard → Settings → Variables, or `wrangler secret put`):
-#   DIFFSHUB_GITHUB_CLIENT_SECRET — OAuth app secret
-#   DIFFSHUB_GITHUB_TOKEN — server fallback token for anonymous visitors
+#   DIFFSHUB_GITHUB_CLIENT_SECRET — GitHub App / OAuth App client secret
 name = "diffs"
 main = ".open-next/worker.js"
 

@@ -30,8 +30,7 @@ import { parseBearerToken } from '@/lib/parseBearerToken';
 //
 // POST creates one Git Data commit (blobs → tree → commit → non-force ref
 // update) containing every edited file. The requester's own token is
-// mandatory for both verbs; the deployment fallback token must never author
-// or evaluate write access.
+// mandatory for both verbs.
 
 interface PullFileWrite {
   contents: string;

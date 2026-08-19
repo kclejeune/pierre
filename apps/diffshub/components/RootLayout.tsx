@@ -120,8 +120,14 @@ export async function RootLayout({
           </WorkerPoolContext>
         </GitHubEnvironmentProvider>
         <PreloadHighlighter />
-        <Analytics />
-        <SpeedInsights />
+        {/* Vercel sets VERCEL=1 at build time; skip the scripts on other hosts
+            (e.g. Cloudflare Workers) where they would only 404. */}
+        {process.env.VERCEL === '1' && (
+          <>
+            <Analytics />
+            <SpeedInsights />
+          </>
+        )}
       </body>
     </html>
   );

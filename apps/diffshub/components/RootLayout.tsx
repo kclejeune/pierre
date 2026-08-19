@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import { AppEditProvider } from '@/components/AppEditProvider';
 import { CommandPalette } from '@/components/CommandPalette';
 import { GitHubEnvironmentProvider } from '@/components/GitHubEnvironmentProvider';
+import { GitHubSessionRefresher } from '@/components/GitHubSessionRefresher';
 import { PreloadHighlighter } from '@/components/PreloadHighlighter';
 import { RequireLoginGate } from '@/components/RequireLoginGate';
 import { ScrollbarGutterVariables } from '@/components/ScrollbarGutterVariables';
@@ -99,6 +100,7 @@ export async function RootLayout({
             <AppEditProvider>
               <ThemeProvider attribute="class">
                 <RequireLoginGate>{children}</RequireLoginGate>
+                <GitHubSessionRefresher />
                 <CommandPalette />
                 <Toaster />
                 <div

@@ -3,12 +3,14 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
-import { saveGitHubTokenToStorage } from '@/components/useGitHubToken';
+import { saveGitHubGrantToStorage } from '@/components/githubSession';
 import { sanitizeReturnTo } from '@/lib/githubOAuth';
+import { parseGrantFragment } from '@/lib/githubOAuthGrant';
 
-// Landing page for the OAuth callback redirect. The token arrives in the URL
-// fragment (so it never hits server logs); this page moves it into the same
-// localStorage slot the PAT flow uses, scrubs it from the address bar and
+// Landing page for the OAuth callback redirect. The grant arrives in the URL
+// fragment (so it never hits server logs); this page moves the token into the
+// same localStorage slot the PAT flow uses — plus the refresh session when
+// GitHub issued an expiring token — scrubs it from the address bar and
 // history, and then hard-navigates back to where sign-in started so the
 // viewer re-reads the token fresh on mount.
 export function GitHubAuthCompletePage() {
@@ -18,10 +20,10 @@ export function GitHubAuthCompletePage() {
     const url = new URL(window.location.href);
     const error = url.searchParams.get('error');
     const returnTo = sanitizeReturnTo(url.searchParams.get('returnTo'));
-    const token = parseTokenFromHash(url.hash);
+    const grant = parseGrantFragment(url.hash);
 
-    if (token != null) {
-      saveGitHubTokenToStorage(token);
+    if (grant != null) {
+      saveGitHubGrantToStorage(grant);
       // Drop the fragment from the current history entry before leaving so the
       // token cannot be recovered through back-navigation.
       window.history.replaceState(window.history.state, '', '/auth/github');
@@ -49,12 +51,4 @@ export function GitHubAuthCompletePage() {
       )}
     </main>
   );
-}
-
-function parseTokenFromHash(hash: string): string | undefined {
-  if (!hash.startsWith('#')) {
-    return undefined;
-  }
-  const token = new URLSearchParams(hash.slice(1)).get('token')?.trim();
-  return token == null || token === '' ? undefined : token;
 }

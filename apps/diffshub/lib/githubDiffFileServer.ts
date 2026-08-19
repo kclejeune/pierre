@@ -15,15 +15,11 @@ import {
   GITHUB_API_VERSION,
   GITHUB_USER_AGENT,
 } from './githubEnvironment';
+import { type PlainFetch } from './plainFetch';
 
 const GITHUB_RAW_MEDIA_TYPE = 'application/vnd.github.raw';
 const REF_CACHE_TTL_MS = 5 * 60 * 1000;
 const FILE_CACHE_TTL_MS = 30 * 60 * 1000;
-
-type GitHubServerFetch = (
-  input: Parameters<typeof fetch>[0],
-  init?: Parameters<typeof fetch>[1]
-) => ReturnType<typeof fetch>;
 
 interface GitHubRepoRef extends GitHubRepo {
   ref: string;
@@ -42,7 +38,7 @@ export interface GitHubDiffFileRequest {
 }
 
 interface GitHubDiffFileServerOptions {
-  fetch?: GitHubServerFetch;
+  fetch?: PlainFetch;
   token?: string;
   tokenSource?: 'request';
 }
@@ -126,7 +122,7 @@ export async function loadGitHubDiffFiles(
 
 function resolveGitHubDiffRefsForRequest(
   source: GitHubDiffSource,
-  fetcher: GitHubServerFetch,
+  fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions,
   useSharedCache: boolean
 ): Promise<GitHubDiffRefs> {
@@ -185,7 +181,7 @@ export async function loadGitHubDiffAssetResponse(
 
 function resolveCachedGitHubDiffRefs(
   source: GitHubDiffSource,
-  fetcher: GitHubServerFetch,
+  fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions
 ): Promise<GitHubDiffRefs> {
   const cacheKey = getSourceCacheKey(source);
@@ -197,7 +193,7 @@ function resolveCachedGitHubDiffRefs(
 function loadCachedGitHubFile(
   repoRef: GitHubRepoRef,
   path: string,
-  fetcher: GitHubServerFetch,
+  fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions
 ): Promise<FileContents> {
   const normalizedPath = path.replace(/^\/+/, '');
@@ -210,7 +206,7 @@ function loadCachedGitHubFile(
 function loadGitHubFileForRequest(
   repoRef: GitHubRepoRef,
   path: string,
-  fetcher: GitHubServerFetch,
+  fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions,
   useSharedCache: boolean
 ): Promise<FileContents> {
@@ -246,7 +242,7 @@ function getCachedPromise<T>(
 
 async function resolveGitHubDiffRefs(
   source: GitHubDiffSource,
-  fetcher: GitHubServerFetch,
+  fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions
 ): Promise<GitHubDiffRefs> {
   switch (source.kind) {
@@ -272,7 +268,7 @@ async function resolveGitHubDiffRefs(
 async function resolveGitHubPullRefs(
   repo: GitHubRepo,
   number: string,
-  fetcher: GitHubServerFetch,
+  fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions
 ): Promise<GitHubDiffRefs> {
   const data = await fetchGitHubJSON(
@@ -316,7 +312,7 @@ async function resolveGitHubPullMergeBaseSha(
   headRepo: GitHubRepo,
   baseSha: string,
   headSha: string,
-  fetcher: GitHubServerFetch,
+  fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions
 ): Promise<string> {
   const compareRange = createGitHubCompareRange(
@@ -357,7 +353,7 @@ function createGitHubCompareRange(
 async function resolveGitHubCommitRefs(
   repo: GitHubRepo,
   sha: string,
-  fetcher: GitHubServerFetch,
+  fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions
 ): Promise<GitHubDiffRefs> {
   const data = await fetchGitHubJSON(
@@ -385,7 +381,7 @@ async function resolveGitHubCommitRefs(
 async function resolveGitHubCompareRefs(
   repo: GitHubRepo,
   range: string,
-  fetcher: GitHubServerFetch,
+  fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions
 ): Promise<GitHubDiffRefs> {
   const data = await fetchGitHubJSON(
@@ -415,7 +411,7 @@ async function readCompareHeadSha(
   repo: GitHubRepo,
   range: string,
   data: unknown,
-  fetcher: GitHubServerFetch,
+  fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions
 ): Promise<string | undefined> {
   const commits = readArrayPath(data, ['commits']);
@@ -445,7 +441,7 @@ async function readCompareHeadSha(
 async function fetchGitHubFile(
   repoRef: GitHubRepoRef,
   path: string,
-  fetcher: GitHubServerFetch,
+  fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions
 ): Promise<FileContents> {
   const response = await fetchGitHubFileContents(
@@ -467,7 +463,7 @@ async function fetchGitHubFile(
 export async function fetchGitHubFileContents(
   repoRef: GitHubRepoRef,
   path: string,
-  fetcher: GitHubServerFetch,
+  fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions
 ): Promise<Response> {
   if (options.tokenSource === 'request' && options.token != null) {
@@ -499,7 +495,7 @@ export async function fetchGitHubFileContents(
 
 async function fetchGitHubJSON(
   url: string,
-  fetcher: GitHubServerFetch,
+  fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions
 ): Promise<unknown> {
   const response = await fetcher(url, {

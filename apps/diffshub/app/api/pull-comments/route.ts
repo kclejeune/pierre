@@ -13,6 +13,7 @@ import {
 } from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
+import { parseJSONBody } from '@/lib/parseJSONBody';
 import type {
   GitHubDiffSide,
   PullDiscussionComment,
@@ -676,19 +677,6 @@ function buildGitHubHeaders(token: string | undefined): HeadersInit {
 function parseLastPage(linkHeader: string | null): number {
   const match = linkHeader?.match(/[?&]page=(\d+)[^>]*>;\s*rel="last"/);
   return match != null ? Number(match[1]) : 1;
-}
-
-async function parseJSONBody(
-  request: NextRequest
-): Promise<Record<string, unknown> | null> {
-  try {
-    const payload = (await request.json()) as unknown;
-    return typeof payload === 'object' && payload != null
-      ? (payload as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 function isGitHubDiffSide(value: unknown): value is GitHubDiffSide {

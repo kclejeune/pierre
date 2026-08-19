@@ -5,17 +5,13 @@ import {
   getGitHubEnvironment,
 } from './githubEnvironment';
 import { createJSONResponse } from './jsonResponse';
+import { type PlainFetch } from './plainFetch';
 
 // Git Data API helpers for writing commits: blob/tree/commit creation and the
 // non-force ref update that lands them. Used by the pull-commit and
 // pull-conflicts routes. Every function takes an explicit token — writes are
 // always authored as the requester — and an injectable fetch so the
 // request/response contracts are unit-testable.
-
-type ServerFetch = (
-  input: Parameters<typeof fetch>[0],
-  init?: Parameters<typeof fetch>[1]
-) => ReturnType<typeof fetch>;
 
 export interface GitRepoRef {
   owner: string;
@@ -80,7 +76,7 @@ async function gitDataRequest(
   path: string,
   token: string | undefined,
   init: { method: 'GET' | 'PATCH' | 'POST'; body?: unknown },
-  fetcher: ServerFetch
+  fetcher: PlainFetch
 ): Promise<unknown> {
   const response = await fetcher(
     createGitHubAPIURL(getGitHubEnvironment(), path),
@@ -142,7 +138,7 @@ export async function createBlob(
   repo: GitRepoRef,
   token: string,
   contents: string,
-  fetcher: ServerFetch = fetch
+  fetcher: PlainFetch = fetch
 ): Promise<string> {
   const data = await gitDataRequest(
     repoPath(repo, '/git/blobs'),
@@ -166,7 +162,7 @@ export async function createTree(
   token: string,
   baseTreeSha: string,
   entries: readonly GitTreeWrite[],
-  fetcher: ServerFetch = fetch
+  fetcher: PlainFetch = fetch
 ): Promise<string> {
   const data = await gitDataRequest(
     repoPath(repo, '/git/trees'),
@@ -200,7 +196,7 @@ export async function createCommit(
   repo: GitRepoRef,
   token: string,
   input: { message: string; treeSha: string; parents: readonly string[] },
-  fetcher: ServerFetch = fetch
+  fetcher: PlainFetch = fetch
 ): Promise<string> {
   const data = await gitDataRequest(
     repoPath(repo, '/git/commits'),
@@ -231,7 +227,7 @@ export async function updateRef(
   token: string,
   branch: string,
   sha: string,
-  fetcher: ServerFetch = fetch
+  fetcher: PlainFetch = fetch
 ): Promise<void> {
   await gitDataRequest(
     repoPath(repo, `/git/refs/heads/${encodePath(branch)}`),
@@ -247,7 +243,7 @@ export async function getCommitTreeSha(
   repo: GitRepoRef,
   token: string,
   commitSha: string,
-  fetcher: ServerFetch = fetch
+  fetcher: PlainFetch = fetch
 ): Promise<string> {
   const data = await gitDataRequest(
     repoPath(repo, `/git/commits/${encodeURLSegment(commitSha)}`),
@@ -275,7 +271,7 @@ export async function getCommitTreeSha(
 export function createTreeEntryResolver(
   repo: GitRepoRef,
   token: string,
-  fetcher: ServerFetch = fetch
+  fetcher: PlainFetch = fetch
 ): (
   rootTreeSha: string,
   path: string
@@ -348,7 +344,7 @@ export function createTreeEntryResolver(
 export function fetchGitHubJSON(
   path: string,
   token: string | undefined,
-  fetcher: ServerFetch = fetch
+  fetcher: PlainFetch = fetch
 ): Promise<unknown> {
   return gitDataRequest(path, token, { method: 'GET' }, fetcher);
 }
@@ -399,7 +395,7 @@ export function fetchPullData(
   repo: GitRepoRef,
   pull: string,
   token: string | undefined,
-  fetcher: ServerFetch = fetch
+  fetcher: PlainFetch = fetch
 ): Promise<unknown> {
   return fetchGitHubJSON(
     repoPath(repo, `/pulls/${encodeURLSegment(pull)}`),
@@ -416,7 +412,7 @@ export async function fetchBranchTipSha(
   repo: GitRepoRef,
   branch: string,
   token: string | undefined,
-  fetcher: ServerFetch = fetch
+  fetcher: PlainFetch = fetch
 ): Promise<string> {
   const payload = await fetchGitHubJSON(
     repoPath(repo, `/git/ref/heads/${encodePath(branch)}`),
@@ -446,7 +442,7 @@ export async function waitForPullHead(
   expectedHeadSha: string,
   token: string | undefined,
   options: { intervalMs?: number; maxAttempts?: number } = {},
-  fetcher: ServerFetch = fetch
+  fetcher: PlainFetch = fetch
 ): Promise<void> {
   const intervalMs = options.intervalMs ?? 750;
   const maxAttempts = options.maxAttempts ?? 12;

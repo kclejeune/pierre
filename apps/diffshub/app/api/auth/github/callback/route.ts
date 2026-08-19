@@ -12,10 +12,12 @@ import {
   OAUTH_STATE_COOKIE,
   parseOAuthState,
 } from '@/lib/githubOAuth';
+import { type OAuthTokenGrant } from '@/lib/githubOAuthGrant';
 
 // Completes the OAuth flow: validates the state cookie, exchanges the code
 // for a user access token, and forwards the browser to the completion page
-// with the token in the URL fragment (never in a query string or log line).
+// with the grant (token, plus refresh token and lifetimes when GitHub issues
+// expiring tokens) in the URL fragment — never in a query string or log line.
 // All failure branches land on the same completion page with a readable error.
 export async function GET(request: NextRequest) {
   const oauthConfig = getGitHubOAuthConfig();
@@ -51,7 +53,7 @@ export async function GET(request: NextRequest) {
   const environment = getGitHubEnvironment();
   const origin = getPublicOrigin(request.headers, request.nextUrl.origin);
   try {
-    const token = await exchangeOAuthCode({
+    const grant = await exchangeOAuthCode({
       clientId: oauthConfig.clientId,
       clientSecret: oauthConfig.clientSecret,
       code,
@@ -59,8 +61,8 @@ export async function GET(request: NextRequest) {
       webURL: environment.webURL,
     });
     return redirectToCompletion(request, {
+      grant,
       returnTo: statePayload.returnTo,
-      token,
     });
   } catch (error) {
     return redirectToCompletion(request, {
@@ -75,7 +77,7 @@ export async function GET(request: NextRequest) {
 
 function redirectToCompletion(
   request: NextRequest,
-  options: { error?: string; returnTo?: string; token?: string }
+  options: { error?: string; grant?: OAuthTokenGrant; returnTo?: string }
 ): NextResponse {
   // The browser-facing redirect must use the public origin too — the request
   // origin behind a proxy is the container bind address.

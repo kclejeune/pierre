@@ -3,7 +3,7 @@
 import { type ImgHTMLAttributes, useEffect, useState } from 'react';
 
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
-import { readStoredGitHubToken } from './useGitHubToken';
+import { readStoredGitHubToken } from './githubSession';
 
 // Object URLs keyed by proxy src so repeated renders of the same asset (the
 // same author's avatar on every comment, re-mounts under virtualization)

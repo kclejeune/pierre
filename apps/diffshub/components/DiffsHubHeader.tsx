@@ -75,7 +75,9 @@ interface HeaderProps {
   diffRefs?: DiffRefs | null;
   diffStyle: 'split' | 'unified';
   // The full upstream URL of the loaded diff. Its hostname is shown as a chip
-  // beside the URL input, which itself holds only the in-repo shorthand.
+  // beside the URL input (which itself holds only the in-repo shorthand), and
+  // it is the target of the open-in-new-tab button — `initialUrl` can be a
+  // bare shorthand like `owner/repo#1` that would resolve as a relative href.
   upstreamUrl: string;
   fileTreeAvailable: boolean;
   fileTreeOverlayOpen: boolean;
@@ -257,7 +259,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
                 title="Open source in new tab"
                 className={cn(CHROME_ICON_BUTTON_CLASS, 'hidden md:flex')}
               >
-                <a href={initialUrl} target="_blank" rel="noreferrer noopener">
+                <a href={upstreamUrl} target="_blank" rel="noreferrer noopener">
                   <IconShare className="size-4 md:size-3" />
                 </a>
               </Button>

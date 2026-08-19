@@ -1,15 +1,24 @@
-// Server-side pieces of the "Sign in with GitHub" flow. DiffsHub uses the
-// standard OAuth web application flow, which is the same for an OAuth App and
-// a GitHub App (user-to-server authorization): the login route redirects the
-// browser to GitHub's authorize page with a random state pinned in an
-// httpOnly cookie, and the callback route exchanges the returned code for a
-// user access token.
-// The token is then handed to the browser through a URL fragment on the
-// /auth/github completion page (fragments never reach server logs), which
-// stores it in the same localStorage slot the manual PAT flow uses — so every
-// existing loader keeps working identically for both auth methods.
+// The "Sign in with GitHub" flow: the login route redirects the browser to
+// GitHub's authorize page with a random state pinned in an httpOnly cookie,
+// and the callback route exchanges the returned code for a user access token.
+// The flow is the same for an OAuth App and a GitHub App (user-to-server
+// authorization). The grant is handed to the browser through a URL fragment
+// on the /auth/github completion page (fragments never reach server logs),
+// which stores it in the same localStorage slot the manual PAT flow uses — so
+// every existing loader keeps working identically for both auth methods.
+//
+// Mostly server-side (the token endpoint calls need the client secret), but
+// sanitizeReturnTo is shared with the login and completion pages. The grant
+// itself — its shape and wire encoding — lives in ./githubOAuthGrant so
+// browser code never has to import this module for it.
 
 import { GITHUB_USER_AGENT } from './githubEnvironment';
+import {
+  type OAuthTokenGrant,
+  parseGrantRecord,
+  serializeGrantRecord,
+} from './githubOAuthGrant';
+import { type PlainFetch } from './plainFetch';
 
 // Cookie carrying the JSON-encoded state payload between the login redirect
 // and the OAuth callback. Scoped to the auth routes so it rides along with
@@ -30,13 +39,6 @@ export interface OAuthStatePayload {
   returnTo: string;
   state: string;
 }
-
-// Plain call signature (rather than `typeof fetch`) so tests can inject a
-// stub without satisfying Bun's fetch namespace extras like `preconnect`.
-type OAuthFetch = (
-  input: Parameters<typeof fetch>[0],
-  init?: Parameters<typeof fetch>[1]
-) => ReturnType<typeof fetch>;
 
 // Throwaway origin the return path is resolved against. Reserved TLD (RFC
 // 2606) so it can never collide with a real deployment host.
@@ -152,12 +154,12 @@ export function getPublicOrigin(
 }
 
 // Redirect target for the completion page: returnTo travels as a query param
-// while the token rides in the fragment so it never appears in request lines
+// while the grant rides in the fragment so it never appears in request lines
 // or proxy logs. The completion page strips it from history immediately.
 export function buildCompletionURL(options: {
   error?: string;
+  grant?: OAuthTokenGrant;
   returnTo?: string;
-  token?: string;
 }): string {
   const searchParams = new URLSearchParams();
   if (options.returnTo != null && options.returnTo !== '/') {
@@ -168,7 +170,9 @@ export function buildCompletionURL(options: {
   }
   const query = searchParams.size > 0 ? `?${searchParams}` : '';
   const fragment =
-    options.token != null ? `#token=${encodeURIComponent(options.token)}` : '';
+    options.grant != null
+      ? `#${new URLSearchParams(serializeGrantRecord(options.grant))}`
+      : '';
   return `${OAUTH_COMPLETION_PATH}${query}${fragment}`;
 }
 
@@ -179,12 +183,62 @@ export async function exchangeOAuthCode(options: {
   clientId: string;
   clientSecret: string;
   code: string;
-  fetcher?: OAuthFetch;
+  fetcher?: PlainFetch;
   redirectURI: string;
   webURL: string;
-}): Promise<string> {
-  const fetcher = options.fetcher ?? fetch;
-  const response = await fetcher(`${options.webURL}/login/oauth/access_token`, {
+}): Promise<OAuthTokenGrant> {
+  return requestOAuthToken(
+    options.webURL,
+    {
+      client_id: options.clientId,
+      client_secret: options.clientSecret,
+      code: options.code,
+      redirect_uri: options.redirectURI,
+    },
+    options.fetcher,
+    'GitHub rejected the sign-in'
+  );
+}
+
+// GitHub's error code for a refresh token that is expired, revoked, or was
+// already used (GitHub rotates refresh tokens on every refresh). The session
+// cannot be recovered from it — the viewer has to sign in again — which is
+// why callers treat it differently from a transient upstream failure.
+const BAD_REFRESH_TOKEN_ERROR = 'bad_refresh_token';
+
+export class OAuthRefreshRejectedError extends Error {}
+
+// Mints a fresh user access token from a refresh token (GitHub Apps with
+// token expiration enabled). Throws OAuthRefreshRejectedError when GitHub
+// reports the refresh token itself is no longer valid, a plain Error for
+// every other failure.
+export async function refreshOAuthToken(options: {
+  clientId: string;
+  clientSecret: string;
+  fetcher?: PlainFetch;
+  refreshToken: string;
+  webURL: string;
+}): Promise<OAuthTokenGrant> {
+  return requestOAuthToken(
+    options.webURL,
+    {
+      client_id: options.clientId,
+      client_secret: options.clientSecret,
+      grant_type: 'refresh_token',
+      refresh_token: options.refreshToken,
+    },
+    options.fetcher,
+    'GitHub rejected the session refresh'
+  );
+}
+
+async function requestOAuthToken(
+  webURL: string,
+  body: Record<string, string>,
+  fetcher: PlainFetch = fetch,
+  rejectionPrefix: string
+): Promise<OAuthTokenGrant> {
+  const response = await fetcher(`${webURL}/login/oauth/access_token`, {
     method: 'POST',
     cache: 'no-store',
     headers: {
@@ -192,12 +246,7 @@ export async function exchangeOAuthCode(options: {
       'Content-Type': 'application/json',
       'User-Agent': GITHUB_USER_AGENT,
     },
-    body: JSON.stringify({
-      client_id: options.clientId,
-      client_secret: options.clientSecret,
-      code: options.code,
-      redirect_uri: options.redirectURI,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -212,15 +261,18 @@ export async function exchangeOAuthCode(options: {
   }
 
   const record = data as Record<string, unknown>;
-  const accessToken = record.access_token;
-  if (typeof accessToken === 'string' && accessToken !== '') {
-    return accessToken;
+  const grant = parseGrantRecord(record);
+  if (grant != null) {
+    return grant;
   }
 
   const description = record.error_description ?? record.error;
-  throw new Error(
+  const message =
     typeof description === 'string' && description !== ''
-      ? `GitHub rejected the sign-in: ${description}`
-      : 'GitHub token exchange did not return a token.'
-  );
+      ? `${rejectionPrefix}: ${description}`
+      : 'GitHub token exchange did not return a token.';
+  if (record.error === BAD_REFRESH_TOKEN_ERROR) {
+    throw new OAuthRefreshRejectedError(message);
+  }
+  throw new Error(message);
 }

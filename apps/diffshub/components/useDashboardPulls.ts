@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-import { storedGitHubTokenHeaders } from './useGitHubToken';
+import { storedGitHubTokenHeaders } from './githubSession';
 import type { PullBucket, PullSummary } from '@/lib/githubPullSummaries';
 
 export interface DashboardPullsState {

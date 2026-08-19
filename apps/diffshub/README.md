@@ -46,18 +46,19 @@ anonymously, login is therefore required by default.
 
 Sign-in uses the standard OAuth web flow, which works with either app type:
 
-- **GitHub App** (recommended for Github Enterprise deployments): create
-  one under Settings → Developer settings → GitHub Apps with the callback URL
+- **GitHub App** (recommended for Github Enterprise deployments): create one
+  under Settings → Developer settings → GitHub Apps with the callback URL
   `https://<your-diffshub-host>/api/auth/github/callback` and the repository
   permissions **Contents: Read and write** and **Pull requests: Read and write**
-  (Metadata: Read is added automatically). Webhooks are not needed. Untick
-  _Expire user authorization tokens_ — DiffsHub does not yet refresh expiring
-  tokens, so a signed-in session would stop working after eight hours. Then
-  install the app on every organization (and any user account) whose
-  repositories should be viewable, with access to all repositories: a GitHub App
-  sign-in can only reach repositories where the app is installed, and a
-  repository outside the installation surfaces as "cannot access" even though
-  the user has access on GitHub.
+  (Metadata: Read is added automatically). Webhooks are not needed. _Expire user
+  authorization tokens_ may stay enabled: the browser keeps the refresh token
+  alongside the access token and renews it through `/api/auth/github/refresh`
+  before the eight-hour lifetime runs out, for as long as the six-month refresh
+  token is valid. Then install the app on every organization (and any user
+  account) whose repositories should be viewable, with access to all
+  repositories: a GitHub App sign-in can only reach repositories where the app
+  is installed, and a repository outside the installation surfaces as "cannot
+  access" even though the user has access on GitHub.
 - **OAuth App**: create one under Settings → Developer settings → OAuth apps
   with the same callback URL. The flow requests the classic `repo` scope (OAuth
   apps have no read-only repo scope); GitHub Apps ignore that parameter. On
@@ -71,7 +72,9 @@ a proxy.
 The resulting user token is stored only in the browser's localStorage — the same
 slot used when pasting a PAT — and is sent to the DiffsHub server solely as a
 bearer header on GitHub-bound requests (diff loading, review comments), which
-forward it to the configured GitHub instance.
+forward it to the configured GitHub instance. An expiring token's refresh token
+lives next to it and is sent only to the refresh route; the server holds no
+session state of its own.
 
 ## Review comments
 

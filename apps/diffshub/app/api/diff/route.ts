@@ -71,6 +71,11 @@ interface GitHubPullPatchFetchTarget {
   kind: 'github-pull';
   label?: string;
   pullURL: string;
+  // The pull metadata request, started alongside the first fetch attempt so
+  // that by the time the web diff URLs have failed (private repos on
+  // github.com always 404 them) the base/head shas are already in hand and
+  // only the compare diff remains. See createPatchStreamResponse.
+  pullResponse?: Promise<Response>;
   repo: GitHubRepo;
   requestHeaders: Record<string, string>;
   sourceURL: string;
@@ -263,16 +268,24 @@ function resolveGitHubPatchRequest(
   return publicRequest;
 }
 
-// The authenticated retry of a web patch URL. Credentials are attached only
-// when the target is the configured GitHub instance: resolveGitHubPath can
-// answer with a third-party CDN URL for the cached example patches, and
-// forwarding a viewer's GitHub token to a host that is not their GitHub
-// instance would hand that host a working credential.
+// The authenticated retry of a web patch URL, for GHES only. github.com
+// ignores every credential form on .diff URLs (Bearer, token, basic, query)
+// and answers private repos with the same 404 the anonymous attempt got, so
+// there the retry is a wasted round trip before the API fallback; a GHES in
+// private mode can honor it. Credentials are attached only when the target is
+// the configured GitHub instance: resolveGitHubPath can answer with a
+// third-party CDN URL for the cached example patches, and forwarding a
+// viewer's GitHub token to a host that is not their GitHub instance would
+// hand that host a working credential.
 function createAuthenticatedGitHubWebTarget(
   patchURL: string | undefined,
   token: string
 ): DirectPatchFetchTarget | undefined {
-  if (patchURL == null || !isConfiguredGitHubInstanceURL(patchURL)) {
+  if (
+    patchURL == null ||
+    getGitHubEnvironment().isGitHubDotCom ||
+    !isConfiguredGitHubInstanceURL(patchURL)
+  ) {
     return undefined;
   }
   return {
@@ -506,8 +519,33 @@ async function createPatchStreamResponse(
   const abortUpstream = () => upstreamController.abort();
   requestSignal.addEventListener('abort', abortUpstream, { once: true });
 
+  // Every error return must tear down the same way: abort the in-flight
+  // upstream fetches (including the speculative pull metadata request, which
+  // would otherwise leak) and detach the client-abort listener.
+  const failResponse = (message: string, options?: TextResponseOptions) => {
+    abortUpstream();
+    requestSignal.removeEventListener('abort', abortUpstream);
+    return createTextResponse(message, options);
+  };
+
   let activeRequest: PatchFetchTarget = patchRequest;
   const fallbackRequests = [...(patchRequest.fallbacks ?? [])];
+  // Start the pull metadata request now rather than after the web attempts
+  // fail: for private repos every web URL 404s, and the shas are needed
+  // before the compare diff can even start, so fetching them serially put a
+  // full GitHub round trip on the critical path for nothing. A small JSON
+  // request, and aborted with everything else if the client goes away.
+  for (const fallbackRequest of fallbackRequests) {
+    if (fallbackRequest.kind === 'github-pull') {
+      fallbackRequest.pullResponse = fetchPullMetadata(
+        fallbackRequest,
+        upstreamController.signal
+      );
+      // Prevent an unhandled rejection if a web attempt wins and this is
+      // never awaited (or the whole request is aborted).
+      fallbackRequest.pullResponse.catch(() => undefined);
+    }
+  }
   let response: Response | undefined;
   let responseTarget: DirectPatchFetchTarget | undefined;
   for (;;) {
@@ -525,8 +563,7 @@ async function createPatchStreamResponse(
         continue;
       }
 
-      requestSignal.removeEventListener('abort', abortUpstream);
-      return createTextResponse('Failed to fetch patch.', { status: 502 });
+      return failResponse('Failed to fetch patch.', { status: 502 });
     }
 
     // The auth-failure hint costs extra GitHub API round trips, so it is only
@@ -549,16 +586,27 @@ async function createPatchStreamResponse(
       continue;
     }
 
-    requestSignal.removeEventListener('abort', abortUpstream);
-    return createTextResponse(failure.message, {
+    return failResponse(failure.message, {
       status: failure.status,
       sourceURL: responseTarget.sourceURL ?? responseTarget.patchURL,
     });
   }
 
+  // Release any pull metadata request that was never consumed (a web URL
+  // answered before it was needed) instead of leaving its body unread. A
+  // github-pull target that did run was shifted out of fallbackRequests, so
+  // its consumed response is never touched here.
+  for (const fallbackRequest of fallbackRequests) {
+    if (fallbackRequest.kind === 'github-pull') {
+      void fallbackRequest.pullResponse?.then(
+        (pullResponse) => pullResponse.body?.cancel(),
+        () => undefined
+      );
+    }
+  }
+
   if (response == null || responseTarget == null) {
-    requestSignal.removeEventListener('abort', abortUpstream);
-    return createTextResponse('Failed to fetch patch.', { status: 502 });
+    return failResponse('Failed to fetch patch.', { status: 502 });
   }
 
   const options = {
@@ -613,15 +661,26 @@ async function fetchDirectPatchTarget(
   return { response, target };
 }
 
-async function fetchGitHubPullPatchTarget(
+// The pull metadata JSON request. Started eagerly by createPatchStreamResponse
+// alongside the web diff attempts; the ?? fallback in fetchGitHubPullPatchTarget
+// covers a target that was never warmed.
+function fetchPullMetadata(
   target: GitHubPullPatchFetchTarget,
   signal: AbortSignal
-): Promise<PatchFetchResult> {
-  const pullResponse = await fetch(target.pullURL, {
+): Promise<Response> {
+  return fetch(target.pullURL, {
     cache: 'no-store',
     headers: { 'User-Agent': GITHUB_USER_AGENT, ...target.requestHeaders },
     signal,
   });
+}
+
+async function fetchGitHubPullPatchTarget(
+  target: GitHubPullPatchFetchTarget,
+  signal: AbortSignal
+): Promise<PatchFetchResult> {
+  const pullResponse = await (target.pullResponse ??
+    fetchPullMetadata(target, signal));
 
   const pullTarget: DirectPatchFetchTarget = {
     label: target.label,

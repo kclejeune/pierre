@@ -42,6 +42,13 @@ when the viewer has none, so GitHub makes every authorization decision against
 the viewer's own access. On a self-hosted instance, where nothing is readable
 anonymously, login is therefore required by default.
 
+### Health check
+
+`GET /api/health` returns `200 {"status":"ok"}` without touching GitHub or the
+login gate, for ECS/ALB target groups, App Runner, and similar probes. Don't
+point a probe at `/`: with `DIFFSHUB_REQUIRE_LOGIN` on it redirects to `/login`,
+which most load balancers count as unhealthy.
+
 ### Enabling "Sign in with GitHub"
 
 Sign-in uses the standard OAuth web flow, which works with either app type:

@@ -1,3 +1,5 @@
+import { Analytics } from '@vercel/analytics/next';
+import { SpeedInsights } from '@vercel/speed-insights/next';
 import { Geist } from 'next/font/google';
 import localFont from 'next/font/local';
 import { connection } from 'next/server';
@@ -118,6 +120,8 @@ export async function RootLayout({
           </WorkerPoolContext>
         </GitHubEnvironmentProvider>
         <PreloadHighlighter />
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );

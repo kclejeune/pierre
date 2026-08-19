@@ -1,9 +1,13 @@
 import '@/app/prose.css';
-import type { PreloadFileOptions } from '@pierre/diffs/ssr';
+import { preloadFile, type PreloadFileOptions } from '@pierre/diffs/ssr';
 import { preloadFileTree } from '@pierre/trees/ssr';
 import type { Metadata } from 'next';
 import { Fragment } from 'react';
 
+import {
+  AGENT_PROMPT,
+  AGENT_SKILL_INSTALL,
+} from '../docs/BuildWithAgents/constants';
 import * as chooseYourIntegrationConstants from '../docs/Guides/ChooseYourIntegration/constants';
 import * as customizeIconsConstants from '../docs/Guides/CustomizeIcons/constants';
 import * as getStartedWithReactConstants from '../docs/Guides/GetStartedWithReact/constants';
@@ -134,6 +138,7 @@ export default function TreesDocsPage() {
         <div className="min-w-0 space-y-10">
           <HeadingAnchors />
           <OverviewSection />
+          <BuildWithAgentsSection />
           <DocsSectionGroup
             id="guides"
             title="Guides"
@@ -168,6 +173,18 @@ async function OverviewSection() {
         shadowHtml: ssrPayload.shadowHtml,
       },
     },
+  });
+  return <ProseWrapper>{content}</ProseWrapper>;
+}
+
+async function BuildWithAgentsSection() {
+  const [agentSkillInstall, agentPrompt] = await Promise.all([
+    preloadFile(AGENT_SKILL_INSTALL),
+    preloadFile(AGENT_PROMPT),
+  ]);
+  const content = await renderMDX({
+    filePath: '(trees)/docs/BuildWithAgents/content.mdx',
+    scope: { agentSkillInstall, agentPrompt },
   });
   return <ProseWrapper>{content}</ProseWrapper>;
 }

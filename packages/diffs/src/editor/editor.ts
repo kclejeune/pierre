@@ -101,6 +101,7 @@ import {
   resolveSelectionCut,
   selectionIntersects,
   shiftSelectionLines,
+  snapCharacterToGraphemeBoundary,
 } from './selection';
 import {
   type SelectionActionContext,
@@ -127,6 +128,7 @@ import {
   extend,
   getLineNumberAttr,
   h,
+  lookupScrollContainer,
   round,
 } from './utils';
 
@@ -180,6 +182,20 @@ interface EditorAttachState {
   generation: number;
   callback: (() => void) | undefined;
   delivered: boolean;
+}
+
+interface ViewportInputWatch {
+  userScrolled(): boolean;
+  dispose(): void;
+}
+
+interface AltColumnDrag {
+  pointerId: number;
+  startClientX: number;
+  clientX: number;
+  startScrollLeft: number;
+  focusLine?: number;
+  renderedGoal?: Position;
 }
 
 export interface EditorOptions<LAnnotation> {
@@ -372,6 +388,7 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
   #isComposing = false;
   #isGutterMouseDown = false;
   #isContentMouseDown = false;
+  #altColumnDrag?: AltColumnDrag;
   #shiftKeyPressed = false;
   #selectionStart: EditorSelection | undefined;
   // The full text of a read-only deleted-line selection built from the gutter,
@@ -595,6 +612,7 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
         fileInstance != null
           ? {
               scrollLeft: fileInstance.getCodeScrollLeft(),
+              scrollTop: this.#getViewportScrollTop(),
             }
           : undefined,
     };
@@ -611,6 +629,11 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
     // sits outside that viewport (e.g. TreeApp remount restore).
     if (view != null) {
       this.#fileInstance.setCodeScrollLeft(view.scrollLeft);
+      // Records persisted before scrollTop existed lack it: leave the
+      // viewport where it is rather than guessing.
+      if (view.scrollTop !== undefined) {
+        this.#setViewportScrollTop(view.scrollTop);
+      }
       return;
     }
     this.#scrollToPrimaryCaret();
@@ -730,7 +753,7 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       this.#attachState.delivered = false;
     }
     const hadFileInstance = this.#fileInstance != null;
-    const shouldRestoreState = this.#isStatePersistenceEnabled;
+    const shouldRestoreState = this.#options.persistState === true;
     this.#stateRestoreGeneration++;
     this.#persistCurrentState();
     if (hadFileInstance) {
@@ -760,8 +783,6 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
     this.#globalEventDisposes = undefined;
     this.#editorEventDisposes?.forEach((dispose) => dispose());
     this.#editorEventDisposes = undefined;
-    this.#selectEventDisposes?.forEach((dispose) => dispose());
-    this.#selectEventDisposes = undefined;
     this.#detach?.(recycle);
     this.#detach = undefined;
 
@@ -933,9 +954,10 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       this.#fileInfo.name !== fileOrDiff.name ||
       this.#fileInfo.lang !== fileOrDiff.lang ||
       this.#fileInfo.cacheKey !== fileOrDiff.cacheKey;
-    const persistedCacheKey = this.#isStatePersistenceEnabled
-      ? requirePersistedCacheKey(fileOrDiff)
-      : undefined;
+    const persistedCacheKey =
+      this.#options.persistState === true
+        ? requirePersistedCacheKey(fileOrDiff)
+        : undefined;
 
     let persistedStateTarget:
       | { cacheKey: string; textDocument: TextDocument<LAnnotation> }
@@ -958,8 +980,15 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
         persistedCacheKey !== undefined
           ? this.#getCachedTextDocument(fileOrDiff, persistedCacheKey)
           : undefined;
+      // A File render substitutes cached text before painting (see
+      // __prepareFile), so its DOM always matches a reused document.
+      const reusableTextDocument =
+        fileInstance.type === 'file' ||
+        cachedTextDocument?.getText() === contents
+          ? cachedTextDocument
+          : undefined;
       const textDocument =
-        cachedTextDocument ??
+        reusableTextDocument ??
         new TextDocument(fileOrDiff.name, contents, languageId, 0, editStack);
       this.#fileInfo = { name, lang, cacheKey };
       this.#textDocument = textDocument;
@@ -977,9 +1006,13 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       // content element must drop the previous document's measurements here.
       this.#wrapLineOffsetsCache.clear();
       this.#selections = this.#initSelections;
-      if (this.#textDocument !== undefined && this.#options.__debug === true) {
+      if (this.#options.__debug === true) {
+        // A reused document keeps its undo history; only the fallback path
+        // actually rebuilds one from the host's contents.
         console.log(
-          '[diffs/editor] text document rebuilt from',
+          reusableTextDocument !== undefined
+            ? '[diffs/editor] cached text document reused for'
+            : '[diffs/editor] text document rebuilt from',
           fileOrDiff.name
         );
       }
@@ -1157,12 +1190,6 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
     this.#scheduleOnAttach(fileInstance);
   };
 
-  get #isStatePersistenceEnabled(): boolean {
-    return (
-      this.#options.persistState === true && this.#fileInstance?.type === 'file'
-    );
-  }
-
   #getCachedTextDocument(
     file: FileContents | FileDiffMetadata,
     cacheKey: string
@@ -1188,7 +1215,11 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
     const fileInfo = this.#fileInfo;
     const textDocument = this.#textDocument;
     if (
-      !this.#isStatePersistenceEnabled ||
+      this.#options.persistState !== true ||
+      // Requires an attached instance: a repeated cleanUp still holds the
+      // retained fileInfo but must not write (empty) state over the record
+      // the first cleanUp persisted.
+      this.#fileInstance === undefined ||
       fileInfo === undefined ||
       textDocument === undefined
     ) {
@@ -1214,7 +1245,8 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       if (
         textDocument.version === pendingRestore.documentVersion &&
         this.#selections === pendingRestore.selections &&
-        state.view?.scrollLeft === pendingRestore.view?.scrollLeft
+        state.view?.scrollLeft === pendingRestore.view?.scrollLeft &&
+        state.view?.scrollTop === pendingRestore.view?.scrollTop
       ) {
         return;
       }
@@ -1276,10 +1308,14 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
     const documentVersion = textDocument.version;
     const selections = this.#selections;
     const view = this.getState().view;
+    let inputWatch: ViewportInputWatch | undefined;
     const applyState = (state: EditorState | undefined): void => {
       const currentView = this.getState().view;
+      // scrollTop is deliberately not part of this staleness check: the
+      // surface can legitimately adjust vertical scroll while an async read
+      // is in flight (height reconciliation, clamping), and that must not
+      // block the restore. User scrolls are detected by `inputWatch` instead.
       if (
-        state === undefined ||
         generation !== this.#stateRestoreGeneration ||
         this.#textDocument !== textDocument ||
         textDocument.version !== documentVersion ||
@@ -1290,7 +1326,25 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       ) {
         return;
       }
-      this.setState(cloneEditorState(state));
+      // Once the user engages the viewport, the vertical position is theirs:
+      // neither the first-open reset nor a stored scrollTop may move it.
+      const userScrolled = inputWatch?.userScrolled() === true;
+      if (state === undefined) {
+        // No stored record for this cacheKey — the file is opened for the
+        // first time. Start the code scroller and the viewport at the top
+        // instead of inheriting whatever offset the previous file left in a
+        // viewport that stays mounted across switches.
+        this.#fileInstance?.setCodeScrollLeft(0);
+        if (!userScrolled) {
+          this.#setViewportScrollTop(0);
+        }
+        return;
+      }
+      const restored = cloneEditorState(state);
+      if (userScrolled && restored.view !== undefined) {
+        restored.view = { scrollLeft: restored.view.scrollLeft };
+      }
+      this.setState(restored);
     };
     const readState = (): void | Promise<void> => {
       let result: EditorState | undefined | Promise<EditorState | undefined>;
@@ -1312,6 +1366,7 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
     const result =
       pendingWrite === undefined ? readState() : pendingWrite.then(readState);
     if (isPromise(result)) {
+      inputWatch = this.#watchViewportUserInput();
       const pendingRestore = {
         cacheKey,
         textDocument,
@@ -1322,11 +1377,37 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       };
       this.#pendingStateRestore = pendingRestore;
       void pendingRestore.completion.finally(() => {
+        inputWatch?.dispose();
         if (this.#pendingStateRestore === pendingRestore) {
           this.#pendingStateRestore = undefined;
         }
       });
     }
+  }
+
+  #watchViewportUserInput(): ViewportInputWatch | undefined {
+    const viewport = this.#getScrollViewport();
+    if (!(viewport instanceof HTMLElement)) {
+      return undefined;
+    }
+    let scrolled = false;
+    const eventTypes = ['wheel', 'touchstart', 'mousedown'] as const;
+    const dispose = (): void => {
+      for (const type of eventTypes) {
+        viewport.removeEventListener(type, onInput, { capture: true });
+      }
+    };
+    const onInput = (): void => {
+      scrolled = true;
+      dispose();
+    };
+    for (const type of eventTypes) {
+      viewport.addEventListener(type, onInput, {
+        capture: true,
+        passive: true,
+      });
+    }
+    return { userScrolled: () => scrolled, dispose };
   }
 
   // Whether a zero-based document line has (or will have on scroll) a
@@ -1399,12 +1480,11 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
     this.#setEditorActiveLineSafe(null);
     this.#gutterWidthCache = undefined;
     this.#contentWidthCache = undefined;
-    this.#shouldIgnoreSelectionChange = false;
+    this.#resetSelectionGesture();
     this.#suppressNativeSelectionSync = false;
     this.#overlayElements?.forEach((el) => el.remove());
     this.#overlayElements = undefined;
     this.#selections = undefined;
-    this.#reservedSelections = undefined;
     this.#scrollingToLine = undefined;
     this.#markerRenderer?.cleanup();
     this.#markerRenderer = undefined;
@@ -1468,6 +1548,37 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
     queueRender(callback);
   }
 
+  // Get the editor's scrolling viewport, return undefined if the Virtualizer
+  // is not present.`
+  #getScrollViewport(): HTMLElement | Document | undefined {
+    const viewport = this.#fileInstance?.getEditorViewport?.();
+    if (viewport !== undefined) {
+      return viewport;
+    }
+    const fileContainer = this.#fileContainer;
+    if (this.#fileInstance == null || fileContainer == null) {
+      return undefined;
+    }
+    return lookupScrollContainer(fileContainer);
+  }
+
+  #getViewportScrollTop(): number {
+    const viewport = this.#getScrollViewport();
+    if (viewport instanceof HTMLElement) {
+      return viewport.scrollTop;
+    }
+    return viewport?.defaultView?.scrollY ?? 0;
+  }
+
+  #setViewportScrollTop(scrollTop: number): void {
+    const viewport = this.#getScrollViewport();
+    if (viewport instanceof HTMLElement) {
+      viewport.scrollTop = scrollTop;
+    } else if (viewport instanceof Document) {
+      viewport.defaultView?.scrollTo({ top: scrollTop });
+    }
+  }
+
   #initialize(): void {
     // Safari doesn't support `::selection` for slot elements in ShadowDOM,
     // Add a global style to disable selection for slot elements
@@ -1512,6 +1623,29 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       this.#replacementFocusRequest = undefined;
       this.#contentHasFocus = false;
       this.#shouldIgnoreSelectionChange = false;
+    };
+    const finishMouseSelection = (event: PointerEvent) => {
+      if (event.pointerType !== 'mouse') {
+        return;
+      }
+
+      const refocusEditor = this.#isGutterMouseDown;
+      this.#resetSelectionGesture();
+      if (refocusEditor) {
+        this.#focus();
+      }
+
+      // The popover is suppressed while the mouse is down so it doesn't
+      // flicker under the cursor mid-drag. Once settled, re-run the overlay
+      // pass so a ranged selection reveals it.
+      if (
+        this.#options.enabledSelectionAction === true &&
+        this.#selections !== undefined &&
+        this.#selections.length > 0 &&
+        !isCollapsedSelection(this.#selections.at(-1)!)
+      ) {
+        this.#updateSelections(this.#selections);
+      }
     };
     this.#globalEventDisposes = [
       addEventListener(
@@ -1640,6 +1774,13 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
             }
           }
 
+          if (this.#altColumnDrag !== undefined) {
+            this.#altColumnDrag.focusLine = getCaretPosition(selection).line;
+            if (this.#updateAltColumnSelections()) {
+              return;
+            }
+          }
+
           if (this.#reservedSelections !== undefined) {
             this.#updateSelections([
               ...this.#reservedSelections.filter(
@@ -1655,40 +1796,12 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
         { passive: true }
       ),
 
-      addEventListener(
-        document,
-        'pointerup',
-        (e) => {
-          if (e.pointerType !== 'mouse') {
-            return;
-          }
-
-          this.#selectEventDisposes?.forEach((dispose) => dispose());
-          this.#selectEventDisposes = undefined;
-
-          if (this.#isGutterMouseDown) {
-            this.#isGutterMouseDown = false;
-            this.#focus();
-          }
-          this.#shouldIgnoreSelectionChange = false;
-          this.#isContentMouseDown = false;
-          this.#shiftKeyPressed = false;
-          this.#selectionStart = undefined;
-          this.#reservedSelections = undefined;
-          // The popover is suppressed while the mouse is down so it doesn't
-          // flicker under the cursor mid-drag. Now that the drag has ended,
-          // re-run the overlay pass so a settled ranged selection reveals it.
-          if (
-            this.#options.enabledSelectionAction === true &&
-            this.#selections !== undefined &&
-            this.#selections.length > 0 &&
-            !isCollapsedSelection(this.#selections.at(-1)!)
-          ) {
-            this.#updateSelections(this.#selections);
-          }
-        },
-        { passive: true }
-      ),
+      addEventListener(document, 'pointerup', finishMouseSelection, {
+        passive: true,
+      }),
+      addEventListener(document, 'pointercancel', finishMouseSelection, {
+        passive: true,
+      }),
 
       addEventListener(
         document,
@@ -1712,6 +1825,21 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
         { passive: true }
       ),
     ];
+  }
+
+  // End any in-flight text or gutter selection and release its document-level
+  // listeners. Pointer completion, cancellation, and editor resets share this
+  // path so none can strand gesture state.
+  #resetSelectionGesture(): void {
+    this.#selectEventDisposes?.forEach((dispose) => dispose());
+    this.#selectEventDisposes = undefined;
+    this.#shouldIgnoreSelectionChange = false;
+    this.#isGutterMouseDown = false;
+    this.#isContentMouseDown = false;
+    this.#altColumnDrag = undefined;
+    this.#shiftKeyPressed = false;
+    this.#selectionStart = undefined;
+    this.#reservedSelections = undefined;
   }
 
   // Swaps in a new batch of transient "select" listeners — gutter drag
@@ -1802,6 +1930,7 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
           if (e.pointerType !== 'mouse') {
             return;
           }
+          this.#altColumnDrag = undefined;
 
           // A click on a read-only deleted line (unified view) selects it
           // natively. Hand the selection to the deleted text and drop the
@@ -1820,6 +1949,7 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
 
           // this is a workaround for the selection rendering glitch
           // happens when selecting content in shadow DOM on Safari
+          const selectEventDisposes: (() => void)[] = [];
           if (
             isSafari() &&
             this.#lineAnnotations !== undefined &&
@@ -1839,16 +1969,52 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
                 }),
               ])
               .flat();
-            this.#replaceSelectEventListeners(annotationDisposes);
+            selectEventDisposes.push(...annotationDisposes);
           }
 
           this.#isContentMouseDown = true;
+          const isAltColumnDrag =
+            e.button === 0 &&
+            e.altKey &&
+            !e.ctrlKey &&
+            !e.metaKey &&
+            !e.shiftKey;
           this.#selectionStart = undefined;
-          if (e.button === 0 && isPrimaryModifier(e)) {
+          if (isAltColumnDrag) {
+            this.#altColumnDrag = {
+              pointerId: e.pointerId,
+              startClientX: e.clientX,
+              clientX: e.clientX,
+              startScrollLeft: contentEl.parentElement?.scrollLeft ?? 0,
+            };
+            this.#reservedSelections = undefined;
+            this.#selections = undefined;
+            this.#updateSelections([]);
+            selectEventDisposes.push(
+              addEventListener(
+                document,
+                'pointermove',
+                (moveEvent) => {
+                  const drag = this.#altColumnDrag;
+                  if (
+                    drag === undefined ||
+                    moveEvent.pointerType !== 'mouse' ||
+                    moveEvent.pointerId !== drag.pointerId
+                  ) {
+                    return;
+                  }
+                  drag.clientX = moveEvent.clientX;
+                  this.#updateAltColumnSelections();
+                },
+                { capture: true, passive: true }
+              )
+            );
+          } else if (e.button === 0 && isPrimaryModifier(e)) {
             this.#reservedSelections = this.#selections?.map((selection) => ({
               ...selection,
             }));
           }
+          this.#replaceSelectEventListeners(selectEventDisposes);
           if (e.shiftKey) {
             const primarySelection = this.#selections?.at(-1);
             if (primarySelection !== undefined) {
@@ -1877,6 +2043,11 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
         // A keystroke is the user acting on the select-all selection (deleting,
         // typing, moving); let selectionchange sync #selections again.
         this.#suppressNativeSelectionSync = false;
+
+        // keyCode 229 opens the composition, before compositionstart fires.
+        if (e.isComposing || e.keyCode === 229) {
+          return;
+        }
 
         const command = resolveEditorCommandFromKeyboardEvent(
           e,
@@ -3111,7 +3282,11 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
     tokenizer.stopBackgroundTokenize();
 
     const t = performance.now();
-    const dirtyLines = tokenizer.tokenize(change, renderRange);
+    const dirtyLines = tokenizer.tokenize(
+      change,
+      renderRange,
+      !this.#isDiff && fileInstance.getLinePosition !== undefined
+    );
     const t2 = performance.now();
 
     if (dirtyLines.size > 0) {
@@ -3468,9 +3643,11 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
     ) {
       return undefined;
     }
-    const viewport =
-      this.#fileInstance?.getEditorViewport?.() ??
-      this.#getDefaultEditorViewport(fileContainer);
+
+    const viewport = this.#getScrollViewport();
+    if (viewport === undefined) {
+      return undefined;
+    }
 
     let viewportTop: number;
     let viewportBottom: number;
@@ -3479,12 +3656,8 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       viewportTop = viewportRect.top;
       viewportBottom = viewportRect.bottom;
     } else {
-      const viewportWindow = viewport.defaultView;
-      if (viewportWindow == null) {
-        return undefined;
-      }
       viewportTop = 0;
-      viewportBottom = viewportWindow.innerHeight;
+      viewportBottom = viewport.defaultView?.innerHeight ?? 0;
     }
 
     const stickyHeader = fileContainer.shadowRoot?.querySelector<HTMLElement>(
@@ -3519,32 +3692,6 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
       }
     }
     return undefined;
-  }
-
-  // Non-virtualized surfaces inherit visibility from their nearest vertical
-  // scrollport; page-scrolling surfaces use the owning document.
-  #getDefaultEditorViewport(
-    fileContainer: HTMLElement
-  ): HTMLElement | Document {
-    const ownerDocument = fileContainer.ownerDocument;
-    let element = fileContainer.parentElement;
-    while (
-      element != null &&
-      element !== ownerDocument.body &&
-      element !== ownerDocument.documentElement
-    ) {
-      const overflowY =
-        element.ownerDocument.defaultView?.getComputedStyle(element).overflowY;
-      if (
-        overflowY === 'auto' ||
-        overflowY === 'scroll' ||
-        overflowY === 'overlay'
-      ) {
-        return element;
-      }
-      element = element.parentElement;
-    }
-    return ownerDocument;
   }
 
   #focusAtPosition(position: Position, preventScroll: boolean): void {
@@ -4013,6 +4160,84 @@ export class Editor<LAnnotation> implements DiffsEditor<LAnnotation> {
         this.#updateSelections(this.#selections ?? []);
       }
     });
+  }
+
+  // Keep the drag's horizontal goal in pointer space so a native caret that
+  // briefly clamps to a short line cannot move every generated selection.
+  #updateAltColumnSelections(): boolean {
+    const drag = this.#altColumnDrag;
+    const selectionStart = this.#selectionStart;
+    const textDocument = this.#textDocument;
+    if (
+      drag === undefined ||
+      drag.focusLine === undefined ||
+      selectionStart === undefined ||
+      textDocument === undefined
+    ) {
+      return false;
+    }
+
+    const anchor =
+      selectionStart.direction === DirectionBackward
+        ? selectionStart.end
+        : selectionStart.start;
+    const scrollLeft = this.#contentElement?.parentElement?.scrollLeft ?? 0;
+    const characterDeltaRaw =
+      (drag.clientX - drag.startClientX + scrollLeft - drag.startScrollLeft) /
+      this.#metrics.ch;
+    const characterDelta =
+      characterDeltaRaw < 0
+        ? -Math.round(-characterDeltaRaw)
+        : Math.round(characterDeltaRaw);
+    const focusCharacter = Math.max(0, anchor.character + characterDelta);
+    const goal = { line: drag.focusLine, character: focusCharacter };
+    if (
+      drag.renderedGoal !== undefined &&
+      comparePosition(drag.renderedGoal, goal) === 0
+    ) {
+      return true;
+    }
+    drag.renderedGoal = goal;
+
+    const selections: EditorSelection[] = [];
+    const step = goal.line < anchor.line ? -1 : 1;
+    for (let line = anchor.line; ; line += step) {
+      if (this.#isLineRenderable(line)) {
+        // Projected UTF-16 offsets must not split a grapheme on this line.
+        const lineText = textDocument.getLineText(line);
+        const anchorOffset = Math.min(anchor.character, lineText.length);
+        const focusOffset = Math.min(focusCharacter, lineText.length);
+        const anchorCharacter = snapCharacterToGraphemeBoundary(
+          lineText,
+          anchorOffset
+        );
+        const lineFocusCharacter =
+          focusOffset === anchorOffset
+            ? anchorCharacter
+            : snapCharacterToGraphemeBoundary(lineText, focusOffset);
+        selections.push({
+          start: {
+            line,
+            character: Math.min(anchorCharacter, lineFocusCharacter),
+          },
+          end: {
+            line,
+            character: Math.max(anchorCharacter, lineFocusCharacter),
+          },
+          direction:
+            anchorCharacter === lineFocusCharacter
+              ? DirectionNone
+              : anchorCharacter < lineFocusCharacter
+                ? DirectionForward
+                : DirectionBackward,
+        });
+      }
+      if (line === goal.line) {
+        break;
+      }
+    }
+    this.#updateSelections(selections);
+    return true;
   }
 
   #updateSelections(selections: EditorSelection[]) {

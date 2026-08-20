@@ -16,11 +16,11 @@ export function StatItem({ label, value, valueClassName }: StatItemProps) {
     <div className="border-border/75 flex items-center justify-between border-t py-1 pr-4 text-[12px] md:pr-0">
       <div className="text-muted-foreground">{label}</div>
       <span
-        className={cn('pl-[1ch] text-right tabular-nums', valueClassName)}
-        style={{
-          fontFamily: 'var(--font-berkeley-mono)',
-          opacity: isZero ? 0.5 : 1,
-        }}
+        className={cn(
+          'font-mono pl-[1ch] text-right tabular-nums',
+          valueClassName
+        )}
+        style={{ opacity: isZero ? 0.5 : 1 }}
       >
         {formatted}
       </span>

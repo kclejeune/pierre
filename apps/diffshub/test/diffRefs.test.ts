@@ -33,11 +33,15 @@ describe('describeDiffRefs', () => {
         null
       )
     ).toEqual({
-      base: { browsePath: '/acme/widgets/tree/main', label: 'main' },
+      base: {
+        browsePath: '/acme/widgets/tree/main',
+        label: 'main',
+      },
       head: {
         browsePath: '/acme/widgets/tree/feat/thing',
         label: 'feat/thing',
       },
+      repo,
     });
   });
 
@@ -45,8 +49,15 @@ describe('describeDiffRefs', () => {
     expect(
       describeDiffRefs({ kind: 'compare', range: 'v6.0..v7.0', repo }, null)
     ).toEqual({
-      base: { browsePath: '/acme/widgets/tree/v6.0', label: 'v6.0' },
-      head: { browsePath: '/acme/widgets/tree/v7.0', label: 'v7.0' },
+      base: {
+        browsePath: '/acme/widgets/tree/v6.0',
+        label: 'v6.0',
+      },
+      head: {
+        browsePath: '/acme/widgets/tree/v7.0',
+        label: 'v7.0',
+      },
+      repo,
     });
   });
 
@@ -57,8 +68,15 @@ describe('describeDiffRefs', () => {
         null
       )
     ).toEqual({
-      base: { browsePath: '/acme/widgets/tree/main', label: 'main' },
-      head: { browsePath: null, label: 'forker:topic' },
+      base: {
+        browsePath: '/acme/widgets/tree/main',
+        label: 'main',
+      },
+      head: {
+        browsePath: null,
+        label: 'forker:topic',
+      },
+      repo,
     });
   });
 
@@ -67,7 +85,11 @@ describe('describeDiffRefs', () => {
       describeDiffRefs({ kind: 'compare', range: 'topic', repo }, null)
     ).toEqual({
       base: null,
-      head: { browsePath: '/acme/widgets/tree/topic', label: 'topic' },
+      head: {
+        browsePath: '/acme/widgets/tree/topic',
+        label: 'topic',
+      },
+      repo,
     });
   });
 
@@ -89,11 +111,15 @@ describe('describeDiffRefs', () => {
     expect(
       describeDiffRefs({ kind: 'pull', number: '42', repo }, pullInfo())
     ).toEqual({
-      base: { browsePath: '/acme/widgets/tree/main', label: 'main' },
+      base: {
+        browsePath: '/acme/widgets/tree/main',
+        label: 'main',
+      },
       head: {
         browsePath: '/acme/widgets/tree/refs/pull/42/head',
         label: 'feat/thing',
       },
+      repo,
     });
   });
 

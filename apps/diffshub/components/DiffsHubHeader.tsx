@@ -198,7 +198,12 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
             inputClassName="w-full md:w-auto md:min-w-[12ch]"
           />
         </div>
-        {diffRefs != null && <DiffRefsBadge refs={diffRefs} />}
+        {diffRefs != null && (
+          <DiffRefsBadge
+            refs={diffRefs}
+            dropdownThemeStyle={dropdownThemeStyle}
+          />
+        )}
       </div>
       <div className="flex w-full items-center justify-between gap-2 md:w-auto md:justify-end">
         <Button

@@ -46,6 +46,10 @@ export function DraftAnnotation({
   onSave,
   onSaveToReview,
 }: DraftAnnotationProps) {
+  // Seeded from the annotation metadata, which is also kept in sync on every
+  // keystroke: the virtualizer unmounts this card when it scrolls offscreen,
+  // so the metadata (which lives on the viewer's item model) is what carries
+  // the in-progress text across a remount.
   const [message, setMessage] = useState(annotation.metadata.message);
   // Comments are authored as the signed-in GitHub user when a token resolves
   // an identity; otherwise fall back to a random demo persona.
@@ -106,6 +110,13 @@ export function DraftAnnotation({
       return;
     }
 
+    // Only a brand-new draft grabs focus. A non-empty mount is the virtualizer
+    // recreating an in-progress card as it scrolls back into view — stealing
+    // focus there would dump the user's scroll keystrokes into the textarea.
+    if (textarea.value !== '') {
+      return;
+    }
+
     textarea.focus({ preventScroll: true });
     const cursorIndex = textarea.value.length;
     textarea.setSelectionRange(cursorIndex, cursorIndex);
@@ -158,7 +169,10 @@ export function DraftAnnotation({
         <textarea
           ref={textareaRef}
           value={message}
-          onChange={({ currentTarget }) => setMessage(currentTarget.value)}
+          onChange={({ currentTarget }) => {
+            annotation.metadata.message = currentTarget.value;
+            setMessage(currentTarget.value);
+          }}
           onKeyDown={(event) => {
             if (event.key === 'Escape') {
               event.preventDefault();

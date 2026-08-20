@@ -1,5 +1,9 @@
 import type { PullRefs } from './githubCommitServer';
-import { type GitHubDiffSource, isSameGitHubRepo } from './githubDiffSource';
+import {
+  type GitHubDiffSource,
+  type GitHubRepo,
+  isSameGitHubRepo,
+} from './githubDiffSource';
 import type { PullInfo } from './pullInfoClient';
 import {
   buildBrowseTreePath,
@@ -9,9 +13,12 @@ import {
 } from './repoBrowser';
 
 // One end of the comparison the viewer shows. `label` is what GitHub calls
-// the ref (fork heads keep GitHub's `owner:branch` spelling); `browsePath` is
-// the app's file browser at that ref, or null when the ref lives in another
-// repository the browser cannot resolve (fork compare heads).
+// the ref (fork heads keep GitHub's `owner:branch` spelling), which is also
+// the spelling its `base...head` compare grammar accepts — the header's ref
+// pickers splice it into new compare ranges when the user swaps the other
+// side. `browsePath` is the app's file browser at that ref, or null when the
+// ref lives in another repository the browser cannot resolve (fork compare
+// heads).
 export interface DiffRefEnd {
   browsePath: string | null;
   label: string;
@@ -22,6 +29,9 @@ export interface DiffRefs {
   // which GitHub compares against the default branch).
   base: DiffRefEnd | null;
   head: DiffRefEnd;
+  // The repository the comparison lives in, so the header's ref pickers can
+  // list its branches and build compare paths.
+  repo: GitHubRepo;
 }
 
 // The base/head pair a diff source compares, for the header's branch
@@ -46,6 +56,7 @@ export function describeDiffRefs(
           browsePath: buildDiffHeadTreePath(source),
           label: head,
         },
+        repo: source.repo,
       };
     }
     case 'pull': {
@@ -63,6 +74,7 @@ export function describeDiffRefs(
           browsePath: buildDiffHeadTreePath(source),
           label: formatPullHeadLabel(pullInfo),
         },
+        repo: source.repo,
       };
     }
   }

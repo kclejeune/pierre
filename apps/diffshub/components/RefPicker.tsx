@@ -1,15 +1,21 @@
 'use client';
 
 import { IconArrowRightShort, IconBranch } from '@pierre/icons';
-import { type CSSProperties, type ReactNode, useState } from 'react';
+import { type CSSProperties, type ReactNode, useRef, useState } from 'react';
 
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from './Command';
 import { useGitHubToken } from './useGitHubToken';
 import { type RepoRefsState, useRepoRefs } from './useRepoRefs';
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/DropdownMenu';
 import { cn } from '@/lib/cn';
@@ -48,16 +54,21 @@ export function useLazyRepoRefs(repo: GitHubRepo): {
 
 interface RefPickerItemsProps {
   refsState: RepoRefsState;
+  // The muted heading above the branch list ("Switch base to…").
+  heading: string;
   // Refs already occupying a side of the comparison, hidden from the list —
   // picking one would build a degenerate or no-op compare.
   excludeRefs: readonly string[];
   getRefHref(ref: string): string;
 }
 
-// The dropdown body shared by every ref picker: the load states, then the
+// The picker body shared by every ref menu: the load states, then the
 // repository's branches, each row linking to the view getRefHref builds.
+// The rows are cmdk items, so RefPillMenu's filter input narrows them
+// (fuzzy, via cmdk's default scorer) and sorts the best match first.
 export function RefPickerItems({
   refsState,
+  heading,
   excludeRefs,
   getRefHref,
 }: RefPickerItemsProps) {
@@ -74,15 +85,18 @@ export function RefPickerItems({
     return <RefPickerNote>No other branches.</RefPickerNote>;
   }
   return (
-    <div className="max-h-72 overflow-y-auto">
-      {branches.map((branch) => (
-        <DropdownMenuItem key={branch} asChild>
-          <a href={getRefHref(branch)}>
-            <span className="truncate font-mono text-[12px]">{branch}</span>
-          </a>
-        </DropdownMenuItem>
-      ))}
-    </div>
+    <>
+      <CommandGroup heading={heading}>
+        {branches.map((branch) => (
+          <RefPickerRow key={branch} value={branch}>
+            <a href={getRefHref(branch)}>
+              <span className="truncate font-mono text-[12px]">{branch}</span>
+            </a>
+          </RefPickerRow>
+        ))}
+      </CommandGroup>
+      <CommandEmpty>No matching branches.</CommandEmpty>
+    </>
   );
 }
 
@@ -92,12 +106,50 @@ function RefPickerNote({ children }: { children: string }) {
   );
 }
 
-// The muted heading above a picker's branch list ("Switch base to…").
-export function RefPickerLabel({ children }: { children: ReactNode }) {
+// A fixed action row above the branch list ("Browse files at this ref",
+// "Commit diff…"), pinned visible whatever the filter text says. cmdk skips
+// registering force-mounted items, so pinned rows never count as filter
+// matches and sink below scored branches once a query is typed.
+export function RefPickerAction({ children }: { children: ReactNode }) {
+  return <RefPickerRow pinned>{children}</RefPickerRow>;
+}
+
+// One selectable picker row. The row's single anchor/Link child does the
+// real navigation, so modified clicks (new tab) and Next.js client links
+// keep their native behavior: pointer selection defers to the anchor click
+// already in flight (detected in the capture phase, since cmdk overwrites
+// onClick), while keyboard selection follows the link by clicking it.
+function RefPickerRow({
+  pinned = false,
+  value,
+  children,
+}: {
+  pinned?: boolean;
+  value?: string;
+  children: ReactNode;
+}) {
+  const itemRef = useRef<HTMLDivElement | null>(null);
+  const anchorClickInFlight = useRef(false);
   return (
-    <DropdownMenuLabel className="text-muted-foreground text-xs">
+    <CommandItem
+      ref={itemRef}
+      value={value}
+      forceMount={pinned || undefined}
+      className="p-0 [&_a]:flex [&_a]:min-w-0 [&_a]:flex-1 [&_a]:items-center [&_a]:gap-2 [&_a]:px-2 [&_a]:py-1.5"
+      onClickCapture={() => {
+        anchorClickInFlight.current = true;
+      }}
+      onSelect={() => {
+        const fromClick = anchorClickInFlight.current;
+        anchorClickInFlight.current = false;
+        if (fromClick) {
+          return;
+        }
+        itemRef.current?.querySelector('a')?.click();
+      }}
+    >
       {children}
-    </DropdownMenuLabel>
+    </CommandItem>
   );
 }
 
@@ -114,7 +166,7 @@ interface RefPillMenuProps {
   title: string;
   dropdownThemeStyle?: CSSProperties;
   onOpenChange(open: boolean): void;
-  // The menu content: leading items, a RefPickerLabel, RefPickerItems.
+  // The menu content: optional RefPickerActions, then RefPickerItems.
   children: ReactNode;
 }
 
@@ -156,10 +208,23 @@ export function RefPillMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
-        className="w-64"
+        className="w-64 p-0"
         style={dropdownThemeStyle}
       >
-        {children}
+        <Command
+          label={title}
+          // Keys the picker handles (typing, arrows, Enter) must not bubble
+          // to the Radix menu, whose typeahead/activation would steal them;
+          // Escape and Tab still bubble so the menu closes normally.
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape' && event.key !== 'Tab') {
+              event.stopPropagation();
+            }
+          }}
+        >
+          <CommandInput placeholder="Filter branches…" autoFocus />
+          <CommandList>{children}</CommandList>
+        </Command>
       </DropdownMenuContent>
     </DropdownMenu>
   );

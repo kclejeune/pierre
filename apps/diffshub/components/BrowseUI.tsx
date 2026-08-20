@@ -23,7 +23,6 @@ import { DiffsHubLogo } from './DiffsHubLogo';
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuTrigger,
 } from './DropdownMenu';
 import { GitHubAssetImage } from './GitHubAssetImage';
@@ -35,8 +34,8 @@ import {
   MarkdownImage,
 } from './MarkdownContent';
 import {
+  RefPickerAction,
   RefPickerItems,
-  RefPickerLabel,
   RefPillArrow,
   RefPillMenu,
   useLazyRepoRefs,
@@ -469,8 +468,8 @@ function BrowseRefsBadge({
         dropdownThemeStyle={dropdownThemeStyle}
         onOpenChange={handleOpenChange}
       >
-        <RefPickerLabel>Compare {treeData.ref} against…</RefPickerLabel>
         <RefPickerItems
+          heading={`Compare ${treeData.ref} against…`}
           refsState={refsState}
           excludeRefs={[treeData.ref]}
           getRefHref={(base) => buildComparePath(repoRef, base, treeData.ref)}
@@ -485,13 +484,13 @@ function BrowseRefsBadge({
         dropdownThemeStyle={dropdownThemeStyle}
         onOpenChange={handleOpenChange}
       >
-        <DropdownMenuItem asChild>
+        <RefPickerAction>
           <a href={buildCommitDiffPath(repoRef, treeData.sha)}>
             Commit diff ({treeData.sha.slice(0, 7)})
           </a>
-        </DropdownMenuItem>
-        <RefPickerLabel>Browse another branch…</RefPickerLabel>
+        </RefPickerAction>
         <RefPickerItems
+          heading="Browse another branch…"
           refsState={refsState}
           excludeRefs={[treeData.ref]}
           getRefHref={(ref) => buildBrowseTreePath(repoRef, ref)}

@@ -1,7 +1,6 @@
 import { Analytics } from '@vercel/analytics/next';
 import { SpeedInsights } from '@vercel/speed-insights/next';
-import { Geist } from 'next/font/google';
-import localFont from 'next/font/local';
+import { Geist, JetBrains_Mono } from 'next/font/google';
 import { connection } from 'next/server';
 import type { ReactNode } from 'react';
 
@@ -22,9 +21,9 @@ const geistSans = Geist({
   subsets: ['latin'],
 });
 
-const berkeleyMono = localFont({
-  src: '../public/fonts/BerkeleyMonoVariable.woff2',
-  variable: '--font-berkeley-mono',
+const jetbrainsMono = JetBrains_Mono({
+  variable: '--font-jetbrains-mono',
+  subsets: ['latin'],
 });
 
 const themeBootstrapScript = `(${String(function applyInitialTheme() {
@@ -83,7 +82,7 @@ export async function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${berkeleyMono.variable} ${geistSans.variable}`}
+      className={`${jetbrainsMono.variable} ${geistSans.variable}`}
     >
       <head>
         {/* The iOS navbar tint <meta name="theme-color"> is created and

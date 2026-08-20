@@ -6,6 +6,12 @@
 
 @theme {
   --font-geist: var(--font-geist-sans);
+  /* JetBrains Mono is the app's monospaced font: Tailwind's `font-mono`
+     utility and the diff viewer (--diffs-font-family below) both resolve to
+     this stack. */
+  --font-mono:
+    var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, 'Liberation Mono', 'Courier New', monospace;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -181,7 +187,7 @@
 }
 
 :root {
-  --diffs-font-family: var(--font-berkeley-mono);
+  --diffs-font-family: var(--font-mono);
   --cv-gutter-vertical: 0px;
   --cv-gutter-horizontal: 0px;
   --cv-mini-gutter-vertical: 0px;

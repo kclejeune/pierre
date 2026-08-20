@@ -5,14 +5,13 @@ import Link from 'next/link';
 import type { CSSProperties } from 'react';
 
 import {
+  RefPickerAction,
   RefPickerItems,
-  RefPickerLabel,
   RefPillArrow,
   RefPillMenu,
   useLazyRepoRefs,
 } from './RefPicker';
 import type { RepoRefsState } from './useRepoRefs';
-import { DropdownMenuItem } from '@/components/DropdownMenu';
 import { cn } from '@/lib/cn';
 import type { DiffRefEnd, DiffRefs } from '@/lib/diffRefs';
 import { buildComparePath } from '@/lib/repoBrowser';
@@ -124,15 +123,15 @@ function RefPill({
       onOpenChange={onOpenChange}
     >
       {end?.browsePath != null && (
-        <DropdownMenuItem asChild>
+        <RefPickerAction>
           <Link href={end.browsePath}>
             <IconFolder className="size-3" />
             Browse files at this ref
           </Link>
-        </DropdownMenuItem>
+        </RefPickerAction>
       )}
-      <RefPickerLabel>Switch {kind} to…</RefPickerLabel>
       <RefPickerItems
+        heading={`Switch ${kind} to…`}
         refsState={refsState}
         excludeRefs={excludeRefs}
         getRefHref={getRefHref}

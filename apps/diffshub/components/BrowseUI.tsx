@@ -24,7 +24,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from './DropdownMenu';
 import { GitHubAssetImage } from './GitHubAssetImage';
@@ -35,6 +34,13 @@ import {
   MarkdownContent,
   MarkdownImage,
 } from './MarkdownContent';
+import {
+  RefPickerItems,
+  RefPickerLabel,
+  RefPillArrow,
+  RefPillMenu,
+  useLazyRepoRefs,
+} from './RefPicker';
 import { themeController } from './themeController';
 import { ThemedCodeView } from './ThemedCodeView';
 import { ThemedFileTree } from './ThemedFileTree';
@@ -43,7 +49,6 @@ import { useChromeThemeProps } from './useChromeThemeProps';
 import { type GitHubTokenState, useGitHubToken } from './useGitHubToken';
 import { useGitHubUser } from './useGitHubUser';
 import { useIsWorkerPoolReadyOrDisabled } from './useIsWorkerPoolReadyOrDisabled';
-import { useRepoRefs } from './useRepoRefs';
 import { cn } from '@/lib/cn';
 import {
   BASE_FILE_TREE_OPTIONS,
@@ -277,9 +282,12 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
             {owner}/{repo}
           </a>
           {treeData != null && (
-            <span className="border-border bg-muted text-muted-foreground rounded-md border px-1.5 py-0.5 font-mono text-[11px]">
-              {treeData.ref}
-            </span>
+            <BrowseRefsBadge
+              owner={owner}
+              repo={repo}
+              treeData={treeData}
+              dropdownThemeStyle={dropdownThemeStyle}
+            />
           )}
           {selectedPath != null && (
             <span className="text-muted-foreground truncate font-mono text-[12px]">
@@ -311,15 +319,6 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
           >
             <IconBook className="size-4 md:size-3" />
           </Button>
-          {treeData != null && (
-            <BrowseDiffMenu
-              owner={owner}
-              repo={repo}
-              treeData={treeData}
-              token={token}
-              dropdownThemeStyle={dropdownThemeStyle}
-            />
-          )}
           <Button
             asChild
             variant="ghost"
@@ -435,86 +434,70 @@ function BrowseAccountMenu({
   );
 }
 
-// The tree→diff toggle: the head commit's own diff, or a GitHub-style
-// compare of this ref against any branch. Compare bases load lazily on
-// first open so tree views that never toggle pay nothing.
-function BrowseDiffMenu({
+// The browse header's ref display, the same base/head pill element the diff
+// header shows. The head pill names the browsed ref and switches it (or
+// opens the head commit's own diff); the base pill starts as a muted
+// placeholder and picking a branch opens the GitHub-style compare of this
+// ref against it — the compare affordance the old "Diff…" menu provided.
+function BrowseRefsBadge({
   owner,
   repo,
-  token,
   treeData,
   dropdownThemeStyle,
 }: {
   owner: string;
   repo: string;
-  token: string | undefined;
   treeData: RepoTreeData;
   dropdownThemeStyle: CSSProperties | undefined;
 }) {
-  const [opened, setOpened] = useState(false);
-  const [reloadToken, setReloadToken] = useState(0);
   const repoRef = useMemo(() => ({ owner, repo }), [owner, repo]);
-  const refsState = useRepoRefs(repoRef, token, opened, reloadToken);
-  const bases = useMemo(
-    () =>
-      refsState.kind === 'ready'
-        ? refsState.data.branches.filter((branch) => branch !== treeData.ref)
-        : [],
-    [refsState, treeData.ref]
-  );
+  // One lazy branch listing feeds both pills; either menu's first open
+  // triggers the single load.
+  const { handleOpenChange, refsState } = useLazyRepoRefs(repoRef);
   return (
-    <DropdownMenu
-      onOpenChange={(open) => {
-        if (open) {
-          setOpened(true);
-          if (refsState.kind === 'error') {
-            setReloadToken((current) => current + 1);
-          }
-        }
-      }}
+    <div
+      role="group"
+      aria-label={`Browsing ${treeData.ref}`}
+      className="flex min-w-0 shrink-0 items-center gap-1 text-xs"
     >
-      <DropdownMenuTrigger className="text-muted-foreground hover:text-foreground cursor-pointer font-sans text-[13px] whitespace-nowrap hover:underline">
-        Diff…
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="end"
-        className="w-64"
-        style={dropdownThemeStyle}
+      <RefPillMenu
+        kind="base"
+        label="choose…"
+        placeholder
+        ariaLabel={`base: none — pick a ref to compare ${treeData.ref} against`}
+        title={`Compare ${treeData.ref} against a base ref`}
+        dropdownThemeStyle={dropdownThemeStyle}
+        onOpenChange={handleOpenChange}
+      >
+        <RefPickerLabel>Compare {treeData.ref} against…</RefPickerLabel>
+        <RefPickerItems
+          refsState={refsState}
+          excludeRefs={[treeData.ref]}
+          getRefHref={(base) => buildComparePath(repoRef, base, treeData.ref)}
+        />
+      </RefPillMenu>
+      <RefPillArrow />
+      <RefPillMenu
+        kind="head"
+        label={treeData.ref}
+        ariaLabel={`head: ${treeData.ref} — switch the browsed ref or view its diff`}
+        title="Switch the browsed ref"
+        dropdownThemeStyle={dropdownThemeStyle}
+        onOpenChange={handleOpenChange}
       >
         <DropdownMenuItem asChild>
           <a href={buildCommitDiffPath(repoRef, treeData.sha)}>
             Commit diff ({treeData.sha.slice(0, 7)})
           </a>
         </DropdownMenuItem>
-        <DropdownMenuLabel className="text-muted-foreground text-xs">
-          Compare {treeData.ref} against…
-        </DropdownMenuLabel>
-        {(refsState.kind === 'idle' || refsState.kind === 'loading') && (
-          <p className="text-muted-foreground px-2 py-1.5 text-sm">
-            Loading branches…
-          </p>
-        )}
-        {refsState.kind === 'error' && (
-          <p className="text-muted-foreground px-2 py-1.5 text-sm">
-            Loading branches failed.
-          </p>
-        )}
-        {refsState.kind === 'ready' && bases.length === 0 && (
-          <p className="text-muted-foreground px-2 py-1.5 text-sm">
-            No other branches.
-          </p>
-        )}
-        <div className="max-h-72 overflow-y-auto">
-          {bases.map((base) => (
-            <DropdownMenuItem key={base} asChild>
-              <a href={buildComparePath(repoRef, base, treeData.ref)}>
-                <span className="truncate font-mono text-[12px]">{base}</span>
-              </a>
-            </DropdownMenuItem>
-          ))}
-        </div>
-      </DropdownMenuContent>
-    </DropdownMenu>
+        <RefPickerLabel>Browse another branch…</RefPickerLabel>
+        <RefPickerItems
+          refsState={refsState}
+          excludeRefs={[treeData.ref]}
+          getRefHref={(ref) => buildBrowseTreePath(repoRef, ref)}
+        />
+      </RefPillMenu>
+    </div>
   );
 }
 

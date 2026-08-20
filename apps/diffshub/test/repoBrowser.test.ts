@@ -1,6 +1,22 @@
 import { describe, expect, test } from 'bun:test';
 
-import { splitKnownRepoRef } from '../lib/repoBrowser';
+import { buildComparePath, splitKnownRepoRef } from '../lib/repoBrowser';
+
+describe('buildComparePath', () => {
+  const repo = { owner: 'acme', repo: 'widgets' };
+
+  test('names both ends with the three-dot separator', () => {
+    expect(buildComparePath(repo, 'main', 'feat/thing')).toBe(
+      '/acme/widgets/compare/main...feat/thing'
+    );
+  });
+
+  test("a null base emits GitHub's compare-against-default shorthand", () => {
+    expect(buildComparePath(repo, null, 'topic')).toBe(
+      '/acme/widgets/compare/topic'
+    );
+  });
+});
 
 describe('splitKnownRepoRef', () => {
   test('empty remainder is the default-branch root', () => {

@@ -77,12 +77,18 @@ export function buildCommitDiffPath(repo: GitHubRepo, sha: string): string {
   return `/${encodePath(`${repo.owner}/${repo.repo}`)}/commit/${encodePath(sha)}`;
 }
 
+// A null base emits GitHub's bare `compare/<head>` shorthand, which compares
+// against the default branch (splitCompareRange parses it back the same way).
 export function buildComparePath(
   repo: GitHubRepo,
-  base: string,
+  base: string | null,
   head: string
 ): string {
-  return `/${encodePath(`${repo.owner}/${repo.repo}`)}/compare/${encodePath(base)}...${encodePath(head)}`;
+  const range =
+    base == null
+      ? encodePath(head)
+      : `${encodePath(base)}...${encodePath(head)}`;
+  return `/${encodePath(`${repo.owner}/${repo.repo}`)}/compare/${range}`;
 }
 
 // The diff a ref carries: a commit's own diff for sha-like refs, otherwise

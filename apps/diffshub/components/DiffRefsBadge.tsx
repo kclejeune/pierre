@@ -1,13 +1,25 @@
 'use client';
 
-import { IconArrowRightShort, IconBranch } from '@pierre/icons';
+import { IconFolder } from '@pierre/icons';
 import Link from 'next/link';
+import type { CSSProperties } from 'react';
 
+import {
+  RefPickerItems,
+  RefPickerLabel,
+  RefPillArrow,
+  RefPillMenu,
+  useLazyRepoRefs,
+} from './RefPicker';
+import type { RepoRefsState } from './useRepoRefs';
+import { DropdownMenuItem } from '@/components/DropdownMenu';
 import { cn } from '@/lib/cn';
 import type { DiffRefEnd, DiffRefs } from '@/lib/diffRefs';
+import { buildComparePath } from '@/lib/repoBrowser';
 
 interface DiffRefsBadgeProps {
   className?: string;
+  dropdownThemeStyle?: CSSProperties;
   refs: DiffRefs;
 }
 
@@ -16,9 +28,24 @@ interface DiffRefsBadgeProps {
 // left, head/new on the right) and GitHub's `base...head` compare grammar —
 // with the arrow between them pointing left, the direction the changes flow
 // ("merge <head> into <base>"). Each pill is labeled outright so the reading
-// never depends on the arrow alone. Refs that resolve in the file browser
-// link there, so "what does this branch look like?" is one click.
-export function DiffRefsBadge({ className, refs }: DiffRefsBadgeProps) {
+// never depends on the arrow alone. Clicking a pill opens a ref picker:
+// browse the files at that ref, or swap that side of the comparison for
+// another branch (which navigates to the matching compare view — on a pull
+// request this deliberately leaves the PR for a plain compare and never
+// touches the PR's own base). A bare compare (`compare/<ref>`) shows its
+// implicit base as a muted "default" pill that picks an explicit base.
+export function DiffRefsBadge({
+  className,
+  dropdownThemeStyle,
+  refs,
+}: DiffRefsBadgeProps) {
+  // One lazy branch listing feeds both pills; either menu's first open
+  // triggers the single load.
+  const { handleOpenChange, refsState } = useLazyRepoRefs(refs.repo);
+  // Refs already occupying a side of the comparison, hidden from both
+  // pickers — picking one would build a degenerate or no-op compare.
+  const excludeRefs =
+    refs.base == null ? [refs.head.label] : [refs.base.label, refs.head.label];
   const description =
     refs.base == null
       ? `Changes on ${refs.head.label} (head) against the default branch`
@@ -30,54 +57,86 @@ export function DiffRefsBadge({ className, refs }: DiffRefsBadgeProps) {
       aria-label={description}
       title={description}
     >
-      {refs.base != null && (
-        <>
-          <RefPill kind="base" end={refs.base} />
-          {/* The icon set has no left-pointing short arrow; mirror the right one. */}
-          <IconArrowRightShort
-            aria-hidden="true"
-            className="text-muted-foreground size-3 shrink-0 -scale-x-100"
-          />
-        </>
-      )}
-      <RefPill kind="head" end={refs.head} />
+      <RefPill
+        kind="base"
+        end={refs.base}
+        refs={refs}
+        refsState={refsState}
+        excludeRefs={excludeRefs}
+        onOpenChange={handleOpenChange}
+        dropdownThemeStyle={dropdownThemeStyle}
+      />
+      <RefPillArrow />
+      <RefPill
+        kind="head"
+        end={refs.head}
+        refs={refs}
+        refsState={refsState}
+        excludeRefs={excludeRefs}
+        onOpenChange={handleOpenChange}
+        dropdownThemeStyle={dropdownThemeStyle}
+      />
     </div>
   );
 }
 
-const PILL_CLASS =
-  'inline-flex h-6 min-w-0 max-w-[32ch] items-center gap-1.5 rounded-md border border-[var(--diffshub-card-border,var(--color-border))] bg-[var(--diffshub-card-bg,var(--color-muted))] px-1.5';
+interface RefPillProps {
+  dropdownThemeStyle?: CSSProperties;
+  // Null is the implicit base of a bare `compare/<ref>` range, which GitHub
+  // compares against the default branch: shown as a muted "default"
+  // placeholder, and picking a branch makes the base explicit.
+  end: DiffRefEnd | null;
+  excludeRefs: readonly string[];
+  kind: 'base' | 'head';
+  onOpenChange(open: boolean): void;
+  refs: DiffRefs;
+  refsState: RepoRefsState;
+}
 
-function RefPill({ end, kind }: { end: DiffRefEnd; kind: 'base' | 'head' }) {
-  const content = (
-    <>
-      <span
-        aria-hidden="true"
-        className="text-muted-foreground inline-flex shrink-0 items-center gap-1 text-[10px] font-medium tracking-wide uppercase"
-      >
-        <IconBranch className="size-3" />
-        {kind}
-      </span>
-      <span className="truncate font-mono text-[11px]">{end.label}</span>
-    </>
-  );
-  if (end.browsePath == null) {
-    return (
-      <span className={PILL_CLASS} aria-label={`${kind}: ${end.label}`}>
-        {content}
-      </span>
-    );
-  }
+function RefPill({
+  dropdownThemeStyle,
+  end,
+  excludeRefs,
+  kind,
+  onOpenChange,
+  refs,
+  refsState,
+}: RefPillProps) {
+  // Picking a branch swaps this pill's side of the comparison and navigates
+  // to the resulting compare view; the other side keeps its spelling (fork
+  // heads stay `owner:branch`, a bare-compare head keeps its implicit base).
+  const getRefHref = (ref: string) =>
+    kind === 'base'
+      ? buildComparePath(refs.repo, ref, refs.head.label)
+      : buildComparePath(refs.repo, refs.base?.label ?? null, ref);
   return (
-    <Link
-      href={end.browsePath}
-      aria-label={`${kind}: ${end.label} — browse files at this ref`}
-      className={cn(
-        PILL_CLASS,
-        'hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] hover:text-foreground focus-visible:ring-ring outline-none focus-visible:ring-2'
-      )}
+    <RefPillMenu
+      kind={kind}
+      label={end?.label ?? 'default'}
+      placeholder={end == null}
+      ariaLabel={
+        end == null
+          ? 'base: the default branch — pick another ref to compare against'
+          : `${kind}: ${end.label} — browse this ref or pick another to compare`
+      }
+      title={`Change the ${kind} ref`}
+      dropdownThemeStyle={dropdownThemeStyle}
+      onOpenChange={onOpenChange}
     >
-      {content}
-    </Link>
+      {end?.browsePath != null && (
+        <DropdownMenuItem asChild>
+          <Link href={end.browsePath}>
+            <IconFolder className="size-3" />
+            Browse files at this ref
+          </Link>
+        </DropdownMenuItem>
+      )}
+      <RefPickerLabel>Switch {kind} to…</RefPickerLabel>
+      <RefPickerItems
+        refsState={refsState}
+        excludeRefs={excludeRefs}
+        getRefHref={getRefHref}
+      />
+    </RefPillMenu>
   );
 }

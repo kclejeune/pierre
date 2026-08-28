@@ -5,12 +5,16 @@ import { BrowseUI } from '@/components/BrowseUI';
 import { ReviewUI } from '@/components/ReviewUI';
 import { describeDiffTarget } from '@/lib/describeDiffTarget';
 import { getGitHubEnvironment } from '@/lib/githubEnvironment';
+import { parsePullReturnPath } from '@/lib/pullCommitsList';
 import { resolveDiffshubViewerRoute } from '@/lib/resolveDiffshubViewerRoute';
 import { SITE_DESCRIPTION, SITE_NAME, SITE_ORIGIN } from '@/lib/site';
 
 interface ViewByPathProps {
   params: Promise<{ path: string[] }>;
-  searchParams: Promise<{ domain?: string | string[] }>;
+  searchParams: Promise<{
+    domain?: string | string[];
+    fromPull?: string | string[];
+  }>;
 }
 
 function readRequestedDomain(domain: string | string[] | undefined) {
@@ -69,7 +73,7 @@ export async function DiffsHubViewByPathPage({
   searchParams,
 }: ViewByPathProps) {
   const { path } = await params;
-  const { domain } = await searchParams;
+  const { domain, fromPull } = await searchParams;
   const route = resolveDiffshubViewerRoute(
     path,
     readRequestedDomain(domain),
@@ -101,6 +105,9 @@ export async function DiffsHubViewByPathPage({
         domain={route.domain}
         initialUrl={route.url}
         path={route.upstreamPath}
+        returnToPullPath={parsePullReturnPath(
+          Array.isArray(fromPull) ? fromPull[0] : fromPull
+        )}
       />
     </div>
   );

@@ -12,12 +12,14 @@ import {
 } from './githubCommitServer';
 import { encodeURLSegment } from './githubDiffSource';
 import { createJSONResponse } from './jsonResponse';
+import type { PlainFetch } from './plainFetch';
 import type { PullCommitSummary } from './pullCommitsList';
 import type {
   PullCheck,
   PullCheckState,
   PullDetails,
   PullLabel,
+  PullMergeCapabilities,
   PullReviewer,
   PullReviewerState,
 } from './pullInfoClient';
@@ -214,53 +216,66 @@ export function normalizeCommitStatus(status: unknown): PullCheck | null {
   };
 }
 
-// The latest submitted review verdict per reviewer, from the pull's reviews
-// listing (first 100 reviews — enough for the verdict fold in practice).
+// The latest submitted review verdict per reviewer. GitHub returns reviews in
+// chronological order, so every page must be folded before the result is safe
+// to present as current.
 export async function fetchPullReviewStates(
   repo: GitRepoRef,
   pull: string,
-  token: string | undefined
+  token: string | undefined,
+  fetcher: PlainFetch = fetch
 ): Promise<Map<string, { avatarUrl?: string; state: PullReviewerState }>> {
-  const payload = await fetchGitHubJSON(
-    repoPath(repo, `/pulls/${encodeURLSegment(pull)}/reviews?per_page=100`),
-    token
-  );
-  return foldReviewStates(payload);
+  const reviews: unknown[] = [];
+  for (let page = 1; ; page += 1) {
+    const payload = await fetchGitHubJSON(
+      repoPath(
+        repo,
+        `/pulls/${encodeURLSegment(pull)}/reviews?per_page=100&page=${page}`
+      ),
+      token,
+      fetcher
+    );
+    if (!Array.isArray(payload)) {
+      break;
+    }
+    reviews.push(...payload);
+    if (payload.length < 100) {
+      break;
+    }
+  }
+  return foldReviewStates(reviews);
 }
 
 // Every CI signal on the head commit: modern check runs plus legacy commit
-// statuses (both APIs are still in active use), first 100 of each.
+// statuses. The APIs paginate and have different permission behavior, so each
+// is exhausted independently and either successful half remains useful.
 export async function fetchPullChecks(
   repo: GitRepoRef,
   headSha: string,
-  token: string | undefined
+  token: string | undefined,
+  fetcher: PlainFetch = fetch
 ): Promise<PullCheck[]> {
-  const [checkRunsPayload, statusPayload] = await Promise.all([
-    fetchGitHubJSON(
-      repoPath(
-        repo,
-        `/commits/${encodeURLSegment(headSha)}/check-runs?per_page=100`
-      ),
-      token
-    ),
-    fetchGitHubJSON(
-      repoPath(repo, `/commits/${encodeURLSegment(headSha)}/status`),
-      token
-    ),
+  const [checkRunsResult, statusesResult] = await Promise.allSettled([
+    fetchAllCheckRuns(repo, headSha, token, fetcher),
+    fetchAllCommitStatuses(repo, headSha, token, fetcher),
   ]);
+  if (
+    checkRunsResult.status === 'rejected' &&
+    statusesResult.status === 'rejected'
+  ) {
+    throw checkRunsResult.reason;
+  }
   const checks: PullCheck[] = [];
-  const runs = asRecord(checkRunsPayload)?.check_runs;
-  if (Array.isArray(runs)) {
-    for (const run of runs) {
+  if (checkRunsResult.status === 'fulfilled') {
+    for (const run of checkRunsResult.value) {
       const check = normalizeCheckRun(run);
       if (check != null) {
         checks.push(check);
       }
     }
   }
-  const statuses = asRecord(statusPayload)?.statuses;
-  if (Array.isArray(statuses)) {
-    for (const status of statuses) {
+  if (statusesResult.status === 'fulfilled') {
+    for (const status of statusesResult.value) {
       const check = normalizeCommitStatus(status);
       if (check != null) {
         checks.push(check);
@@ -268,6 +283,91 @@ export async function fetchPullChecks(
     }
   }
   return checks;
+}
+
+async function fetchAllCheckRuns(
+  repo: GitRepoRef,
+  headSha: string,
+  token: string | undefined,
+  fetcher: PlainFetch
+): Promise<unknown[]> {
+  const runs: unknown[] = [];
+  for (let page = 1; ; page += 1) {
+    const payload = await fetchGitHubJSON(
+      repoPath(
+        repo,
+        `/commits/${encodeURLSegment(headSha)}/check-runs?per_page=100&page=${page}`
+      ),
+      token,
+      fetcher
+    );
+    const pageRuns = asRecord(payload)?.check_runs;
+    if (!Array.isArray(pageRuns)) {
+      break;
+    }
+    runs.push(...pageRuns);
+    if (pageRuns.length < 100) {
+      break;
+    }
+  }
+  return runs;
+}
+
+async function fetchAllCommitStatuses(
+  repo: GitRepoRef,
+  headSha: string,
+  token: string | undefined,
+  fetcher: PlainFetch
+): Promise<unknown[]> {
+  const statuses: unknown[] = [];
+  for (let page = 1; ; page += 1) {
+    const payload = await fetchGitHubJSON(
+      repoPath(
+        repo,
+        `/commits/${encodeURLSegment(headSha)}/status?per_page=100&page=${page}`
+      ),
+      token,
+      fetcher
+    );
+    const pageStatuses = asRecord(payload)?.statuses;
+    if (!Array.isArray(pageStatuses)) {
+      break;
+    }
+    statuses.push(...pageStatuses);
+    if (pageStatuses.length < 100) {
+      break;
+    }
+  }
+  return statuses;
+}
+
+export function parsePullMergeCapabilities(
+  payload: unknown
+): PullMergeCapabilities {
+  const record = asRecord(payload);
+  const permissions = asRecord(record?.permissions);
+  const canMerge =
+    permissions?.admin === true ||
+    permissions?.maintain === true ||
+    permissions?.push === true;
+  return {
+    canMerge,
+    methods: [
+      ...(record?.allow_merge_commit === true ? (['merge'] as const) : []),
+      ...(record?.allow_squash_merge === true ? (['squash'] as const) : []),
+      ...(record?.allow_rebase_merge === true ? (['rebase'] as const) : []),
+    ],
+  };
+}
+
+export async function fetchPullMergeCapabilities(
+  repo: GitRepoRef,
+  token: string | undefined,
+  fetcher: PlainFetch = fetch
+): Promise<PullMergeCapabilities> {
+  return parsePullMergeCapabilities(
+    await fetchGitHubJSON(repoPath(repo, ''), token, fetcher)
+  );
 }
 
 // One page of a pulls/{n}/commits listing, narrowed to what the range

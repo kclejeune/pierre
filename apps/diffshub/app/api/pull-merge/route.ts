@@ -60,6 +60,7 @@ export async function POST(request: NextRequest) {
     );
     const record = asRecord(payload);
     return createJSONResponse({
+      message: typeof record?.message === 'string' ? record.message : undefined,
       merged: record?.merged === true,
       sha: typeof record?.sha === 'string' ? record.sha : undefined,
     });

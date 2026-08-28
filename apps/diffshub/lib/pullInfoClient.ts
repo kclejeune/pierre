@@ -5,6 +5,7 @@ import {
   type PullRequestRef,
   requestJSON,
 } from './pullCommentsClient';
+import type { PullMergeMethod } from './pullMergeClient';
 
 // A label on the pull request; `color` is GitHub's 6-digit hex without '#'.
 export interface PullLabel {
@@ -36,8 +37,19 @@ export interface PullCheck {
   state: PullCheckState;
 }
 
+export interface PullMergeCapabilities {
+  canMerge: boolean;
+  methods: PullMergeMethod[];
+}
+
+export interface PullDetailsSupplement {
+  checks: PullCheck[] | null;
+  mergeCapabilities: PullMergeCapabilities | null;
+  reviewers: PullReviewer[] | null;
+}
+
 // The pull request metadata the details panel shows beyond refs. `checks` is
-// null when the CI listing could not be loaded (the rest still renders).
+// null until the lazy supplement loads, or when CI could not be loaded.
 export interface PullDetails {
   authorLogin?: string;
   body: string;
@@ -70,4 +82,44 @@ export async function fetchPullInfo(
     signal,
   });
   return payload as PullInfo;
+}
+
+export async function fetchPullDetailsSupplement(
+  pull: PullRequestRef,
+  headSha: string,
+  token: string | undefined,
+  signal?: AbortSignal
+): Promise<PullDetailsSupplement> {
+  const params = pullParams(pull);
+  params.set('head', headSha);
+  const payload = await requestJSON(`/api/pull-details?${params}`, {
+    headers: buildHeaders(token),
+    signal,
+  });
+  return payload as PullDetailsSupplement;
+}
+
+export function mergePullReviewers(
+  requested: readonly PullReviewer[],
+  submitted: readonly PullReviewer[] | null
+): PullReviewer[] {
+  if (submitted == null) {
+    return [...requested];
+  }
+  const submittedByLogin = new Map(
+    submitted.map((reviewer) => [reviewer.login, reviewer])
+  );
+  const merged = requested.map((reviewer) => {
+    const verdict = submittedByLogin.get(reviewer.login);
+    if (verdict == null) {
+      return reviewer;
+    }
+    submittedByLogin.delete(reviewer.login);
+    return {
+      ...verdict,
+      avatarUrl: reviewer.avatarUrl ?? verdict.avatarUrl,
+    };
+  });
+  merged.push(...submittedByLogin.values());
+  return merged;
 }

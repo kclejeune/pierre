@@ -91,7 +91,7 @@ async function gitDataRequest(
     }
   );
   if (!response.ok) {
-    const detail = (await response.text()).trim();
+    const detail = parseGitHubErrorMessage(await response.text());
     throw new GitHubCommitError(
       detail === ''
         ? `GitHub request ${path} failed (${response.status}).`
@@ -103,6 +103,25 @@ async function gitDataRequest(
   return response.json();
 }
 
+// GitHub errors are normally JSON objects with a user-facing `message`. Keep
+// non-JSON bodies intact for GitHub Enterprise proxies and older endpoints.
+export function parseGitHubErrorMessage(body: string): string {
+  const trimmed = body.trim();
+  if (trimmed === '') {
+    return '';
+  }
+  try {
+    const payload: unknown = JSON.parse(trimmed);
+    const message =
+      typeof payload === 'object' && payload != null
+        ? (payload as Record<string, unknown>).message
+        : undefined;
+    return typeof message === 'string' && message !== '' ? message : trimmed;
+  } catch {
+    return trimmed;
+  }
+}
+
 // Maps GitHub's write-failure responses onto the small set of causes the UI
 // can act on. 422 is GitHub's catch-all for ref-update rejections, so the
 // body text disambiguates a moved branch from branch protection.
@@ -110,6 +129,9 @@ function classifyGitHubWriteFailure(
   status: number,
   detail: string
 ): GitHubCommitErrorCode {
+  if (status === 409) {
+    return 'stale-head';
+  }
   if (status === 401 || status === 403) {
     return 'forbidden';
   }

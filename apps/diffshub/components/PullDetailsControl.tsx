@@ -9,7 +9,14 @@ import {
   IconMinus,
   IconX,
 } from '@pierre/icons';
-import { type ReactNode, useState } from 'react';
+import {
+  type ComponentProps,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { toast } from 'sonner';
 
 import { Button } from './Button';
@@ -25,11 +32,15 @@ import { MarkdownContent } from './MarkdownContent';
 import { useDropdownChromeStyle } from './useDropdownChromeStyle';
 import { cn } from '@/lib/cn';
 import type { PullRequestRef } from '@/lib/pullCommentsClient';
-import type {
-  PullCheck,
-  PullDetails,
-  PullInfo,
-  PullReviewer,
+import {
+  fetchPullDetailsSupplement,
+  mergePullReviewers,
+  type PullCheck,
+  type PullDetails,
+  type PullDetailsSupplement,
+  type PullInfo,
+  type PullMergeCapabilities,
+  type PullReviewer,
 } from '@/lib/pullInfoClient';
 import { mergePullRequest, type PullMergeMethod } from '@/lib/pullMergeClient';
 
@@ -62,15 +73,92 @@ export function PullDetailsControl({
   pullRequest,
 }: PullDetailsControlProps) {
   const dropdownThemeStyle = useDropdownChromeStyle();
+  const [open, setOpen] = useState(false);
+  const [merged, setMerged] = useState(false);
+  const supplementRequest = useRef<AbortController | null>(null);
+  const [supplement, setSupplement] = useState<
+    | { kind: 'idle' | 'loading' }
+    | { kind: 'error'; message: string }
+    | { kind: 'ready'; value: PullDetailsSupplement }
+  >({ kind: 'idle' });
   // usePullInfo clears state whenever the pull changes, so a non-null
   // pullInfo always belongs to this pullRequest.
   const details = pullInfo?.details;
+  const headSha = pullInfo?.headSha;
+
+  useEffect(() => {
+    supplementRequest.current?.abort();
+    supplementRequest.current = null;
+    setMerged(false);
+    setSupplement({ kind: 'idle' });
+    return () => supplementRequest.current?.abort();
+  }, [headSha, pullRequest.number, pullRequest.owner, pullRequest.repo]);
+
+  const loadSupplement = useCallback(
+    (force = false) => {
+      if (
+        headSha == null ||
+        (!force && supplement.kind !== 'idle') ||
+        supplement.kind === 'loading'
+      ) {
+        return;
+      }
+      supplementRequest.current?.abort();
+      const controller = new AbortController();
+      supplementRequest.current = controller;
+      setSupplement({ kind: 'loading' });
+      void fetchPullDetailsSupplement(
+        pullRequest,
+        headSha,
+        getGitHubToken(),
+        controller.signal
+      ).then(
+        (value) => {
+          if (!controller.signal.aborted) {
+            supplementRequest.current = null;
+            setSupplement({ kind: 'ready', value });
+          }
+        },
+        (error: unknown) => {
+          if (!controller.signal.aborted) {
+            supplementRequest.current = null;
+            setSupplement({
+              kind: 'error',
+              message:
+                error instanceof Error
+                  ? error.message
+                  : 'Loading pull request details failed.',
+            });
+          }
+        }
+      );
+    },
+    [getGitHubToken, headSha, pullRequest, supplement.kind]
+  );
+
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      setOpen(nextOpen);
+      if (nextOpen) {
+        loadSupplement();
+      }
+    },
+    [loadSupplement]
+  );
+
   if (details == null) {
     return null;
   }
-  const ciState = aggregateCheckState(details.checks);
+  const supplementalValue =
+    supplement.kind === 'ready' ? supplement.value : null;
+  const checks = supplementalValue?.checks ?? details.checks;
+  const reviewers = mergePullReviewers(
+    details.reviewers,
+    supplementalValue?.reviewers ?? null
+  );
+  const ciState = aggregateCheckState(checks);
   return (
-    <DropdownMenu modal={false}>
+    <DropdownMenu modal={false} open={open} onOpenChange={handleOpenChange}>
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
@@ -127,27 +215,43 @@ export function PullDetailsControl({
               ))}
             </div>
           )}
-          {details.reviewers.length > 0 && (
+          {reviewers.length > 0 && (
             <PanelSection heading="Reviewers">
               <ul className="flex flex-col gap-1">
-                {details.reviewers.map((reviewer) => (
+                {reviewers.map((reviewer) => (
                   <ReviewerRow key={reviewer.login} reviewer={reviewer} />
                 ))}
               </ul>
             </PanelSection>
           )}
           <PanelSection heading="Checks">
-            {details.checks == null ? (
+            {supplement.kind === 'idle' || supplement.kind === 'loading' ? (
+              <p className="text-muted-foreground animate-pulse text-xs">
+                Loading checks…
+              </p>
+            ) : supplement.kind === 'error' ? (
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-destructive text-xs">{supplement.message}</p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => loadSupplement(true)}
+                >
+                  Retry
+                </Button>
+              </div>
+            ) : checks == null ? (
               <p className="text-muted-foreground text-xs">
                 CI status could not be loaded.
               </p>
-            ) : details.checks.length === 0 ? (
+            ) : checks.length === 0 ? (
               <p className="text-muted-foreground text-xs">
                 No checks reported on the head commit.
               </p>
             ) : (
               <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto">
-                {details.checks.map((check, index) => (
+                {checks.map((check, index) => (
                   <CheckRow key={`${check.name}-${index}`} check={check} />
                 ))}
               </ul>
@@ -164,13 +268,21 @@ export function PullDetailsControl({
               </div>
             )}
           </PanelSection>
-          {details.state === 'open' && canWrite && (
-            <MergeControls
+          {details.state === 'open' && canWrite && !merged && (
+            <MergeCapabilitySection
               baseRef={pullInfo?.baseRef}
+              capabilities={supplementalValue?.mergeCapabilities ?? null}
               details={details}
               getGitHubToken={getGitHubToken}
-              headSha={pullInfo?.headSha}
-              onMerged={onMerged}
+              headSha={headSha}
+              loading={
+                supplement.kind === 'idle' || supplement.kind === 'loading'
+              }
+              onMerged={() => {
+                setMerged(true);
+                setOpen(false);
+                onMerged();
+              }}
               pullRequest={pullRequest}
             />
           )}
@@ -178,6 +290,47 @@ export function PullDetailsControl({
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+function MergeCapabilitySection({
+  capabilities,
+  loading,
+  ...controls
+}: {
+  capabilities: PullMergeCapabilities | null;
+  loading: boolean;
+} & Omit<ComponentProps<typeof MergeControls>, 'capabilities'>) {
+  if (loading) {
+    return (
+      <p className="text-muted-foreground border-t pt-3 text-xs">
+        Checking merge permissions…
+      </p>
+    );
+  }
+  if (capabilities == null) {
+    return (
+      <p className="text-muted-foreground border-t pt-3 text-xs">
+        Merge permissions could not be loaded. Open this pull request on GitHub
+        to merge it.
+      </p>
+    );
+  }
+  if (!capabilities.canMerge) {
+    return (
+      <p className="text-muted-foreground border-t pt-3 text-xs">
+        Your GitHub token does not have permission to merge this pull request.
+      </p>
+    );
+  }
+  if (capabilities.methods.length === 0) {
+    return (
+      <p className="text-muted-foreground border-t pt-3 text-xs">
+        This repository does not expose a direct merge method. Use GitHub for
+        merge queues or repository-specific merge rules.
+      </p>
+    );
+  }
+  return <MergeControls {...controls} capabilities={capabilities} />;
 }
 
 function PanelSection({
@@ -330,6 +483,7 @@ function ReviewerRow({ reviewer }: { reviewer: PullReviewer }) {
 // fails with a stale-head error instead of merging unseen commits.
 function MergeControls({
   baseRef,
+  capabilities,
   details,
   getGitHubToken,
   headSha,
@@ -337,13 +491,16 @@ function MergeControls({
   pullRequest,
 }: {
   baseRef: string | undefined;
+  capabilities: PullMergeCapabilities;
   details: PullDetails;
   getGitHubToken(): string | undefined;
   headSha: string | undefined;
   onMerged(): void;
   pullRequest: PullRequestRef;
 }) {
-  const [method, setMethod] = useState<PullMergeMethod>('merge');
+  const [method, setMethod] = useState<PullMergeMethod>(
+    capabilities.methods[0] ?? 'merge'
+  );
   const [confirming, setConfirming] = useState(false);
   const [isMerging, setIsMerging] = useState(false);
   const blockedReason = details.draft
@@ -369,7 +526,7 @@ function MergeControls({
         toast.success('Pull request merged.');
         onMerged();
       } else {
-        toast.error('GitHub did not merge the pull request.');
+        toast.error(result.message ?? 'GitHub did not merge the pull request.');
       }
     } catch (error) {
       toast.error(
@@ -391,13 +548,11 @@ function MergeControls({
           value={method}
           onValueChange={(value) => setMethod(value as PullMergeMethod)}
         >
-          {(Object.keys(MERGE_METHOD_LABELS) as PullMergeMethod[]).map(
-            (value) => (
-              <ButtonGroupItem key={value} value={value}>
-                {MERGE_METHOD_LABELS[value]}
-              </ButtonGroupItem>
-            )
-          )}
+          {capabilities.methods.map((value) => (
+            <ButtonGroupItem key={value} value={value}>
+              {MERGE_METHOD_LABELS[value]}
+            </ButtonGroupItem>
+          ))}
         </ButtonGroup>
         <Button
           type="button"

@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   filterRepoGroups,
   groupRepoDirectory,
+  mergeRepoDirectoryPayload,
   type RepoDirectoryPayload,
 } from '../repoDirectory';
 
@@ -89,5 +90,29 @@ describe('filterRepoGroups', () => {
 
   test('no match returns nothing', () => {
     expect(filterRepoGroups(groups, 'zzz')).toEqual([]);
+  });
+});
+
+describe('mergeRepoDirectoryPayload', () => {
+  test('appends continuation pages without duplicating repositories', () => {
+    const merged = mergeRepoDirectoryPayload(
+      { ...PAYLOAD, nextPage: 4 },
+      {
+        orgs: [],
+        repoOwners: [{ kind: 'org', login: 'new-org' }],
+        repos: [repo('acme', 'widgets'), repo('new-org', 'new-repo')],
+        viewer: null,
+        nextPage: 5,
+      }
+    );
+    expect(merged.repos.map((entry) => entry.fullName)).toEqual([
+      'acme/widgets',
+      'kclejeune/pierre',
+      'friend/shared-tool',
+      'acme/gadgets',
+      'new-org/new-repo',
+    ]);
+    expect(merged.viewer).toEqual(PAYLOAD.viewer);
+    expect(merged.nextPage).toBe(5);
   });
 });

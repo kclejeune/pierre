@@ -88,19 +88,35 @@ interface ReviewUIProps {
   domain?: string;
   initialUrl: string;
   path: string;
+  returnToPullPath?: string;
 }
 
-export function ReviewUI({ domain, initialUrl, path }: ReviewUIProps) {
+export function ReviewUI({
+  domain,
+  initialUrl,
+  path,
+  returnToPullPath,
+}: ReviewUIProps) {
   // Provide the diffshub-scoped theme context, then render the body BELOW it so
   // the diffs hook + selection hook can read the controller context.
   return (
     <ThemeSourceProvider controller={themeController}>
-      <ReviewUIInner domain={domain} initialUrl={initialUrl} path={path} />
+      <ReviewUIInner
+        domain={domain}
+        initialUrl={initialUrl}
+        path={path}
+        returnToPullPath={returnToPullPath}
+      />
     </ThemeSourceProvider>
   );
 }
 
-function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
+function ReviewUIInner({
+  domain,
+  initialUrl,
+  path,
+  returnToPullPath,
+}: ReviewUIProps) {
   const isWorkerPoolReadyOrDisable = useIsWorkerPoolReadyOrDisabled();
   const [diffStyle, setDiffStyle] = useState<'split' | 'unified'>('split');
   // The user's explicit split/unified pick. The live diffStyle is viewport-
@@ -834,6 +850,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
           overflow={overflow}
           pinnableRepo={pinnableRepo}
           browseFilesPath={browseFilesPath}
+          returnToPullPath={returnToPullPath}
           reviewControl={
             pullRequest != null ? (
               <>
@@ -872,6 +889,7 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
           }
           fileTreeOverlayOpen={fileTreeOverlayOpen}
           fileTreeAvailable={treeSource != null}
+          fileSearchAvailable={fileSearchPaths != null}
           githubTokenActive={hasGitHubToken}
           onClearGitHubToken={clearGitHubToken}
           onCollapsePatternsChange={handleCollapsePatternsChange}

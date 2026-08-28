@@ -16,6 +16,7 @@ import { useDropdownChromeStyle } from './useDropdownChromeStyle';
 import { cn } from '@/lib/cn';
 import type { PullRequestRef } from '@/lib/pullCommentsClient';
 import {
+  commitRangeViewerHref,
   commitRangeViewerPath,
   fetchPullCommitsList,
   type PullCommitSummary,
@@ -101,6 +102,8 @@ export function PullCommitRangePicker({
           commits[rangeStart],
           commits[rangeEnd]
         );
+  const viewerHref =
+    viewerPath == null ? null : commitRangeViewerHref(viewerPath, pullRequest);
 
   const toggleCommit = (sha: string) => {
     setSelection((current) => {
@@ -113,16 +116,16 @@ export function PullCommitRangePicker({
   };
 
   const viewSelection = () => {
-    if (viewerPath == null) {
+    if (viewerHref == null) {
       return;
     }
     const label =
       rangeStart === rangeEnd
         ? `${pullRequest.owner}/${pullRequest.repo}#${pullRequest.number} @ ${commits[rangeStart].sha.slice(0, 7)}`
         : `${pullRequest.owner}/${pullRequest.repo}#${pullRequest.number} commits ${rangeStart + 1}–${rangeEnd + 1}`;
-    recordRecentDiff({ path: viewerPath, title: label });
+    recordRecentDiff({ path: viewerHref, title: label });
     setOpen(false);
-    router.push(viewerPath);
+    router.push(viewerHref);
   };
 
   return (
@@ -156,9 +159,17 @@ export function PullCommitRangePicker({
             </p>
           )}
           {commitsState.kind === 'error' && (
-            <p className="text-destructive py-2 text-sm">
-              {commitsState.message}
-            </p>
+            <div className="flex items-center justify-between gap-2 py-2">
+              <p className="text-destructive text-sm">{commitsState.message}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={() => setCommitsState({ kind: 'idle' })}
+              >
+                Retry
+              </Button>
+            </div>
           )}
           {commitsState.kind === 'ready' && (
             <>
@@ -200,7 +211,7 @@ export function PullCommitRangePicker({
                     type="button"
                     variant="default"
                     size="xs"
-                    disabled={viewerPath == null}
+                    disabled={viewerHref == null}
                     onClick={viewSelection}
                   >
                     View changes

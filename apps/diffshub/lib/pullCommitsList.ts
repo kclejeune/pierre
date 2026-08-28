@@ -55,3 +55,18 @@ export function commitRangeViewerPath(
   }
   return buildComparePath(repo, start.parentSha, end.sha);
 }
+
+export function commitRangeViewerHref(
+  path: string,
+  pull: PullRequestRef
+): string {
+  const returnPath = `/${encodeURIComponent(pull.owner)}/${encodeURIComponent(pull.repo)}/pull/${encodeURIComponent(pull.number)}`;
+  return `${path}?fromPull=${encodeURIComponent(returnPath)}`;
+}
+
+export function parsePullReturnPath(value: unknown): string | undefined {
+  return typeof value === 'string' &&
+    /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+$/.test(value)
+    ? value
+    : undefined;
+}

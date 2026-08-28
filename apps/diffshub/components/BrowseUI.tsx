@@ -26,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from './DropdownMenu';
 import { FileSearchPalette } from './FileSearchPalette';
+import { FileSearchPaletteTrigger } from './FileSearchPaletteTrigger';
 import { GitHubAssetImage } from './GitHubAssetImage';
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
 import { GitHubTokenControl } from './GitHubTokenControl';
@@ -301,6 +302,9 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
           </span>
         )}
         <div className="flex items-center gap-2">
+          {treeData != null && (
+            <FileSearchPaletteTrigger className="hidden w-40 md:inline-flex" />
+          )}
           <Button
             type="button"
             variant="ghost"

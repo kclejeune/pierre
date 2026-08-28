@@ -20,6 +20,7 @@ import {
   IconSymbolDiffstat,
 } from '@pierre/icons';
 import { type ColorMode } from '@pierre/theming';
+import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import {
   type CSSProperties,
@@ -37,6 +38,7 @@ import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
 import { DiffRefsBadge } from './DiffRefsBadge';
 import { DiffsHubLogo } from './DiffsHubLogo';
 import { DiffUrlForm } from './DiffUrlForm';
+import { FileSearchPaletteTrigger } from './FileSearchPaletteTrigger';
 import { useChromeThemeProps } from './useChromeThemeProps';
 import { usePinnedRepos } from './usePinnedRepos';
 import { Button } from '@/components/Button';
@@ -80,6 +82,7 @@ interface HeaderProps {
   // bare shorthand like `owner/repo#1` that would resolve as a relative href.
   upstreamUrl: string;
   fileTreeAvailable: boolean;
+  fileSearchAvailable: boolean;
   fileTreeOverlayOpen: boolean;
   githubTokenActive: boolean;
   initialUrl: string;
@@ -97,6 +100,9 @@ interface HeaderProps {
   // PR-only review submission control (pending-count badge + verdict panel),
   // provided by the parent so the header stays source-agnostic.
   reviewControl?: ReactNode;
+  // Set by commit-range views opened from a pull request so exploration has
+  // an explicit route back to the full review context.
+  returnToPullPath?: string;
   onClearGitHubToken(): void;
   onCollapsePatternsChange(text: string): void;
   onSaveGitHubToken(token: string): void;
@@ -125,6 +131,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
   diffStyle,
   upstreamUrl,
   fileTreeAvailable,
+  fileSearchAvailable,
   fileTreeOverlayOpen,
   githubTokenActive,
   initialUrl,
@@ -135,6 +142,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
   pinnableRepo,
   browseFilesPath,
   reviewControl,
+  returnToPullPath,
   onClearGitHubToken,
   onCollapsePatternsChange,
   onSaveGitHubToken,
@@ -187,6 +195,19 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
       >
         <DiffsHubLogo />
       </Link>
+      {returnToPullPath != null && (
+        <Button
+          asChild
+          variant="ghost"
+          size="sm"
+          className={cn(CHROME_ICON_BUTTON_CLASS, 'gap-1.5 px-2')}
+        >
+          <Link href={returnToPullPath}>
+            <ArrowLeft className="size-3.5" />
+            Back to PR
+          </Link>
+        </Button>
+      )}
       <div className="order-last flex w-full min-w-0 flex-col gap-2 md:order-none md:mr-auto md:w-auto md:flex-row md:items-center md:gap-3">
         <div className="flex min-w-0 items-center gap-1.5">
           <UpstreamHostChip url={upstreamUrl} />
@@ -219,6 +240,9 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
           <IconFileTreeFill className="size-4 md:size-3" />
         </Button>
         <div className="flex items-center gap-2">
+          {fileSearchAvailable && (
+            <FileSearchPaletteTrigger className="hidden w-36 lg:inline-flex" />
+          )}
           {pinnableRepo != null && pinnedRepos.hydrated && (
             <Button
               type="button"

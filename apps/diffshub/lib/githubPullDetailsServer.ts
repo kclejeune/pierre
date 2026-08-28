@@ -10,6 +10,7 @@ import {
   repoPath,
 } from './githubCommitServer';
 import { encodeURLSegment } from './githubDiffSource';
+import type { PullCommitSummary } from './pullCommitsList';
 import type {
   PullCheck,
   PullCheckState,
@@ -258,4 +259,61 @@ export async function fetchPullChecks(
     }
   }
   return checks;
+}
+
+// One page of a pulls/{n}/commits listing, narrowed to what the range
+// picker renders: sha, first parent, message headline, author identity.
+export function parsePullCommitsPage(payload: unknown): PullCommitSummary[] {
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+  const commits: PullCommitSummary[] = [];
+  for (const entry of payload) {
+    const record = asRecord(entry);
+    const sha = stringField(record, 'sha');
+    if (record == null || sha == null) {
+      continue;
+    }
+    const commit = asRecord(record.commit);
+    const message = stringField(commit, 'message') ?? '';
+    const parents = Array.isArray(record.parents) ? record.parents : [];
+    commits.push({
+      authorAvatarUrl: stringField(record.author, 'avatar_url'),
+      // The GitHub account when the commit email resolved to one, otherwise
+      // the raw commit author name.
+      authorLogin:
+        stringField(record.author, 'login') ??
+        stringField(commit?.author, 'name'),
+      authoredAt: stringField(commit?.author, 'date'),
+      headline: message.split('\n', 1)[0],
+      parentSha: stringField(parents[0], 'sha'),
+      sha,
+    });
+  }
+  return commits;
+}
+
+// Every commit of the pull request, oldest first. GitHub caps this listing
+// at 250 commits, so three 100-per-page requests cover it.
+export async function fetchPullCommitsListing(
+  repo: GitRepoRef,
+  pull: string,
+  token: string | undefined
+): Promise<PullCommitSummary[]> {
+  const commits: PullCommitSummary[] = [];
+  for (let page = 1; page <= 3; page += 1) {
+    const payload = await fetchGitHubJSON(
+      repoPath(
+        repo,
+        `/pulls/${encodeURLSegment(pull)}/commits?per_page=100&page=${page}`
+      ),
+      token
+    );
+    const parsed = parsePullCommitsPage(payload);
+    commits.push(...parsed);
+    if (parsed.length < 100) {
+      break;
+    }
+  }
+  return commits;
 }

@@ -173,6 +173,33 @@ describe('refreshGitHubSessionIfNeeded', () => {
     expect(readStoredGitHubSession()).toBeUndefined();
   });
 
+  // A deployment with DIFFSHUB_REFRESH_TOKEN_MAX_TTL=0 issues expiring grants
+  // with no refresh token; the client must clear the dead token at expiry so
+  // the sign-in prompt surfaces instead of a wall of 401s.
+  test('signs out an expiring grant with no refresh token once it expires', async () => {
+    const now = Date.now();
+    saveGitHubGrantToStorage(
+      { accessToken: 'ghu_access', expiresIn: 8 * 3600 },
+      now - 9 * HOUR_MS
+    );
+    expect(nextGitHubRefreshDueAt()).toBe(now - 9 * HOUR_MS + 8 * HOUR_MS);
+    const { calls, fetcher } = refreshFetcher(() => Response.json({}));
+    expect(await refreshGitHubSessionIfNeeded(fetcher)).toBe('signed-out');
+    expect(calls).toHaveLength(0);
+    expect(readStoredGitHubToken()).toBe('');
+  });
+
+  test('leaves an unexpired refresh-token-less grant alone', async () => {
+    saveGitHubGrantToStorage(
+      { accessToken: 'ghu_access', expiresIn: 8 * 3600 },
+      Date.now()
+    );
+    const { calls, fetcher } = refreshFetcher(() => Response.json({}));
+    expect(await refreshGitHubSessionIfNeeded(fetcher)).toBe('none');
+    expect(calls).toHaveLength(0);
+    expect(readStoredGitHubToken()).toBe('ghu_access');
+  });
+
   test('signs out without a request once the refresh token has expired', async () => {
     const now = Date.now();
     saveGitHubGrantToStorage(

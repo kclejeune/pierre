@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
+import { resetGitHubEnvironmentCache } from '../lib/githubEnvironment';
 import {
+  applyRefreshTokenPolicy,
   buildAuthorizeURL,
   buildCompletionURL,
   exchangeOAuthCode,
@@ -353,5 +355,83 @@ describe('refreshOAuthToken', () => {
     );
     expect(transient).toBeInstanceOf(Error);
     expect(transient).not.toBeInstanceOf(OAuthRefreshRejectedError);
+  });
+
+  // With refresh tokens disabled, any submitted token predates the policy;
+  // the unrecoverable-rejection error makes the route answer 401 so the
+  // browser clears it and prompts a fresh sign-in — without contacting GitHub.
+  test('rejects before contacting GitHub when the deployment disables refresh tokens', async () => {
+    process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL = '0';
+    resetGitHubEnvironmentCache();
+    try {
+      const rejected = await refreshOAuthToken({
+        ...baseOptions,
+        fetcher: () => {
+          throw new Error('GitHub must not be contacted');
+        },
+      }).then(
+        () => undefined,
+        (thrown: unknown) => thrown
+      );
+      expect(rejected).toBeInstanceOf(OAuthRefreshRejectedError);
+    } finally {
+      delete process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL;
+      resetGitHubEnvironmentCache();
+    }
+  });
+});
+
+describe('applyRefreshTokenPolicy', () => {
+  const EXPIRING_GRANT = {
+    accessToken: 'ghu_token',
+    expiresIn: 28_800,
+    refreshToken: 'ghr_refresh',
+    refreshTokenExpiresIn: 15_811_200,
+  };
+
+  test('the default policy passes grants through untouched', () => {
+    expect(
+      applyRefreshTokenPolicy(EXPIRING_GRANT, { issueRefreshTokens: true })
+    ).toEqual(EXPIRING_GRANT);
+  });
+
+  test('disabled issuance strips the refresh token but keeps the expiry', () => {
+    expect(
+      applyRefreshTokenPolicy(EXPIRING_GRANT, { issueRefreshTokens: false })
+    ).toEqual({ accessToken: 'ghu_token', expiresIn: 28_800 });
+  });
+
+  test('a max TTL clamps only lifetimes above it', () => {
+    const capped = applyRefreshTokenPolicy(EXPIRING_GRANT, {
+      issueRefreshTokens: true,
+      maxTTLSeconds: 86_400,
+    });
+    expect(capped.refreshTokenExpiresIn).toBe(86_400);
+    expect(capped.refreshToken).toBe('ghr_refresh');
+
+    expect(
+      applyRefreshTokenPolicy(EXPIRING_GRANT, {
+        issueRefreshTokens: true,
+        maxTTLSeconds: 30_000_000,
+      }).refreshTokenExpiresIn
+    ).toBe(15_811_200);
+  });
+
+  test('a refresh token GitHub issued without a lifetime still gets the cap', () => {
+    expect(
+      applyRefreshTokenPolicy(
+        { accessToken: 'ghu_token', refreshToken: 'ghr_refresh' },
+        { issueRefreshTokens: true, maxTTLSeconds: 3600 }
+      ).refreshTokenExpiresIn
+    ).toBe(3600);
+  });
+
+  test('grants without a refresh token are untouched by the cap', () => {
+    expect(
+      applyRefreshTokenPolicy(
+        { accessToken: 'ghp_pat' },
+        { issueRefreshTokens: true, maxTTLSeconds: 3600 }
+      )
+    ).toEqual({ accessToken: 'ghp_pat' });
   });
 });

@@ -12,7 +12,11 @@
 // itself — its shape and wire encoding — lives in ./githubOAuthGrant so
 // browser code never has to import this module for it.
 
-import { GITHUB_USER_AGENT } from './githubEnvironment';
+import {
+  getRefreshTokenPolicy,
+  GITHUB_USER_AGENT,
+  type RefreshTokenPolicy,
+} from './githubEnvironment';
 import {
   type OAuthTokenGrant,
   parseGrantRecord,
@@ -200,6 +204,37 @@ export async function exchangeOAuthCode(options: {
   );
 }
 
+// Enforces the deployment's refresh-token policy on a grant. Applied inside
+// requestOAuthToken — the one place grants are constructed — so no grant can
+// leave this module unpoliced, whatever route obtained it. Disabled refresh
+// tokens are dropped entirely (the browser then signs the viewer out when the
+// access token dies); a configured max TTL clamps the refresh-token lifetime
+// the browser is told, which its own expiry check enforces — including for a
+// refresh token GitHub issued without a lifetime.
+export function applyRefreshTokenPolicy(
+  grant: OAuthTokenGrant,
+  policy: RefreshTokenPolicy = getRefreshTokenPolicy()
+): OAuthTokenGrant {
+  if (!policy.issueRefreshTokens) {
+    const {
+      refreshToken: _refreshToken,
+      refreshTokenExpiresIn: _refreshTokenExpiresIn,
+      ...rest
+    } = grant;
+    return rest;
+  }
+  if (policy.maxTTLSeconds == null || grant.refreshToken == null) {
+    return grant;
+  }
+  return {
+    ...grant,
+    refreshTokenExpiresIn: Math.min(
+      grant.refreshTokenExpiresIn ?? Infinity,
+      policy.maxTTLSeconds
+    ),
+  };
+}
+
 // GitHub's error code for a refresh token that is expired, revoked, or was
 // already used (GitHub rotates refresh tokens on every refresh). The session
 // cannot be recovered from it — the viewer has to sign in again — which is
@@ -210,8 +245,10 @@ export class OAuthRefreshRejectedError extends Error {}
 
 // Mints a fresh user access token from a refresh token (GitHub Apps with
 // token expiration enabled). Throws OAuthRefreshRejectedError when GitHub
-// reports the refresh token itself is no longer valid, a plain Error for
-// every other failure.
+// reports the refresh token itself is no longer valid — or, before contacting
+// GitHub, when this deployment has refresh tokens disabled (any submitted
+// token predates the policy; rejecting makes the browser clear it and sign in
+// afresh). A plain Error covers every other failure.
 export async function refreshOAuthToken(options: {
   clientId: string;
   clientSecret: string;
@@ -219,6 +256,11 @@ export async function refreshOAuthToken(options: {
   refreshToken: string;
   webURL: string;
 }): Promise<OAuthTokenGrant> {
+  if (!getRefreshTokenPolicy().issueRefreshTokens) {
+    throw new OAuthRefreshRejectedError(
+      'Refresh tokens are disabled on this deployment.'
+    );
+  }
   return requestOAuthToken(
     options.webURL,
     {
@@ -263,7 +305,7 @@ async function requestOAuthToken(
   const record = data as Record<string, unknown>;
   const grant = parseGrantRecord(record);
   if (grant != null) {
-    return grant;
+    return applyRefreshTokenPolicy(grant);
   }
 
   const description = record.error_description ?? record.error;

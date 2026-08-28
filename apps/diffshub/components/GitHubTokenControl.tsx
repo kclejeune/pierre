@@ -39,15 +39,11 @@ function TokenLink({ href, children }: { href: string; children: string }) {
   );
 }
 
-export const GitHubTokenControl = memo(function GitHubTokenControl({
-  active,
-  className,
-  onClear,
-  onSave,
-  title = 'GitHub Token',
-}: GitHubTokenControlProps) {
+// The manual paste path: token-creation links plus the paste box. A separate
+// component so its draft state exists only on deployments that offer PAT
+// input at all (DIFFSHUB_ENABLE_PAT_INPUT).
+function GitHubPATForm({ onSave }: { onSave(token: string): void }) {
   const { isGitHubDotCom, oauthEnabled, webURL } = useGitHubEnvironment();
-  const githubUser = useGitHubUser();
   const [draftToken, setDraftToken] = useState('');
   const canSave = draftToken.trim() !== '';
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -58,6 +54,61 @@ export const GitHubTokenControl = memo(function GitHubTokenControl({
     onSave(draftToken);
     setDraftToken('');
   };
+
+  return (
+    <>
+      <p className="text-muted-foreground mt-1 max-w-124 text-[13px] text-pretty">
+        {oauthEnabled ? 'Or create' : 'Create'}{' '}
+        {isGitHubDotCom ? (
+          <>
+            <TokenLink href={`${webURL}${CREATE_TOKEN_PATH}`}>
+              a fine-grained PAT
+            </TokenLink>{' '}
+            on GitHub to view private diffs, or{' '}
+            <TokenLink href={`${webURL}${CLASSIC_TOKEN_PATH}`}>
+              a classic token
+            </TokenLink>{' '}
+            with repo scope.
+          </>
+        ) : (
+          <>
+            <TokenLink href={`${webURL}${CLASSIC_TOKEN_PATH}`}>
+              a personal access token
+            </TokenLink>{' '}
+            with repo scope to view private diffs.
+          </>
+        )}{' '}
+        Saved only in localStorage.
+      </p>
+      <form className="mt-2 flex gap-1.5" onSubmit={handleSubmit}>
+        <Input
+          className="bg-background flex-1"
+          inputSize="sm"
+          type="password"
+          autoComplete="off"
+          data-1p-ignore
+          data-lpignore="true"
+          placeholder="Paste token"
+          value={draftToken}
+          onChange={({ currentTarget }) => setDraftToken(currentTarget.value)}
+        />
+        <Button type="submit" size="sm" disabled={!canSave}>
+          Save
+        </Button>
+      </form>
+    </>
+  );
+}
+
+export const GitHubTokenControl = memo(function GitHubTokenControl({
+  active,
+  className,
+  onClear,
+  onSave,
+  title = 'GitHub Token',
+}: GitHubTokenControlProps) {
+  const { oauthEnabled, patInputEnabled } = useGitHubEnvironment();
+  const githubUser = useGitHubUser();
   // The login route restores the user to the exact diff they were viewing, so
   // the return path is captured at click time rather than render time.
   const handleSignIn = () => {
@@ -102,15 +153,7 @@ export const GitHubTokenControl = memo(function GitHubTokenControl({
             or use a different token.
           </p>
           <div className="mt-2 flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setDraftToken('');
-                onClear();
-              }}
-            >
+            <Button type="button" variant="outline" size="sm" onClick={onClear}>
               Clear saved token
             </Button>
           </div>
@@ -125,47 +168,15 @@ export const GitHubTokenControl = memo(function GitHubTokenControl({
               </Button>
             </div>
           )}
-          <p className="text-muted-foreground mt-1 max-w-124 text-[13px] text-pretty">
-            {oauthEnabled ? 'Or create' : 'Create'}{' '}
-            {isGitHubDotCom ? (
-              <>
-                <TokenLink href={`${webURL}${CREATE_TOKEN_PATH}`}>
-                  a fine-grained PAT
-                </TokenLink>{' '}
-                on GitHub to view private diffs, or{' '}
-                <TokenLink href={`${webURL}${CLASSIC_TOKEN_PATH}`}>
-                  a classic token
-                </TokenLink>{' '}
-                with repo scope.
-              </>
-            ) : (
-              <>
-                <TokenLink href={`${webURL}${CLASSIC_TOKEN_PATH}`}>
-                  a personal access token
-                </TokenLink>{' '}
-                with repo scope to view private diffs.
-              </>
-            )}{' '}
-            Saved only in localStorage.
-          </p>
-          <form className="mt-2 flex gap-1.5" onSubmit={handleSubmit}>
-            <Input
-              className="bg-background flex-1"
-              inputSize="sm"
-              type="password"
-              autoComplete="off"
-              data-1p-ignore
-              data-lpignore="true"
-              placeholder="Paste token"
-              value={draftToken}
-              onChange={({ currentTarget }) =>
-                setDraftToken(currentTarget.value)
-              }
-            />
-            <Button type="submit" size="sm" disabled={!canSave}>
-              Save
-            </Button>
-          </form>
+          {patInputEnabled ? (
+            <GitHubPATForm onSave={onSave} />
+          ) : (
+            <p className="text-muted-foreground mt-1 max-w-124 text-[13px] text-pretty">
+              {oauthEnabled
+                ? 'Sign in with GitHub to view private diffs.'
+                : 'Sign-in is not configured for this deployment.'}
+            </p>
+          )}
         </>
       )}
     </section>

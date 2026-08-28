@@ -14,6 +14,11 @@
 //   DIFFSHUB_GITHUB_CLIENT_ID / DIFFSHUB_GITHUB_CLIENT_SECRET
 //                              GitHub App or OAuth App credentials enabling
 //                              "Sign in with GitHub" instead of pasting a PAT.
+//   DIFFSHUB_ENABLE_PAT_INPUT  Whether the UI offers the manual PAT paste
+//                              box; see isPATInputEnabled for the default.
+//   DIFFSHUB_REFRESH_TOKEN_MAX_TTL
+//                              How refresh tokens may reach the browser; see
+//                              RefreshTokenPolicy.
 
 import { createJSONResponse } from './jsonResponse';
 import { parseBearerToken } from './parseBearerToken';
@@ -51,14 +56,115 @@ export function createGitHubJSONHeaders(
 // with the caller's own token or not at all, and the gate simply turns the
 // resulting wall of 401s into a sign-in prompt.
 export function isLoginRequired(): boolean {
-  const value = process.env.DIFFSHUB_REQUIRE_LOGIN?.trim().toLowerCase();
-  if (value === '1' || value === 'true') {
-    return true;
+  return (
+    parseBooleanEnv(process.env.DIFFSHUB_REQUIRE_LOGIN) ??
+    !getGitHubEnvironment().isGitHubDotCom
+  );
+}
+
+// The shared contract for boolean DIFFSHUB_* flags: 1/true forces on, 0/false
+// forces off, anything else (including unset) means "use the default".
+function parseBooleanEnv(value: string | undefined): boolean | undefined {
+  switch (value?.trim().toLowerCase()) {
+    case '1':
+    case 'true':
+      return true;
+    case '0':
+    case 'false':
+      return false;
+    default:
+      return undefined;
   }
-  if (value === '0' || value === 'false') {
-    return false;
+}
+
+// Whether the UI offers the manual PAT paste box. Hiding it keeps long-lived
+// PATs out of localStorage and puts every viewer on the OAuth flow
+// (short-lived, revocable, centrally managed tokens). When unset, the default
+// follows that reasoning: a require-login deployment with OAuth configured
+// hides the box, but one without OAuth keeps it — the PAT is then the only
+// way through the login gate, and hiding it would lock everyone out.
+// UI-only: a token set through devtools still works, since the server never
+// distinguishes token origins.
+export function isPATInputEnabled(): boolean {
+  return (
+    parseBooleanEnv(process.env.DIFFSHUB_ENABLE_PAT_INPUT) ??
+    !(isLoginRequired() && getOAuthClientId() != null)
+  );
+}
+
+// The public OAuth client id, the one signal for "Sign in with GitHub can be
+// offered". Deliberately not the full OAuth config: statically prerendered
+// pages bake this at build time, and requiring the secret there would force
+// it into build environments and image layers. A missing secret surfaces at
+// the login route instead.
+function getOAuthClientId(): string | undefined {
+  const clientId = process.env.DIFFSHUB_GITHUB_CLIENT_ID?.trim();
+  return clientId === '' ? undefined : clientId;
+}
+
+// How refresh tokens are allowed to reach (and persist in) the browser,
+// all from DIFFSHUB_REFRESH_TOKEN_MAX_TTL — a refresh token in localStorage
+// is a long-lived credential, and the cap is the one knob over it. Unset
+// leaves GitHub's own lifetime (six months); a positive duration caps it;
+// 0 stops refresh tokens from being issued at all.
+export interface RefreshTokenPolicy {
+  // False when the max TTL is 0: grants leave the server without a refresh
+  // token and the refresh route refuses exchanges — the only server-enforced
+  // setting, since the routes never see a token they didn't just mint.
+  issueRefreshTokens: boolean;
+  // Cap applied to refresh_token_expires_in on every grant; undefined means
+  // uncapped. A positive cap is client-cooperative: the browser signs itself
+  // out at the capped expiry, but the refresh route cannot tell a capped
+  // token from a fresh one, so a tampered client keeps GitHub's full
+  // lifetime.
+  maxTTLSeconds?: number;
+}
+
+// Like the instance environment above, the policy is fixed for the process
+// lifetime and memoized after the first read — which also surfaces a
+// malformed max TTL at the first request rather than on every one.
+let cachedRefreshTokenPolicy: RefreshTokenPolicy | undefined;
+
+export function getRefreshTokenPolicy(): RefreshTokenPolicy {
+  if (cachedRefreshTokenPolicy == null) {
+    const maxTTLSeconds = parseDurationSeconds(
+      process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL,
+      'DIFFSHUB_REFRESH_TOKEN_MAX_TTL'
+    );
+    cachedRefreshTokenPolicy = {
+      issueRefreshTokens: maxTTLSeconds !== 0,
+      maxTTLSeconds,
+    };
   }
-  return !getGitHubEnvironment().isGitHubDotCom;
+  return cachedRefreshTokenPolicy;
+}
+
+// Parses an operator-supplied duration: a bare number is seconds, and the
+// s/m/h/d suffixes cover the spans people actually configure (`24h`, `7d`).
+// Zero is a valid, meaningful value (the refresh-token policy reads it as
+// "issue none"); anything unparseable throws rather than silently running
+// without the cap.
+export function parseDurationSeconds(
+  input: string | undefined,
+  label: string
+): number | undefined {
+  const trimmed = input?.trim();
+  if (trimmed == null || trimmed === '') {
+    return undefined;
+  }
+  const match = /^(\d+)([smhd])?$/.exec(trimmed.toLowerCase());
+  if (match == null) {
+    throw new Error(
+      `${label} must be a duration like 86400, 24h, or 7d: ${trimmed}`
+    );
+  }
+  const multipliers: Record<string, number> = {
+    s: 1,
+    m: 60,
+    h: 3600,
+    d: 86_400,
+  };
+  return Number(match[1]) * multipliers[match[2] ?? 's'];
 }
 
 export const LOGIN_REQUIRED_MESSAGE =
@@ -109,6 +215,9 @@ export interface GitHubClientEnvironment {
   host: string;
   isGitHubDotCom: boolean;
   oauthEnabled: boolean;
+  // False hides the manual PAT paste box and token-creation links, leaving
+  // OAuth sign-in as the only offered method (DIFFSHUB_ENABLE_PAT_INPUT).
+  patInputEnabled: boolean;
   // When DIFFSHUB_REQUIRE_LOGIN is set, every page is gated behind a saved
   // token: anonymous visitors are redirected to /login and returned to their
   // original URL after signing in. The redirect is client-side (the token
@@ -172,6 +281,7 @@ export function getGitHubEnvironment(): GitHubEnvironment {
 // fixed for the process lifetime.
 export function resetGitHubEnvironmentCache(): void {
   cachedEnvironment = undefined;
+  cachedRefreshTokenPolicy = undefined;
 }
 
 // Whether a URL sits on the configured instance's web origin. Every code path
@@ -193,14 +303,9 @@ export function isConfiguredGitHubInstanceURL(url: string): boolean {
 }
 
 export function getGitHubOAuthConfig(): GitHubOAuthConfig | undefined {
-  const clientId = process.env.DIFFSHUB_GITHUB_CLIENT_ID?.trim();
+  const clientId = getOAuthClientId();
   const clientSecret = process.env.DIFFSHUB_GITHUB_CLIENT_SECRET?.trim();
-  if (
-    clientId == null ||
-    clientId === '' ||
-    clientSecret == null ||
-    clientSecret === ''
-  ) {
+  if (clientId == null || clientSecret == null || clientSecret === '') {
     return undefined;
   }
   return { clientId, clientSecret };
@@ -208,15 +313,11 @@ export function getGitHubOAuthConfig(): GitHubOAuthConfig | undefined {
 
 export function getGitHubClientEnvironment(): GitHubClientEnvironment {
   const environment = getGitHubEnvironment();
-  // The UI flag keys off the public client id alone (not the full OAuth
-  // config): statically prerendered pages bake this value at build time, and
-  // requiring the secret there would force it into build environments and
-  // image layers. A missing secret surfaces at the login route instead.
-  const clientId = process.env.DIFFSHUB_GITHUB_CLIENT_ID?.trim();
   return {
     host: environment.host,
     isGitHubDotCom: environment.isGitHubDotCom,
-    oauthEnabled: clientId != null && clientId !== '',
+    oauthEnabled: getOAuthClientId() != null,
+    patInputEnabled: isPATInputEnabled(),
     requireLogin: isLoginRequired(),
     webURL: environment.webURL,
   };

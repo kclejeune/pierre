@@ -13,9 +13,8 @@
 // browser code never has to import this module for it.
 
 import {
-  getRefreshTokenPolicy,
+  getRefreshTokenMaxTTLSeconds,
   GITHUB_USER_AGENT,
-  type RefreshTokenPolicy,
 } from './githubEnvironment';
 import {
   type OAuthTokenGrant,
@@ -23,6 +22,12 @@ import {
   serializeGrantRecord,
 } from './githubOAuthGrant';
 import { type PlainFetch } from './plainFetch';
+import {
+  isWrappedRefreshToken,
+  nowSeconds,
+  unwrapRefreshToken,
+  wrapRefreshToken,
+} from './refreshTokenWrap';
 
 // Cookie carrying the JSON-encoded state payload between the login redirect
 // and the OAuth callback. Scoped to the auth routes so it rides along with
@@ -191,31 +196,32 @@ export async function exchangeOAuthCode(options: {
   redirectURI: string;
   webURL: string;
 }): Promise<OAuthTokenGrant> {
-  return requestOAuthToken(
-    options.webURL,
-    {
+  return requestOAuthToken({
+    clientSecret: options.clientSecret,
+    fetcher: options.fetcher,
+    grantParams: {
       client_id: options.clientId,
-      client_secret: options.clientSecret,
       code: options.code,
       redirect_uri: options.redirectURI,
     },
-    options.fetcher,
-    'GitHub rejected the sign-in'
-  );
+    rejectionPrefix: 'GitHub rejected the sign-in',
+    webURL: options.webURL,
+  });
 }
 
-// Enforces the deployment's refresh-token policy on a grant. Applied inside
-// requestOAuthToken — the one place grants are constructed — so no grant can
-// leave this module unpoliced, whatever route obtained it. Disabled refresh
-// tokens are dropped entirely (the browser then signs the viewer out when the
-// access token dies); a configured max TTL clamps the refresh-token lifetime
-// the browser is told, which its own expiry check enforces — including for a
-// refresh token GitHub issued without a lifetime.
-export function applyRefreshTokenPolicy(
+// The pure half of max-TTL enforcement: strips or clamps a grant's refresh
+// token to the session's remaining allowance. undefined leaves the grant
+// untouched (no cap configured), a non-positive remainder drops the refresh
+// token entirely, and a positive remainder clamps the lifetime the browser
+// is told — including for a refresh token GitHub issued without one.
+export function clampRefreshTokenGrant(
   grant: OAuthTokenGrant,
-  policy: RefreshTokenPolicy = getRefreshTokenPolicy()
+  remainingSeconds: number | undefined
 ): OAuthTokenGrant {
-  if (!policy.issueRefreshTokens) {
+  if (remainingSeconds == null) {
+    return grant;
+  }
+  if (remainingSeconds <= 0) {
     const {
       refreshToken: _refreshToken,
       refreshTokenExpiresIn: _refreshTokenExpiresIn,
@@ -223,14 +229,45 @@ export function applyRefreshTokenPolicy(
     } = grant;
     return rest;
   }
-  if (policy.maxTTLSeconds == null || grant.refreshToken == null) {
+  if (grant.refreshToken == null) {
     return grant;
   }
   return {
     ...grant,
     refreshTokenExpiresIn: Math.min(
       grant.refreshTokenExpiresIn ?? Infinity,
-      policy.maxTTLSeconds
+      remainingSeconds
+    ),
+  };
+}
+
+// Applies the deployment's max-TTL policy (see refreshTokenWrap for the
+// design) to a freshly minted grant. Called inside requestOAuthToken — the
+// one place grants are constructed — so no grant can leave this module
+// unchecked, whatever route obtained it. The session is anchored to
+// `issuedAtSeconds` (the original authorization time on a refresh) or to now
+// on a first sign-in.
+async function interceptGrant(
+  grant: OAuthTokenGrant,
+  clientSecret: string,
+  issuedAtSeconds?: number
+): Promise<OAuthTokenGrant> {
+  const maxTTL = getRefreshTokenMaxTTLSeconds();
+  if (maxTTL == null) {
+    return grant;
+  }
+  const now = nowSeconds();
+  const issuedAt = issuedAtSeconds ?? now;
+  const policed = clampRefreshTokenGrant(grant, issuedAt + maxTTL - now);
+  if (policed.refreshToken == null) {
+    return policed;
+  }
+  return {
+    ...policed,
+    refreshToken: await wrapRefreshToken(
+      policed.refreshToken,
+      issuedAt,
+      clientSecret
     ),
   };
 }
@@ -244,11 +281,11 @@ const BAD_REFRESH_TOKEN_ERROR = 'bad_refresh_token';
 export class OAuthRefreshRejectedError extends Error {}
 
 // Mints a fresh user access token from a refresh token (GitHub Apps with
-// token expiration enabled). Throws OAuthRefreshRejectedError when GitHub
-// reports the refresh token itself is no longer valid — or, before contacting
-// GitHub, when this deployment has refresh tokens disabled (any submitted
-// token predates the policy; rejecting makes the browser clear it and sign in
-// afresh). A plain Error covers every other failure.
+// token expiration enabled). Throws OAuthRefreshRejectedError for every
+// unrecoverable-session case — the viewer must sign in again — and a plain
+// Error for transient failures. The max-TTL gates (see refreshTokenWrap)
+// run before contacting GitHub; past them, GitHub itself may still reject
+// the token as expired, revoked, or already used.
 export async function refreshOAuthToken(options: {
   clientId: string;
   clientSecret: string;
@@ -256,31 +293,71 @@ export async function refreshOAuthToken(options: {
   refreshToken: string;
   webURL: string;
 }): Promise<OAuthTokenGrant> {
-  if (!getRefreshTokenPolicy().issueRefreshTokens) {
+  const maxTTL = getRefreshTokenMaxTTLSeconds();
+  if (maxTTL === 0) {
     throw new OAuthRefreshRejectedError(
       'Refresh tokens are disabled on this deployment.'
     );
   }
-  return requestOAuthToken(
-    options.webURL,
-    {
+
+  // Unwrapping keys off the token's own shape rather than the current
+  // config, so wrapped sessions keep working if the operator later removes
+  // the cap; the age gate applies only while a cap is set.
+  let refreshToken = options.refreshToken;
+  let issuedAt: number | undefined;
+  if (isWrappedRefreshToken(refreshToken)) {
+    const unwrapped = await unwrapRefreshToken(
+      refreshToken,
+      options.clientSecret
+    );
+    if (unwrapped != null) {
+      ({ issuedAt, refreshToken } = unwrapped);
+    }
+  }
+  if (maxTTL != null) {
+    if (issuedAt == null) {
+      throw new OAuthRefreshRejectedError(
+        "The refresh token was not issued under this deployment's session policy."
+      );
+    }
+    if (issuedAt + maxTTL <= nowSeconds()) {
+      throw new OAuthRefreshRejectedError(
+        'The session reached its maximum age. Sign in again.'
+      );
+    }
+  }
+
+  return requestOAuthToken({
+    clientSecret: options.clientSecret,
+    fetcher: options.fetcher,
+    grantParams: {
       client_id: options.clientId,
-      client_secret: options.clientSecret,
       grant_type: 'refresh_token',
-      refresh_token: options.refreshToken,
+      refresh_token: refreshToken,
     },
-    options.fetcher,
-    'GitHub rejected the session refresh'
-  );
+    issuedAtSeconds: issuedAt,
+    rejectionPrefix: 'GitHub rejected the session refresh',
+    webURL: options.webURL,
+  });
 }
 
-async function requestOAuthToken(
-  webURL: string,
-  body: Record<string, string>,
-  fetcher: PlainFetch = fetch,
-  rejectionPrefix: string
-): Promise<OAuthTokenGrant> {
-  const response = await fetcher(`${webURL}/login/oauth/access_token`, {
+async function requestOAuthToken(options: {
+  // Authenticates the exchange and keys the wrap in interceptGrant; explicit
+  // so
+  // a future grant flow cannot silently wrap under a missing secret.
+  clientSecret: string;
+  fetcher?: PlainFetch;
+  // The grant-specific body fields (code, refresh_token, ...); the secret is
+  // added here so callers cannot forget it.
+  grantParams: Record<string, string>;
+  // Original authorization time to carry into the new grant's wrap; absent on
+  // a first sign-in, where the session starts now.
+  issuedAtSeconds?: number;
+  rejectionPrefix: string;
+  webURL: string;
+}): Promise<OAuthTokenGrant> {
+  const { clientSecret, fetcher = fetch, rejectionPrefix } = options;
+  const response = await fetcher(`${options.webURL}/login/oauth/access_token`, {
     method: 'POST',
     cache: 'no-store',
     headers: {
@@ -288,7 +365,10 @@ async function requestOAuthToken(
       'Content-Type': 'application/json',
       'User-Agent': GITHUB_USER_AGENT,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      ...options.grantParams,
+      client_secret: clientSecret,
+    }),
   });
 
   if (!response.ok) {
@@ -305,7 +385,7 @@ async function requestOAuthToken(
   const record = data as Record<string, unknown>;
   const grant = parseGrantRecord(record);
   if (grant != null) {
-    return applyRefreshTokenPolicy(grant);
+    return interceptGrant(grant, clientSecret, options.issuedAtSeconds);
   }
 
   const description = record.error_description ?? record.error;

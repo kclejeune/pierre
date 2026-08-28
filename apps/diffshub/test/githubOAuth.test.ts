@@ -1,10 +1,10 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { resetGitHubEnvironmentCache } from '../lib/githubEnvironment';
 import {
-  applyRefreshTokenPolicy,
   buildAuthorizeURL,
   buildCompletionURL,
+  clampRefreshTokenGrant,
   exchangeOAuthCode,
   getPublicOrigin,
   OAuthRefreshRejectedError,
@@ -14,6 +14,11 @@ import {
   serializeOAuthState,
 } from '../lib/githubOAuth';
 import { parseGrantFragment } from '../lib/githubOAuthGrant';
+import {
+  nowSeconds,
+  unwrapRefreshToken,
+  wrapRefreshToken,
+} from '../lib/refreshTokenWrap';
 
 describe('sanitizeReturnTo', () => {
   test('keeps same-origin paths', () => {
@@ -327,6 +332,30 @@ describe('refreshOAuthToken', () => {
     expect(grant.refreshToken).toBe('ghr_new');
   });
 
+  // Unwrapping keys off the token's own wrapped shape, not the current
+  // config, so sessions wrapped under a since-removed cap keep refreshing.
+  test('a wrapped token still refreshes after the cap is removed', async () => {
+    let requestedToken: unknown;
+    const grant = await refreshOAuthToken({
+      ...baseOptions,
+      refreshToken: await wrapRefreshToken(
+        'ghr_old',
+        nowSeconds() - 1000,
+        'secret'
+      ),
+      fetcher: (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestedToken = (
+          JSON.parse(init?.body as string) as Record<string, unknown>
+        ).refresh_token;
+        return Promise.resolve(
+          Response.json({ access_token: 'ghu_new', refresh_token: 'ghr_new' })
+        );
+      },
+    });
+    expect(requestedToken).toBe('ghr_old');
+    expect(grant.refreshToken).toBe('ghr_new');
+  });
+
   // bad_refresh_token is the one failure the session cannot recover from;
   // it gets its own error class so the route can answer 401 instead of 502.
   test('distinguishes a rejected refresh token from other failures', async () => {
@@ -381,7 +410,7 @@ describe('refreshOAuthToken', () => {
   });
 });
 
-describe('applyRefreshTokenPolicy', () => {
+describe('clampRefreshTokenGrant', () => {
   const EXPIRING_GRANT = {
     accessToken: 'ghu_token',
     expiresIn: 28_800,
@@ -389,49 +418,138 @@ describe('applyRefreshTokenPolicy', () => {
     refreshTokenExpiresIn: 15_811_200,
   };
 
-  test('the default policy passes grants through untouched', () => {
-    expect(
-      applyRefreshTokenPolicy(EXPIRING_GRANT, { issueRefreshTokens: true })
-    ).toEqual(EXPIRING_GRANT);
+  test('no remaining allowance (no cap) passes grants through untouched', () => {
+    expect(clampRefreshTokenGrant(EXPIRING_GRANT, undefined)).toEqual(
+      EXPIRING_GRANT
+    );
   });
 
-  test('disabled issuance strips the refresh token but keeps the expiry', () => {
-    expect(
-      applyRefreshTokenPolicy(EXPIRING_GRANT, { issueRefreshTokens: false })
-    ).toEqual({ accessToken: 'ghu_token', expiresIn: 28_800 });
-  });
-
-  test('a max TTL clamps only lifetimes above it', () => {
-    const capped = applyRefreshTokenPolicy(EXPIRING_GRANT, {
-      issueRefreshTokens: true,
-      maxTTLSeconds: 86_400,
+  test('an exhausted allowance strips the refresh token but keeps the expiry', () => {
+    expect(clampRefreshTokenGrant(EXPIRING_GRANT, 0)).toEqual({
+      accessToken: 'ghu_token',
+      expiresIn: 28_800,
     });
+  });
+
+  test('a positive allowance clamps only lifetimes above it', () => {
+    const capped = clampRefreshTokenGrant(EXPIRING_GRANT, 86_400);
     expect(capped.refreshTokenExpiresIn).toBe(86_400);
     expect(capped.refreshToken).toBe('ghr_refresh');
 
     expect(
-      applyRefreshTokenPolicy(EXPIRING_GRANT, {
-        issueRefreshTokens: true,
-        maxTTLSeconds: 30_000_000,
-      }).refreshTokenExpiresIn
+      clampRefreshTokenGrant(EXPIRING_GRANT, 30_000_000).refreshTokenExpiresIn
     ).toBe(15_811_200);
   });
 
   test('a refresh token GitHub issued without a lifetime still gets the cap', () => {
     expect(
-      applyRefreshTokenPolicy(
+      clampRefreshTokenGrant(
         { accessToken: 'ghu_token', refreshToken: 'ghr_refresh' },
-        { issueRefreshTokens: true, maxTTLSeconds: 3600 }
+        3600
       ).refreshTokenExpiresIn
     ).toBe(3600);
   });
 
   test('grants without a refresh token are untouched by the cap', () => {
-    expect(
-      applyRefreshTokenPolicy(
-        { accessToken: 'ghp_pat' },
-        { issueRefreshTokens: true, maxTTLSeconds: 3600 }
-      )
-    ).toEqual({ accessToken: 'ghp_pat' });
+    expect(clampRefreshTokenGrant({ accessToken: 'ghp_pat' }, 3600)).toEqual({
+      accessToken: 'ghp_pat',
+    });
+  });
+});
+
+// Server-enforced absolute session age: with a positive max TTL every grant's
+// refresh token leaves the server wrapped with the original authorization
+// time, and the refresh route verifies it before contacting GitHub.
+describe('refresh-token wrapping under a max TTL', () => {
+  const DAY = 24 * 3600;
+  const GRANT_RESPONSE = {
+    access_token: 'ghu_new',
+    expires_in: 28_800,
+    refresh_token: 'ghr_new',
+    refresh_token_expires_in: 15_811_200,
+  };
+
+  beforeEach(() => {
+    process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL = '7d';
+    resetGitHubEnvironmentCache();
+  });
+
+  afterEach(() => {
+    delete process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL;
+    resetGitHubEnvironmentCache();
+  });
+
+  test('a first sign-in wraps the refresh token, anchored to now', async () => {
+    const now = nowSeconds();
+    const grant = await exchangeOAuthCode({
+      clientId: 'id',
+      clientSecret: 'secret',
+      code: 'code',
+      redirectURI: 'https://diffs.example.com/api/auth/github/callback',
+      webURL: 'https://github.example.com',
+      fetcher: () => Promise.resolve(Response.json(GRANT_RESPONSE)),
+    });
+    const unwrapped = await unwrapRefreshToken(
+      grant.refreshToken ?? '',
+      'secret'
+    );
+    expect(unwrapped?.refreshToken).toBe('ghr_new');
+    expect(unwrapped?.issuedAt).toBeWithin(now, now + 31);
+    expect(grant.refreshTokenExpiresIn).toBeWithin(7 * DAY - 30, 7 * DAY + 1);
+  });
+
+  test('a refresh unwraps, forwards the bare token, and re-wraps with the original time', async () => {
+    const issuedAt = nowSeconds() - 3 * DAY;
+    let requestedToken: unknown;
+    const grant = await refreshOAuthToken({
+      clientId: 'id',
+      clientSecret: 'secret',
+      refreshToken: await wrapRefreshToken('ghr_old', issuedAt, 'secret'),
+      webURL: 'https://github.example.com',
+      fetcher: (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestedToken = (
+          JSON.parse(init?.body as string) as Record<string, unknown>
+        ).refresh_token;
+        return Promise.resolve(Response.json(GRANT_RESPONSE));
+      },
+    });
+    expect(requestedToken).toBe('ghr_old');
+    const unwrapped = await unwrapRefreshToken(
+      grant.refreshToken ?? '',
+      'secret'
+    );
+    expect(unwrapped).toEqual({ issuedAt, refreshToken: 'ghr_new' });
+    // The browser is told only the session's remaining allowance, not a
+    // fresh 7 days — the cap is absolute, not sliding.
+    expect(grant.refreshTokenExpiresIn).toBeWithin(4 * DAY - 30, 4 * DAY + 1);
+  });
+
+  // One helper for every unrecoverable-session shape: the throwing fetcher
+  // doubles as the assertion that GitHub is never contacted.
+  async function expectRefreshRejected(refreshToken: string): Promise<void> {
+    const rejected = await refreshOAuthToken({
+      clientId: 'id',
+      clientSecret: 'secret',
+      refreshToken,
+      webURL: 'https://github.example.com',
+      fetcher: () => {
+        throw new Error('GitHub must not be contacted');
+      },
+    }).then(
+      () => undefined,
+      (thrown: unknown) => thrown
+    );
+    expect(rejected).toBeInstanceOf(OAuthRefreshRejectedError);
+  }
+
+  test('over-age, bare, and foreign-wrapped tokens are rejected without contacting GitHub', async () => {
+    const now = nowSeconds();
+    await expectRefreshRejected(
+      await wrapRefreshToken('ghr_old', now - 8 * DAY, 'secret')
+    );
+    await expectRefreshRejected('ghr_bare_predates_policy');
+    await expectRefreshRejected(
+      await wrapRefreshToken('ghr_old', now, 'other-secret')
+    );
   });
 });

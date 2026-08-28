@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import {
   createGitHubAPIURL,
-  getRefreshTokenPolicy,
+  getRefreshTokenMaxTTLSeconds,
   isConfiguredGitHubInstanceURL,
   isLoginRequired,
   isPATInputEnabled,
@@ -300,32 +300,21 @@ describe('token policy environment flags', () => {
     expect(isPATInputEnabled()).toBe(true);
   });
 
-  test('refresh tokens default to enabled and uncapped', () => {
-    expect(getRefreshTokenPolicy()).toEqual({
-      issueRefreshTokens: true,
-      maxTTLSeconds: undefined,
-    });
-  });
+  test('the max TTL parses through its three states', () => {
+    expect(getRefreshTokenMaxTTLSeconds()).toBeUndefined();
 
-  test('a zero max TTL turns refresh-token issuance off entirely', () => {
     process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL = '0';
-    expect(getRefreshTokenPolicy()).toEqual({
-      issueRefreshTokens: false,
-      maxTTLSeconds: 0,
-    });
-  });
+    resetGitHubEnvironmentCache();
+    expect(getRefreshTokenMaxTTLSeconds()).toBe(0);
 
-  test('DIFFSHUB_REFRESH_TOKEN_MAX_TTL caps the lifetime', () => {
     process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL = '24h';
-    expect(getRefreshTokenPolicy()).toEqual({
-      issueRefreshTokens: true,
-      maxTTLSeconds: 24 * 3600,
-    });
+    resetGitHubEnvironmentCache();
+    expect(getRefreshTokenMaxTTLSeconds()).toBe(24 * 3600);
   });
 
   test('a malformed max TTL fails loudly rather than running uncapped', () => {
     process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL = 'soon';
-    expect(() => getRefreshTokenPolicy()).toThrow(
+    expect(() => getRefreshTokenMaxTTLSeconds()).toThrow(
       'DIFFSHUB_REFRESH_TOKEN_MAX_TTL'
     );
   });

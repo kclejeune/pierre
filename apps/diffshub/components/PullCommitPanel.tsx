@@ -1,10 +1,10 @@
 'use client';
 
 import { IconBin } from '@pierre/icons';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
-import { useChromeThemeProps } from './useChromeThemeProps';
+import { useDropdownChromeStyle } from './useDropdownChromeStyle';
 import type { PullEditSession } from './usePullEditSession';
 import { Button } from '@/components/Button';
 import {
@@ -13,8 +13,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/DropdownMenu';
 import { cn } from '@/lib/cn';
-import { diffshubChromeMapping } from '@/lib/theme/diffshubChromeMapping';
-import { getDropdownThemeStyle } from '@/lib/theme/dropdownChromeStyle';
 
 interface PullCommitPanelProps {
   editSession: PullEditSession;
@@ -36,14 +34,7 @@ export function PullCommitPanel({
 }: PullCommitPanelProps) {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState('');
-  const { style: chromeStyle } = useChromeThemeProps(diffshubChromeMapping);
-  const dropdownThemeStyle = useMemo(
-    () =>
-      getDropdownThemeStyle(
-        Object.keys(chromeStyle).length > 0 ? chromeStyle : undefined
-      ),
-    [chromeStyle]
-  );
+  const dropdownThemeStyle = useDropdownChromeStyle();
 
   const { defaultMessage, dirtyFiles, isCommitting } = editSession;
   const canSubmit = !isCommitting && dirtyFiles.length > 0;

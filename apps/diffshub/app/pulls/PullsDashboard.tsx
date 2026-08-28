@@ -11,6 +11,7 @@ import {
 } from '@/components/DashboardShell';
 import { GitHubTokenControl } from '@/components/GitHubTokenControl';
 import { PullRequestRow } from '@/components/PullRequestRow';
+import { RepoDirectory } from '@/components/RepoDirectory';
 import { RepoNameInput } from '@/components/RepoNameInput';
 import { useDashboardPulls } from '@/components/useDashboardPulls';
 import { useGitHubToken } from '@/components/useGitHubToken';
@@ -60,6 +61,9 @@ export function PullsDashboard() {
 
 function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   const [bucket, setBucket] = useState<PullBucket>('created');
+  // A repo picked from the directory below; its open pulls render in a card
+  // above the directory until cleared.
+  const [directoryRepo, setDirectoryRepo] = useState<string | null>(null);
   const { hydrated, pinned, toggle } = usePinnedRepos();
   // Everything below both filters on the pinned list (cards + bucket
   // exclusions), so wait for the single post-mount localStorage read instead
@@ -90,6 +94,71 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
         bucket={bucket}
         excludeRepos={pinned}
         tokenVersion={tokenVersion}
+      />
+      {directoryRepo != null && (
+        // The card a directory selection opens: every open pull in that repo
+        // (regardless of the active bucket — the point is browsing the repo).
+        <RepoPullsCard
+          key={directoryRepo}
+          closeLabel={`Close ${directoryRepo}`}
+          emptyLabel="No open pull requests in this repository."
+          repo={directoryRepo}
+          tokenVersion={tokenVersion}
+          onClose={() => setDirectoryRepo(null)}
+        />
+      )}
+      <section className="space-y-3">
+        <h3 className="text-sm font-medium">Your repositories</h3>
+        <RepoDirectory
+          onSelectRepo={setDirectoryRepo}
+          selectedRepo={directoryRepo}
+          tokenVersion={tokenVersion}
+        />
+      </section>
+    </div>
+  );
+}
+
+// A repo-scoped pulls card, shared by the pinned cards (scoped to the active
+// bucket tab) and directory selections (every open pull in the repo).
+function RepoPullsCard({
+  bucket,
+  closeLabel,
+  emptyLabel,
+  onClose,
+  repo,
+  tokenVersion,
+}: {
+  bucket?: PullBucket;
+  closeLabel: string;
+  emptyLabel: string;
+  onClose: () => void;
+  repo: string;
+  tokenVersion: number;
+}) {
+  const { error, loading, pulls } = useDashboardPulls(
+    { kind: 'repo', repo, bucket },
+    tokenVersion
+  );
+  return (
+    <div className={SECTION_CARD_CLASS}>
+      <div className="flex items-center justify-between border-b px-3 py-2">
+        <span className="text-sm font-medium">{repo}</span>
+        <Button
+          aria-label={closeLabel}
+          variant="ghost"
+          size="icon-sm"
+          onClick={onClose}
+        >
+          <IconX className="size-4" />
+        </Button>
+      </div>
+      <SectionRows
+        emptyLabel={emptyLabel}
+        error={error}
+        loading={loading}
+        pulls={pulls}
+        showRepo={false}
       />
     </div>
   );
@@ -161,54 +230,17 @@ function PinnedReposSection({
         />
       )}
       {pinned.map((repo) => (
-        <PinnedRepoCard
+        <RepoPullsCard
           key={repo}
           bucket={bucket}
+          closeLabel={`Unpin ${repo}`}
+          emptyLabel={`No open pull requests ${BUCKET_COPY[bucket].empty}.`}
           repo={repo}
           tokenVersion={tokenVersion}
-          onUnpin={() => onToggle(repo)}
+          onClose={() => onToggle(repo)}
         />
       ))}
     </section>
-  );
-}
-
-function PinnedRepoCard({
-  bucket,
-  onUnpin,
-  repo,
-  tokenVersion,
-}: {
-  bucket: PullBucket;
-  onUnpin: () => void;
-  repo: string;
-  tokenVersion: number;
-}) {
-  const { error, loading, pulls } = useDashboardPulls(
-    { kind: 'repo', repo, bucket },
-    tokenVersion
-  );
-  return (
-    <div className={SECTION_CARD_CLASS}>
-      <div className="flex items-center justify-between border-b px-3 py-2">
-        <span className="text-sm font-medium">{repo}</span>
-        <Button
-          aria-label={`Unpin ${repo}`}
-          variant="ghost"
-          size="icon-sm"
-          onClick={onUnpin}
-        >
-          <IconX className="size-4" />
-        </Button>
-      </div>
-      <SectionRows
-        emptyLabel={`No open pull requests ${BUCKET_COPY[bucket].empty}.`}
-        error={error}
-        loading={loading}
-        pulls={pulls}
-        showRepo={false}
-      />
-    </div>
   );
 }
 

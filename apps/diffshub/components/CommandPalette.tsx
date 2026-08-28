@@ -7,24 +7,17 @@ import {
   IconFolder,
 } from '@pierre/icons';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
-  Command,
   CommandEmpty,
   CommandGroup,
   CommandInput,
   CommandItem,
   CommandList,
 } from './Command';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from './Dialog';
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
+import { PaletteDialog } from './PaletteDialog';
 import { useDiffUrlSuggestions } from './useDiffUrlSuggestions';
 import { usePinnedRepos } from './usePinnedRepos';
 import { buildPaletteItems, type PaletteItem } from '@/lib/commandPaletteItems';
@@ -65,28 +58,20 @@ export function CommandPalette() {
     []
   );
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
-        event.preventDefault();
-        setOpen((wasOpen) => !wasOpen);
-      }
-    };
-    const onOpenRequest = () => setOpen(true);
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpenRequest);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpenRequest);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (open) {
+  const handleOpenChange = useCallback((nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) {
       setQuery('');
       setRecents(loadRecentDiffs());
     }
-  }, [open]);
+  }, []);
+
+  useEffect(() => {
+    const onOpenRequest = () => handleOpenChange(true);
+    window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpenRequest);
+    return () =>
+      window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpenRequest);
+  }, [handleOpenChange]);
 
   const sections = useMemo(
     () =>
@@ -114,52 +99,43 @@ export function CommandPalette() {
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent
-        className="top-[20%] translate-y-0 overflow-hidden p-0"
-        showCloseButton={false}
-      >
-        <DialogHeader className="sr-only">
-          <DialogTitle>Diff switcher</DialogTitle>
-          <DialogDescription>
-            Search repositories and pull requests, or jump to a recent diff.
-          </DialogDescription>
-        </DialogHeader>
-        {/* Results are async/server-driven; cmdk's built-in fuzzy filter
-            would hide them, so filtering is disabled entirely. */}
-        <Command shouldFilter={false}>
-          <CommandInput
-            value={query}
-            onValueChange={setQuery}
-            placeholder="Search repos, pull requests, or paste a URL…"
-          />
-          <CommandList>
-            <CommandEmpty>No matches.</CommandEmpty>
-            {sections.map((section) => (
-              <CommandGroup key={section.heading} heading={section.heading}>
-                {section.items.map((item) => {
-                  const Icon = ITEM_ICONS[item.kind];
-                  return (
-                    <CommandItem
-                      key={item.key}
-                      value={item.key}
-                      onSelect={() => runItem(item)}
-                    >
-                      <Icon className="size-4" />
-                      <span className="truncate">{item.label}</span>
-                      {item.detail != null && (
-                        <span className="text-muted-foreground ml-auto truncate text-xs">
-                          {item.detail}
-                        </span>
-                      )}
-                    </CommandItem>
-                  );
-                })}
-              </CommandGroup>
-            ))}
-          </CommandList>
-        </Command>
-      </DialogContent>
-    </Dialog>
+    <PaletteDialog
+      open={open}
+      onOpenChange={handleOpenChange}
+      shortcutKey="k"
+      title="Diff switcher"
+      description="Search repositories and pull requests, or jump to a recent diff."
+    >
+      <CommandInput
+        value={query}
+        onValueChange={setQuery}
+        placeholder="Search repos, pull requests, or paste a URL…"
+      />
+      <CommandList>
+        <CommandEmpty>No matches.</CommandEmpty>
+        {sections.map((section) => (
+          <CommandGroup key={section.heading} heading={section.heading}>
+            {section.items.map((item) => {
+              const Icon = ITEM_ICONS[item.kind];
+              return (
+                <CommandItem
+                  key={item.key}
+                  value={item.key}
+                  onSelect={() => runItem(item)}
+                >
+                  <Icon className="size-4" />
+                  <span className="truncate">{item.label}</span>
+                  {item.detail != null && (
+                    <span className="text-muted-foreground ml-auto truncate text-xs">
+                      {item.detail}
+                    </span>
+                  )}
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
+        ))}
+      </CommandList>
+    </PaletteDialog>
   );
 }

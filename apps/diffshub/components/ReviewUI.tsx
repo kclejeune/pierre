@@ -19,11 +19,13 @@ import { DiffsHubHeader } from './DiffsHubHeader';
 import { DiffsHubSidebar } from './DiffsHubSidebar';
 import { DiffsHubStatusPanel } from './DiffsHubStatusPanel';
 import { DiffsHubViewer } from './DiffsHubViewer';
+import { FileSearchPalette } from './FileSearchPalette';
 import { PullCommitPanel } from './PullCommitPanel';
 import {
   PullConflictControl,
   PullConflictResolver,
 } from './PullConflictResolver';
+import { PullDetailsControl } from './PullDetailsControl';
 import { ReviewSubmitControl } from './ReviewSubmitControl';
 import { ThemeSourceProvider } from './ThemeSourceProvider';
 import { useGitHubToken } from './useGitHubToken';
@@ -461,6 +463,24 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
     },
     [handleFileHeaderSelect]
   );
+  // The go-to-file palette's view of the diff: the streamed path list is a
+  // growing accumulator the source aliases, so copy only the settled prefix.
+  const fileSearchPaths = useMemo(
+    () =>
+      treeSource == null
+        ? null
+        : treeSource.paths.slice(0, treeSource.pathCount),
+    [treeSource]
+  );
+  const handleFileSearchSelect = useCallback(
+    (path: string) => {
+      const itemId = treeSource?.pathToItemId.get(path);
+      if (itemId != null) {
+        handleSelectTreeItem(itemId);
+      }
+    },
+    [handleSelectTreeItem, treeSource]
+  );
   const handleToggleCollapseMode = useCallback(() => {
     const next = collapseMode === 'expanded' ? 'collapsed' : 'expanded';
     setCollapseMode(next);
@@ -816,6 +836,13 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
           reviewControl={
             pullRequest != null ? (
               <>
+                <PullDetailsControl
+                  canWrite={hasGitHubToken}
+                  getGitHubToken={getGitHubToken}
+                  onMerged={retryLoad}
+                  pullInfo={pullInfo}
+                  pullRequest={pullRequest}
+                />
                 {conflicts?.conflicted === true && (
                   <PullConflictControl
                     conflictedFileCount={
@@ -914,6 +941,12 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
           />
         )}
       </ReviewGrid>
+      {fileSearchPaths != null && (
+        <FileSearchPalette
+          paths={fileSearchPaths}
+          onSelectPath={handleFileSearchSelect}
+        />
+      )}
       {conflictResolverOpen &&
         conflicts?.conflicted === true &&
         pullRequest != null && (

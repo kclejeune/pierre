@@ -110,7 +110,20 @@ describe('git data writes', () => {
     const cases: [number, string, string][] = [
       [422, 'Update is not a fast forward', 'stale-head'],
       [422, 'Required status check on protected branch', 'protected-branch'],
+      // The disambiguating phrase can be nested in errors[] while the
+      // top-level message stays generic; classification reads the raw body.
+      [
+        422,
+        JSON.stringify({
+          errors: [{ message: 'protected branch hook declined' }],
+          message: 'Validation Failed',
+        }),
+        'protected-branch',
+      ],
       [403, 'Resource not accessible by integration', 'forbidden'],
+      // 409 is not a moved head on git-data endpoints (empty repository,
+      // ref-lock contention) — only the merge route recodes it.
+      [409, 'Git Repository is empty.', 'github'],
       [500, 'boom', 'github'],
     ];
     for (const [status, detail, code] of cases) {

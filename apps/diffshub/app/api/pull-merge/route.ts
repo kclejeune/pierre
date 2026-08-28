@@ -2,6 +2,7 @@ import { type NextRequest } from 'next/server';
 
 import {
   commitErrorResponse,
+  GitHubCommitError,
   repoPath,
   sendGitHubJSON,
 } from '@/lib/githubCommitServer';
@@ -65,6 +66,15 @@ export async function POST(request: NextRequest) {
       sha: typeof record?.sha === 'string' ? record.sha : undefined,
     });
   } catch (error) {
+    // A 409 from PUT /pulls/{n}/merge means the sha compare-and-swap failed
+    // (the head moved since the viewer loaded the diff). Recode it here
+    // rather than in the shared classifier, where other GitHub endpoints use
+    // 409 for unrelated conditions (empty repository, ref-lock contention).
+    if (error instanceof GitHubCommitError && error.status === 409) {
+      return commitErrorResponse(
+        new GitHubCommitError(error.message, 'stale-head', error.status)
+      );
+    }
     return commitErrorResponse(error);
   }
 }

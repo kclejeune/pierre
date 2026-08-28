@@ -136,29 +136,34 @@ export function PullDetailsControl({
     [getGitHubToken, headSha, pullRequest, supplement.kind]
   );
 
-  const handleOpenChange = useCallback(
-    (nextOpen: boolean) => {
-      setOpen(nextOpen);
-      if (nextOpen) {
-        loadSupplement();
-      }
-    },
-    [loadSupplement]
-  );
+  // Load eagerly whenever nothing is loaded for the current head: the first
+  // render (so the trigger's CI dot can appear without opening the panel),
+  // and the reset to idle after a head-sha change (so an already-open panel
+  // does not sit on its loading placeholders forever).
+  useEffect(() => {
+    if (headSha != null && supplement.kind === 'idle') {
+      loadSupplement();
+    }
+  }, [headSha, loadSupplement, supplement.kind]);
 
   if (details == null) {
     return null;
   }
   const supplementalValue =
     supplement.kind === 'ready' ? supplement.value : null;
-  const checks = supplementalValue?.checks ?? details.checks;
+  const checks = supplementalValue?.checks ?? null;
+  // The supplement reports reviewers: null when the reviews listing itself
+  // failed — the verdicts are unknown, not absent, so the panel says so
+  // instead of presenting everyone as merely pending.
+  const reviewerVerdictsUnavailable =
+    supplementalValue != null && supplementalValue.reviewers == null;
   const reviewers = mergePullReviewers(
     details.reviewers,
     supplementalValue?.reviewers ?? null
   );
   const ciState = aggregateCheckState(checks);
   return (
-    <DropdownMenu modal={false} open={open} onOpenChange={handleOpenChange}>
+    <DropdownMenu modal={false} open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
@@ -215,13 +220,21 @@ export function PullDetailsControl({
               ))}
             </div>
           )}
-          {reviewers.length > 0 && (
+          {(reviewers.length > 0 || reviewerVerdictsUnavailable) && (
             <PanelSection heading="Reviewers">
-              <ul className="flex flex-col gap-1">
-                {reviewers.map((reviewer) => (
-                  <ReviewerRow key={reviewer.login} reviewer={reviewer} />
-                ))}
-              </ul>
+              {reviewers.length > 0 && (
+                <ul className="flex flex-col gap-1">
+                  {reviewers.map((reviewer) => (
+                    <ReviewerRow key={reviewer.login} reviewer={reviewer} />
+                  ))}
+                </ul>
+              )}
+              {reviewerVerdictsUnavailable && (
+                <p className="text-muted-foreground text-xs">
+                  Review verdicts could not be loaded; showing requested
+                  reviewers only.
+                </p>
+              )}
             </PanelSection>
           )}
           <PanelSection heading="Checks">

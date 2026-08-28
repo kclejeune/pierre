@@ -29,13 +29,25 @@ export function usePullInfo({
   tokenHydrated,
   viewerKey,
 }: UsePullInfoOptions): PullInfo | null {
-  const [pullInfo, setPullInfo] = useState<PullInfo | null>(null);
+  // The info is stored with the pull it was fetched for: PullInfo itself
+  // carries only the number, and two repos' pulls can share a number, so
+  // deciding staleness needs the full owner/repo/number ref.
+  const [state, setState] = useState<{
+    forPull: PullRequestRef;
+    info: PullInfo;
+  } | null>(null);
   useEffect(() => {
     // Keep the current value while the same pull refetches (a reload or token
     // change) so the header's branch display does not blink; only a different
     // pull, or none, clears it.
-    setPullInfo((current) =>
-      current?.number === pullRequest?.number ? current : null
+    setState((current) =>
+      current != null &&
+      pullRequest != null &&
+      current.forPull.owner === pullRequest.owner &&
+      current.forPull.repo === pullRequest.repo &&
+      current.forPull.number === pullRequest.number
+        ? current
+        : null
     );
     if (pullRequest == null || !tokenHydrated) {
       return;
@@ -44,7 +56,7 @@ export function usePullInfo({
     fetchPullInfo(pullRequest, getGitHubToken(), controller.signal)
       .then((info) => {
         if (!controller.signal.aborted) {
-          setPullInfo(info);
+          setState({ forPull: pullRequest, info });
         }
       })
       .catch(() => undefined);
@@ -56,5 +68,5 @@ export function usePullInfo({
     tokenHydrated,
     viewerKey,
   ]);
-  return pullInfo;
+  return state?.info ?? null;
 }

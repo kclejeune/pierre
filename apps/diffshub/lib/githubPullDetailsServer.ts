@@ -43,9 +43,9 @@ export function readPullRouteParams(
 }
 
 // The metadata a pulls/{n} payload carries directly. Reviewers start as the
-// still-pending requested users/teams; mergeReviewerStates folds submitted
-// reviews on top.
-export function parsePullDetails(data: unknown): Omit<PullDetails, 'checks'> {
+// still-pending requested users/teams; the client's mergePullReviewers
+// overlays submitted review verdicts once the supplement loads.
+export function parsePullDetails(data: unknown): PullDetails {
   const record = asRecord(data) ?? {};
   const labels: PullLabel[] = [];
   if (Array.isArray(record.labels)) {
@@ -133,39 +133,6 @@ export function foldReviewStates(
   return states;
 }
 
-// Overlays submitted review verdicts onto the requested-reviewer list:
-// requested reviewers keep PENDING unless they since reviewed, and everyone
-// who reviewed without being (re-)requested is appended.
-export function mergeReviewerStates(
-  requested: readonly PullReviewer[],
-  reviewStates: ReadonlyMap<
-    string,
-    { avatarUrl?: string; state: PullReviewerState }
-  >
-): PullReviewer[] {
-  const merged: PullReviewer[] = requested.map((reviewer) => {
-    const reviewed = reviewStates.get(reviewer.login);
-    return reviewed == null
-      ? reviewer
-      : {
-          avatarUrl: reviewer.avatarUrl ?? reviewed.avatarUrl,
-          login: reviewer.login,
-          state: reviewed.state,
-        };
-  });
-  const requestedLogins = new Set(requested.map((r) => r.login));
-  for (const [login, reviewed] of reviewStates) {
-    if (!requestedLogins.has(login)) {
-      merged.push({
-        avatarUrl: reviewed.avatarUrl,
-        login,
-        state: reviewed.state,
-      });
-    }
-  }
-  return merged;
-}
-
 // One check run from the checks API, normalized: a completed run's
 // conclusion decides success/failure/neutral, anything not yet completed is
 // pending.
@@ -216,6 +183,31 @@ export function normalizeCommitStatus(status: unknown): PullCheck | null {
   };
 }
 
+// Exhausts a paginated GitHub listing at 100 items per page, concatenating
+// what `extractItems` pulls off each page. A short page ends the walk; a
+// page `extractItems` cannot read (null) ends it too, keeping whatever
+// earlier pages yielded.
+async function fetchAllGitHubPages(
+  pathForPage: (page: number) => string,
+  extractItems: (payload: unknown) => unknown[] | null,
+  token: string | undefined,
+  fetcher: PlainFetch
+): Promise<unknown[]> {
+  const items: unknown[] = [];
+  for (let page = 1; ; page += 1) {
+    const payload = await fetchGitHubJSON(pathForPage(page), token, fetcher);
+    const pageItems = extractItems(payload);
+    if (pageItems == null) {
+      break;
+    }
+    items.push(...pageItems);
+    if (pageItems.length < 100) {
+      break;
+    }
+  }
+  return items;
+}
+
 // The latest submitted review verdict per reviewer. GitHub returns reviews in
 // chronological order, so every page must be folded before the result is safe
 // to present as current.
@@ -225,24 +217,16 @@ export async function fetchPullReviewStates(
   token: string | undefined,
   fetcher: PlainFetch = fetch
 ): Promise<Map<string, { avatarUrl?: string; state: PullReviewerState }>> {
-  const reviews: unknown[] = [];
-  for (let page = 1; ; page += 1) {
-    const payload = await fetchGitHubJSON(
+  const reviews = await fetchAllGitHubPages(
+    (page) =>
       repoPath(
         repo,
         `/pulls/${encodeURLSegment(pull)}/reviews?per_page=100&page=${page}`
       ),
-      token,
-      fetcher
-    );
-    if (!Array.isArray(payload)) {
-      break;
-    }
-    reviews.push(...payload);
-    if (payload.length < 100) {
-      break;
-    }
-  }
+    (payload) => (Array.isArray(payload) ? payload : null),
+    token,
+    fetcher
+  );
   return foldReviewStates(reviews);
 }
 
@@ -285,60 +269,46 @@ export async function fetchPullChecks(
   return checks;
 }
 
-async function fetchAllCheckRuns(
+function fetchAllCheckRuns(
   repo: GitRepoRef,
   headSha: string,
   token: string | undefined,
   fetcher: PlainFetch
 ): Promise<unknown[]> {
-  const runs: unknown[] = [];
-  for (let page = 1; ; page += 1) {
-    const payload = await fetchGitHubJSON(
+  return fetchAllGitHubPages(
+    (page) =>
       repoPath(
         repo,
         `/commits/${encodeURLSegment(headSha)}/check-runs?per_page=100&page=${page}`
       ),
-      token,
-      fetcher
-    );
-    const pageRuns = asRecord(payload)?.check_runs;
-    if (!Array.isArray(pageRuns)) {
-      break;
-    }
-    runs.push(...pageRuns);
-    if (pageRuns.length < 100) {
-      break;
-    }
-  }
-  return runs;
+    (payload) => {
+      const runs = asRecord(payload)?.check_runs;
+      return Array.isArray(runs) ? runs : null;
+    },
+    token,
+    fetcher
+  );
 }
 
-async function fetchAllCommitStatuses(
+function fetchAllCommitStatuses(
   repo: GitRepoRef,
   headSha: string,
   token: string | undefined,
   fetcher: PlainFetch
 ): Promise<unknown[]> {
-  const statuses: unknown[] = [];
-  for (let page = 1; ; page += 1) {
-    const payload = await fetchGitHubJSON(
+  return fetchAllGitHubPages(
+    (page) =>
       repoPath(
         repo,
         `/commits/${encodeURLSegment(headSha)}/status?per_page=100&page=${page}`
       ),
-      token,
-      fetcher
-    );
-    const pageStatuses = asRecord(payload)?.statuses;
-    if (!Array.isArray(pageStatuses)) {
-      break;
-    }
-    statuses.push(...pageStatuses);
-    if (pageStatuses.length < 100) {
-      break;
-    }
-  }
-  return statuses;
+    (payload) => {
+      const statuses = asRecord(payload)?.statuses;
+      return Array.isArray(statuses) ? statuses : null;
+    },
+    token,
+    fetcher
+  );
 }
 
 export function parsePullMergeCapabilities(
@@ -403,35 +373,22 @@ export function parsePullCommitsPage(payload: unknown): PullCommitSummary[] {
 }
 
 // Every commit of the pull request, oldest first. GitHub caps this listing
-// at 250 commits, so three 100-per-page requests cover it; single-page pulls
-// (the common case) stop after one request, larger ones fetch the remaining
-// pages in parallel.
+// at 250 commits, so at most three 100-per-page requests; single-page pulls
+// (the common case) stop after one.
 export async function fetchPullCommitsListing(
   repo: GitRepoRef,
   pull: string,
   token: string | undefined
 ): Promise<PullCommitSummary[]> {
-  const fetchPage = async (page: number): Promise<PullCommitSummary[]> =>
-    parsePullCommitsPage(
-      await fetchGitHubJSON(
-        repoPath(
-          repo,
-          `/pulls/${encodeURLSegment(pull)}/commits?per_page=100&page=${page}`
-        ),
-        token
-      )
-    );
-  const first = await fetchPage(1);
-  if (first.length < 100) {
-    return first;
-  }
-  const rest = await Promise.all([fetchPage(2), fetchPage(3)]);
-  const commits = [...first];
-  for (const page of rest) {
-    commits.push(...page);
-    if (page.length < 100) {
-      break;
-    }
-  }
-  return commits;
+  const entries = await fetchAllGitHubPages(
+    (page) =>
+      repoPath(
+        repo,
+        `/pulls/${encodeURLSegment(pull)}/commits?per_page=100&page=${page}`
+      ),
+    (payload) => (Array.isArray(payload) ? payload : null),
+    token,
+    fetch
+  );
+  return parsePullCommitsPage(entries);
 }

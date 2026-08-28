@@ -2,7 +2,7 @@
 
 import { IconBranch } from '@pierre/icons';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from './Button';
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
@@ -54,17 +54,22 @@ export function PullCommitRangePicker({
   // 0–2 selected shas, in click order; range math normalizes them.
   const [selection, setSelection] = useState<string[]>([]);
 
+  const commitsRequest = useRef<AbortController | null>(null);
+
   // The listing is fetched on first open and kept until the pull or token
   // changes; both also drop any selection made against the old listing.
   useEffect(() => {
+    commitsRequest.current?.abort();
+    commitsRequest.current = null;
     setCommitsState({ kind: 'idle' });
     setSelection([]);
+    return () => commitsRequest.current?.abort();
   }, [githubTokenVersion, pullRequest]);
-  useEffect(() => {
-    if (!open || commitsState.kind !== 'idle') {
-      return;
-    }
+
+  const loadCommits = useCallback(() => {
+    commitsRequest.current?.abort();
     const controller = new AbortController();
+    commitsRequest.current = controller;
     setCommitsState({ kind: 'loading' });
     fetchPullCommitsList(pullRequest, getGitHubToken(), controller.signal).then(
       (commits) => {
@@ -84,8 +89,18 @@ export function PullCommitRangePicker({
         }
       }
     );
-    return () => controller.abort();
-  }, [commitsState.kind, getGitHubToken, open, pullRequest]);
+  }, [getGitHubToken, pullRequest]);
+
+  // Fetch whenever the panel is open with nothing loaded: the first open,
+  // Retry (which resets to idle), and a pull/token change while open. The
+  // fetch must not start inside an effect that also cleans up on
+  // commitsState changes — the idle→loading transition would re-run that
+  // effect and its cleanup would abort the request it just started.
+  useEffect(() => {
+    if (open && commitsState.kind === 'idle') {
+      loadCommits();
+    }
+  }, [commitsState.kind, loadCommits, open]);
 
   const commits = commitsState.kind === 'ready' ? commitsState.commits : [];
   const selectedIndexes = selection

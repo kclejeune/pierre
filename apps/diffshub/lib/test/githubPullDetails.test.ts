@@ -4,7 +4,6 @@ import {
   fetchPullChecks,
   fetchPullReviewStates,
   foldReviewStates,
-  mergeReviewerStates,
   normalizeCheckRun,
   normalizeCommitStatus,
   parsePullDetails,
@@ -88,33 +87,6 @@ describe('foldReviewStates', () => {
       { state: 'DISMISSED', user: { login: 'a' } },
     ]);
     expect(states.get('a')?.state).toBe('COMMENTED');
-  });
-});
-
-describe('mergeReviewerStates', () => {
-  test('overlays verdicts onto requested reviewers and appends the rest', () => {
-    const merged = mergeReviewerStates(
-      [
-        { avatarUrl: 'https://a/r.png', login: 'requested', state: 'PENDING' },
-        { login: 'reviewed-and-rerequested', state: 'PENDING' },
-      ],
-      new Map([
-        [
-          'reviewed-and-rerequested',
-          { avatarUrl: 'https://a/x.png', state: 'APPROVED' as const },
-        ],
-        ['drive-by', { avatarUrl: undefined, state: 'COMMENTED' as const }],
-      ])
-    );
-    expect(merged).toEqual([
-      { avatarUrl: 'https://a/r.png', login: 'requested', state: 'PENDING' },
-      {
-        avatarUrl: 'https://a/x.png',
-        login: 'reviewed-and-rerequested',
-        state: 'APPROVED',
-      },
-      { avatarUrl: undefined, login: 'drive-by', state: 'COMMENTED' },
-    ]);
   });
 });
 

@@ -11,6 +11,7 @@ import {
 } from '@/components/DashboardShell';
 import { GitHubTokenControl } from '@/components/GitHubTokenControl';
 import { PullRequestRow } from '@/components/PullRequestRow';
+import { RepoDirectory } from '@/components/RepoDirectory';
 import { RepoNameInput } from '@/components/RepoNameInput';
 import { useDashboardPulls } from '@/components/useDashboardPulls';
 import { useGitHubToken } from '@/components/useGitHubToken';
@@ -60,6 +61,9 @@ export function PullsDashboard() {
 
 function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   const [bucket, setBucket] = useState<PullBucket>('created');
+  // A repo picked from the directory below; its open pulls render in a card
+  // above the directory until cleared.
+  const [directoryRepo, setDirectoryRepo] = useState<string | null>(null);
   const { hydrated, pinned, toggle } = usePinnedRepos();
   // Everything below both filters on the pinned list (cards + bucket
   // exclusions), so wait for the single post-mount localStorage read instead
@@ -90,6 +94,61 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
         bucket={bucket}
         excludeRepos={pinned}
         tokenVersion={tokenVersion}
+      />
+      {directoryRepo != null && (
+        <DirectoryRepoCard
+          key={directoryRepo}
+          repo={directoryRepo}
+          tokenVersion={tokenVersion}
+          onClose={() => setDirectoryRepo(null)}
+        />
+      )}
+      <section className="space-y-3">
+        <h3 className="text-sm font-medium">Your repositories</h3>
+        <RepoDirectory
+          onSelectRepo={setDirectoryRepo}
+          selectedRepo={directoryRepo}
+          tokenVersion={tokenVersion}
+        />
+      </section>
+    </div>
+  );
+}
+
+// The card a directory selection opens: every open pull in that repo
+// (regardless of the active bucket — the point is browsing the repo).
+function DirectoryRepoCard({
+  onClose,
+  repo,
+  tokenVersion,
+}: {
+  onClose: () => void;
+  repo: string;
+  tokenVersion: number;
+}) {
+  const { error, loading, pulls } = useDashboardPulls(
+    { kind: 'repo', repo },
+    tokenVersion
+  );
+  return (
+    <div className={SECTION_CARD_CLASS}>
+      <div className="flex items-center justify-between border-b px-3 py-2">
+        <span className="text-sm font-medium">{repo}</span>
+        <Button
+          aria-label={`Close ${repo}`}
+          variant="ghost"
+          size="icon-sm"
+          onClick={onClose}
+        >
+          <IconX className="size-4" />
+        </Button>
+      </div>
+      <SectionRows
+        emptyLabel="No open pull requests in this repository."
+        error={error}
+        loading={loading}
+        pulls={pulls}
+        showRepo={false}
       />
     </div>
   );

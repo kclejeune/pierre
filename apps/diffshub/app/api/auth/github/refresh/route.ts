@@ -23,9 +23,10 @@ import { parseJSONBody } from '@/lib/parseJSONBody';
 //   200 — a new grant in GitHub's own snake_case shape (see githubOAuthGrant).
 //         GitHub rotates refresh tokens, so the response carries the
 //         replacement and the submitted one is now dead.
-//   401 — GitHub rejected the refresh token (expired, revoked, or already
-//         used), or this deployment has refresh tokens disabled. The session
-//         cannot be recovered; the viewer signs in again.
+//   401 — the session is unrecoverable: GitHub rejected the refresh token
+//         (expired, revoked, or already used), or this deployment's
+//         refresh-token policy refused it (see lib/refreshTokenWrap). The
+//         viewer signs in again.
 //   502 — GitHub was unreachable or answered unexpectedly. The session is
 //         still valid and the client should simply try again later.
 export async function POST(request: NextRequest) {

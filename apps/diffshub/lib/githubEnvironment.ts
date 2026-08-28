@@ -18,7 +18,7 @@
 //                              box; see isPATInputEnabled for the default.
 //   DIFFSHUB_REFRESH_TOKEN_MAX_TTL
 //                              How refresh tokens may reach the browser; see
-//                              RefreshTokenPolicy.
+//                              getRefreshTokenMaxTTLSeconds.
 
 import { createJSONResponse } from './jsonResponse';
 import { parseBearerToken } from './parseBearerToken';
@@ -102,41 +102,26 @@ function getOAuthClientId(): string | undefined {
   return clientId === '' ? undefined : clientId;
 }
 
-// How refresh tokens are allowed to reach (and persist in) the browser,
-// all from DIFFSHUB_REFRESH_TOKEN_MAX_TTL — a refresh token in localStorage
-// is a long-lived credential, and the cap is the one knob over it. Unset
-// leaves GitHub's own lifetime (six months); a positive duration caps it;
-// 0 stops refresh tokens from being issued at all.
-export interface RefreshTokenPolicy {
-  // False when the max TTL is 0: grants leave the server without a refresh
-  // token and the refresh route refuses exchanges — the only server-enforced
-  // setting, since the routes never see a token they didn't just mint.
-  issueRefreshTokens: boolean;
-  // Cap applied to refresh_token_expires_in on every grant; undefined means
-  // uncapped. A positive cap is client-cooperative: the browser signs itself
-  // out at the capped expiry, but the refresh route cannot tell a capped
-  // token from a fresh one, so a tampered client keeps GitHub's full
-  // lifetime.
-  maxTTLSeconds?: number;
-}
+// Maximum absolute session age in seconds, from
+// DIFFSHUB_REFRESH_TOKEN_MAX_TTL: undefined leaves GitHub's own refresh-token
+// lifetime (six months) untouched, 0 stops refresh tokens from being issued
+// at all, and a positive value is enforced server-side — see
+// lib/refreshTokenWrap for the mechanism.
+//
+// Like the instance environment above, the value is fixed for the process
+// lifetime and memoized after the first read, which also surfaces a malformed
+// value at the first request rather than on every one. The box distinguishes
+// "not yet read" from "read, and unset".
+let cachedMaxTTL: { seconds: number | undefined } | undefined;
 
-// Like the instance environment above, the policy is fixed for the process
-// lifetime and memoized after the first read — which also surfaces a
-// malformed max TTL at the first request rather than on every one.
-let cachedRefreshTokenPolicy: RefreshTokenPolicy | undefined;
-
-export function getRefreshTokenPolicy(): RefreshTokenPolicy {
-  if (cachedRefreshTokenPolicy == null) {
-    const maxTTLSeconds = parseDurationSeconds(
+export function getRefreshTokenMaxTTLSeconds(): number | undefined {
+  cachedMaxTTL ??= {
+    seconds: parseDurationSeconds(
       process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL,
       'DIFFSHUB_REFRESH_TOKEN_MAX_TTL'
-    );
-    cachedRefreshTokenPolicy = {
-      issueRefreshTokens: maxTTLSeconds !== 0,
-      maxTTLSeconds,
-    };
-  }
-  return cachedRefreshTokenPolicy;
+    ),
+  };
+  return cachedMaxTTL.seconds;
 }
 
 // Parses an operator-supplied duration: a bare number is seconds, and the
@@ -281,7 +266,7 @@ export function getGitHubEnvironment(): GitHubEnvironment {
 // fixed for the process lifetime.
 export function resetGitHubEnvironmentCache(): void {
   cachedEnvironment = undefined;
-  cachedRefreshTokenPolicy = undefined;
+  cachedMaxTTL = undefined;
 }
 
 // Whether a URL sits on the configured instance's web origin. Every code path

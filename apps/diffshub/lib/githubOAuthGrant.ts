@@ -58,7 +58,7 @@ export function parseGrantFragment(hash: string): OAuthTokenGrant | undefined {
   );
 }
 
-function readNonEmptyString(value: unknown): string | undefined {
+export function readNonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== ''
     ? value.trim()
     : undefined;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { storedGitHubTokenHeaders } from './githubSession';
 import { requestJSON } from '@/lib/pullCommentsClient';
@@ -59,8 +59,13 @@ export function useRepoDirectory(tokenVersion: number): RepoDirectoryState {
   }>({ error: null, loading: true, payload: null });
   const [loadingMore, setLoadingMore] = useState(false);
   const [reloadVersion, setReloadVersion] = useState(0);
+  // Bumped when the listing restarts (refresh, token change) so a loadMore
+  // begun beforehand discards its page instead of merging stale repos — and a
+  // stale nextPage cursor — into the freshly fetched payload.
+  const generation = useRef(0);
 
   useEffect(() => {
+    generation.current += 1;
     let cancelled = false;
     setState((previous) => ({ ...previous, error: null, loading: true }));
     fetchDirectory(tokenVersion)
@@ -85,6 +90,10 @@ export function useRepoDirectory(tokenVersion: number): RepoDirectoryState {
         directoryCache.delete(key);
       }
     }
+    // Bumped here as well as in the effect: a stale loadMore could resolve
+    // in the window between this click and the effect running.
+    generation.current += 1;
+    setLoadingMore(false);
     setReloadVersion((version) => version + 1);
   }, [tokenVersion]);
 
@@ -93,10 +102,14 @@ export function useRepoDirectory(tokenVersion: number): RepoDirectoryState {
     if (page == null || loadingMore) {
       return;
     }
+    const startedGeneration = generation.current;
     setLoadingMore(true);
     setState((previous) => ({ ...previous, error: null }));
     void fetchDirectory(tokenVersion, page).then(
       (payload) => {
+        if (generation.current !== startedGeneration) {
+          return;
+        }
         setState((previous) => ({
           error: null,
           loading: false,
@@ -108,6 +121,9 @@ export function useRepoDirectory(tokenVersion: number): RepoDirectoryState {
         setLoadingMore(false);
       },
       (error: Error) => {
+        if (generation.current !== startedGeneration) {
+          return;
+        }
         setState((previous) => ({
           ...previous,
           error: error.message,

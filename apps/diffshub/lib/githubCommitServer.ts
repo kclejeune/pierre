@@ -91,12 +91,16 @@ async function gitDataRequest(
     }
   );
   if (!response.ok) {
-    const detail = parseGitHubErrorMessage(await response.text());
+    // Classify on the raw body: the phrases that disambiguate a 422 (e.g.
+    // "protected branch") often live in nested errors[] entries that the
+    // top-level `message` extraction drops.
+    const body = await response.text();
+    const detail = parseGitHubErrorMessage(body);
     throw new GitHubCommitError(
       detail === ''
         ? `GitHub request ${path} failed (${response.status}).`
         : detail,
-      classifyGitHubWriteFailure(response.status, detail),
+      classifyGitHubWriteFailure(response.status, body),
       response.status
     );
   }
@@ -129,9 +133,6 @@ function classifyGitHubWriteFailure(
   status: number,
   detail: string
 ): GitHubCommitErrorCode {
-  if (status === 409) {
-    return 'stale-head';
-  }
   if (status === 401 || status === 403) {
     return 'forbidden';
   }

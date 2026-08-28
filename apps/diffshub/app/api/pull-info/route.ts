@@ -16,7 +16,7 @@ import type { PullInfo } from '@/lib/pullInfoClient';
 
 // The pull request's refs plus metadata carried by pulls/{n}. Keep this first
 // chrome request to one GitHub round trip; reviews, checks, and viewer merge
-// capabilities load lazily when the details panel opens.
+// capabilities arrive via the separate /api/pull-details supplement.
 export async function GET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
@@ -36,13 +36,9 @@ export async function GET(request: NextRequest) {
       parseBearerToken(request.headers.get('authorization'))
     );
     const refs = parsePullRefs(data, { owner, repo });
-    const details = parsePullDetails(data);
     const payload: PullInfo = {
       ...refs,
-      details: {
-        ...details,
-        checks: null,
-      },
+      details: parsePullDetails(data),
       number: pull,
     };
     return createJSONResponse(payload);

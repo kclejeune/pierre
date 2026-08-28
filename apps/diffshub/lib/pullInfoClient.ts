@@ -48,12 +48,12 @@ export interface PullDetailsSupplement {
   reviewers: PullReviewer[] | null;
 }
 
-// The pull request metadata the details panel shows beyond refs. `checks` is
-// null until the lazy supplement loads, or when CI could not be loaded.
+// The pull request metadata the details panel shows beyond refs. CI checks,
+// review verdicts, and merge capabilities are not here — they arrive via the
+// separate PullDetailsSupplement request.
 export interface PullDetails {
   authorLogin?: string;
   body: string;
-  checks: PullCheck[] | null;
   draft: boolean;
   labels: PullLabel[];
   // GitHub computes mergeability lazily; null means still unknown.

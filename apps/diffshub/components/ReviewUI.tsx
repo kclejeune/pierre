@@ -21,6 +21,7 @@ import { DiffsHubStatusPanel } from './DiffsHubStatusPanel';
 import { DiffsHubViewer } from './DiffsHubViewer';
 import { FileSearchPalette } from './FileSearchPalette';
 import { PullCommitPanel } from './PullCommitPanel';
+import { PullCommitRangePicker } from './PullCommitRangePicker';
 import {
   PullConflictControl,
   PullConflictResolver,
@@ -836,6 +837,11 @@ function ReviewUIInner({ domain, initialUrl, path }: ReviewUIProps) {
           reviewControl={
             pullRequest != null ? (
               <>
+                <PullCommitRangePicker
+                  getGitHubToken={getGitHubToken}
+                  githubTokenVersion={githubTokenVersion}
+                  pullRequest={pullRequest}
+                />
                 <PullDetailsControl
                   canWrite={hasGitHubToken}
                   getGitHubToken={getGitHubToken}

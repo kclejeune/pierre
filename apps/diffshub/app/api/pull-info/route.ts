@@ -11,6 +11,7 @@ import {
   fetchPullReviewStates,
   mergeReviewerStates,
   parsePullDetails,
+  readPullRouteParams,
 } from '@/lib/githubPullDetailsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
@@ -29,24 +30,26 @@ export async function GET(request: NextRequest) {
     return rejection;
   }
 
-  const params = request.nextUrl.searchParams;
-  const owner = params.get('owner');
-  const repo = params.get('repo');
-  const pull = params.get('pull');
-  if (owner == null || repo == null || pull == null || !/^\d+$/.test(pull)) {
-    return createJSONResponse(
-      { error: 'owner, repo, and pull are required.' },
-      { status: 400 }
-    );
+  const params = readPullRouteParams(request.nextUrl.searchParams);
+  if (params instanceof Response) {
+    return params;
   }
+  const { owner, pull, repo } = params;
 
   const token = parseBearerToken(request.headers.get('authorization'));
   try {
+    // The reviews listing only needs the pull number, so it rides alongside
+    // the pull fetch; only the checks fetch waits for the head sha.
+    const reviewStatesPromise = fetchPullReviewStates(
+      { owner, repo },
+      pull,
+      token
+    ).catch(() => null);
     const data = await fetchPullData({ owner, repo }, pull, token);
     const refs = parsePullRefs(data, { owner, repo });
     const details = parsePullDetails(data);
     const [reviewStates, checks] = await Promise.all([
-      fetchPullReviewStates({ owner, repo }, pull, token).catch(() => null),
+      reviewStatesPromise,
       fetchPullChecks({ owner, repo }, refs.headSha, token).catch(() => null),
     ]);
     const payload: PullInfo = {

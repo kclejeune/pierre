@@ -7,9 +7,12 @@
 import {
   fetchGitHubJSON,
   type GitRepoRef,
+  readStringPath,
   repoPath,
 } from './githubCommitServer';
 import { encodeURLSegment } from './githubDiffSource';
+import { createJSONResponse } from './jsonResponse';
+import type { PullCommitSummary } from './pullCommitsList';
 import type {
   PullCheck,
   PullCheckState,
@@ -18,17 +21,23 @@ import type {
   PullReviewer,
   PullReviewerState,
 } from './pullInfoClient';
+import { asRecord } from './untypedJson';
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value != null
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function stringField(value: unknown, key: string): string | undefined {
-  const record = asRecord(value);
-  const field = record?.[key];
-  return typeof field === 'string' ? field : undefined;
+// Parses the owner/repo/pull query params the pull-scoped API routes share,
+// or the 400 response for a missing/malformed set.
+export function readPullRouteParams(
+  params: URLSearchParams
+): { owner: string; repo: string; pull: string } | Response {
+  const owner = params.get('owner');
+  const repo = params.get('repo');
+  const pull = params.get('pull');
+  if (owner == null || repo == null || pull == null || !/^\d+$/.test(pull)) {
+    return createJSONResponse(
+      { error: 'owner, repo, and pull are required.' },
+      { status: 400 }
+    );
+  }
+  return { owner, pull, repo };
 }
 
 // The metadata a pulls/{n} payload carries directly. Reviewers start as the
@@ -39,19 +48,19 @@ export function parsePullDetails(data: unknown): Omit<PullDetails, 'checks'> {
   const labels: PullLabel[] = [];
   if (Array.isArray(record.labels)) {
     for (const label of record.labels) {
-      const name = stringField(label, 'name');
+      const name = readStringPath(label, ['name']);
       if (name != null) {
-        labels.push({ color: stringField(label, 'color') ?? '', name });
+        labels.push({ color: readStringPath(label, ['color']) ?? '', name });
       }
     }
   }
   const reviewers: PullReviewer[] = [];
   if (Array.isArray(record.requested_reviewers)) {
     for (const user of record.requested_reviewers) {
-      const login = stringField(user, 'login');
+      const login = readStringPath(user, ['login']);
       if (login != null) {
         reviewers.push({
-          avatarUrl: stringField(user, 'avatar_url'),
+          avatarUrl: readStringPath(user, ['avatar_url']),
           login,
           state: 'PENDING',
         });
@@ -61,14 +70,15 @@ export function parsePullDetails(data: unknown): Omit<PullDetails, 'checks'> {
   // Requested teams review as a unit; surface them by slug with no avatar.
   if (Array.isArray(record.requested_teams)) {
     for (const team of record.requested_teams) {
-      const slug = stringField(team, 'slug') ?? stringField(team, 'name');
+      const slug =
+        readStringPath(team, ['slug']) ?? readStringPath(team, ['name']);
       if (slug != null) {
         reviewers.push({ login: slug, state: 'PENDING' });
       }
     }
   }
   return {
-    authorLogin: stringField(record.user, 'login'),
+    authorLogin: readStringPath(record.user, ['login']),
     body: typeof record.body === 'string' ? record.body : '',
     draft: record.draft === true,
     labels,
@@ -105,12 +115,12 @@ export function foldReviewStates(
   }
   for (const review of reviews) {
     const record = asRecord(review);
-    const login = stringField(record?.user, 'login');
+    const login = readStringPath(record?.user, ['login']);
     const state = record?.state;
     if (login == null || typeof state !== 'string' || state === 'PENDING') {
       continue;
     }
-    const avatarUrl = stringField(record?.user, 'avatar_url');
+    const avatarUrl = readStringPath(record?.user, ['avatar_url']);
     const current = states.get(login);
     if (state === 'APPROVED' || state === 'CHANGES_REQUESTED') {
       states.set(login, { avatarUrl, state });
@@ -159,7 +169,7 @@ export function mergeReviewerStates(
 // pending.
 export function normalizeCheckRun(run: unknown): PullCheck | null {
   const record = asRecord(run);
-  const name = stringField(record, 'name');
+  const name = readStringPath(record, ['name']);
   if (record == null || name == null) {
     return null;
   }
@@ -178,7 +188,7 @@ export function normalizeCheckRun(run: unknown): PullCheck | null {
     state = 'failure';
   }
   return {
-    detailsUrl: stringField(record, 'html_url'),
+    detailsUrl: readStringPath(record, ['html_url']),
     name,
     state,
   };
@@ -187,7 +197,7 @@ export function normalizeCheckRun(run: unknown): PullCheck | null {
 // One legacy commit status, normalized to the same states.
 export function normalizeCommitStatus(status: unknown): PullCheck | null {
   const record = asRecord(status);
-  const name = stringField(record, 'context');
+  const name = readStringPath(record, ['context']);
   if (record == null || name == null) {
     return null;
   }
@@ -198,7 +208,7 @@ export function normalizeCommitStatus(status: unknown): PullCheck | null {
         ? 'pending'
         : 'failure'; // failure or error.
   return {
-    detailsUrl: stringField(record, 'target_url'),
+    detailsUrl: readStringPath(record, ['target_url']),
     name,
     state,
   };
@@ -258,4 +268,70 @@ export async function fetchPullChecks(
     }
   }
   return checks;
+}
+
+// One page of a pulls/{n}/commits listing, narrowed to what the range
+// picker renders: sha, first parent, message headline, author identity.
+export function parsePullCommitsPage(payload: unknown): PullCommitSummary[] {
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+  const commits: PullCommitSummary[] = [];
+  for (const entry of payload) {
+    const record = asRecord(entry);
+    const sha = readStringPath(record, ['sha']);
+    if (record == null || sha == null) {
+      continue;
+    }
+    const commit = asRecord(record.commit);
+    const message = readStringPath(commit, ['message']) ?? '';
+    const parents = Array.isArray(record.parents) ? record.parents : [];
+    commits.push({
+      authorAvatarUrl: readStringPath(record.author, ['avatar_url']),
+      // The GitHub account when the commit email resolved to one, otherwise
+      // the raw commit author name.
+      authorLogin:
+        readStringPath(record.author, ['login']) ??
+        readStringPath(commit?.author, ['name']),
+      authoredAt: readStringPath(commit?.author, ['date']),
+      headline: message.split('\n', 1)[0],
+      parentSha: readStringPath(parents[0], ['sha']),
+      sha,
+    });
+  }
+  return commits;
+}
+
+// Every commit of the pull request, oldest first. GitHub caps this listing
+// at 250 commits, so three 100-per-page requests cover it; single-page pulls
+// (the common case) stop after one request, larger ones fetch the remaining
+// pages in parallel.
+export async function fetchPullCommitsListing(
+  repo: GitRepoRef,
+  pull: string,
+  token: string | undefined
+): Promise<PullCommitSummary[]> {
+  const fetchPage = async (page: number): Promise<PullCommitSummary[]> =>
+    parsePullCommitsPage(
+      await fetchGitHubJSON(
+        repoPath(
+          repo,
+          `/pulls/${encodeURLSegment(pull)}/commits?per_page=100&page=${page}`
+        ),
+        token
+      )
+    );
+  const first = await fetchPage(1);
+  if (first.length < 100) {
+    return first;
+  }
+  const rest = await Promise.all([fetchPage(2), fetchPage(3)]);
+  const commits = [...first];
+  for (const page of rest) {
+    commits.push(...page);
+    if (page.length < 100) {
+      break;
+    }
+  }
+  return commits;
 }

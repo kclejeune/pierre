@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 
 import { DiffsHubLogo } from '@/components/DiffsHubLogo';
+import { useGitHubEnvironment } from '@/components/GitHubEnvironmentProvider';
 import { GitHubTokenControl } from '@/components/GitHubTokenControl';
 import { useGitHubToken } from '@/components/useGitHubToken';
 import { sanitizeReturnTo } from '@/lib/githubOAuth';
@@ -14,6 +15,7 @@ import { sanitizeReturnTo } from '@/lib/githubOAuth';
 // completion page — the effect below sends them back to it.
 export function LoginPage() {
   const { clearToken, hasToken, setToken } = useGitHubToken();
+  const { patInputEnabled } = useGitHubEnvironment();
 
   useEffect(() => {
     if (!hasToken) {
@@ -31,8 +33,9 @@ export function LoginPage() {
           DiffsHub
         </h1>
         <p className="text-muted-foreground text-sm text-pretty">
-          This deployment requires GitHub credentials. Sign in or save a token
-          to continue to your destination.
+          This deployment requires GitHub credentials.{' '}
+          {patInputEnabled ? 'Sign in or save a token' : 'Sign in'} to continue
+          to your destination.
         </p>
         <div className="bg-accent md:bg-background overflow-hidden rounded-lg border">
           <GitHubTokenControl

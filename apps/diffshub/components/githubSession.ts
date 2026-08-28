@@ -189,15 +189,19 @@ export function isStoredGitHubTokenExpired(now: number = Date.now()): boolean {
   return expiresAt != null && expiresAt <= now;
 }
 
-// When the next proactive refresh is due (epoch ms), or undefined when the
-// session has nothing to refresh. Lets the refresher sleep until then
-// instead of polling.
+// When the next proactive session check is due (epoch ms), or undefined when
+// the session carries no expiry. Lets the refresher sleep until then instead
+// of polling. With a refresh token the check runs ahead of expiry to mint the
+// next token; without one (a deployment that disables refresh tokens) it runs
+// at expiry to clear the dead token and prompt a fresh sign-in.
 export function nextGitHubRefreshDueAt(): number | undefined {
   const session = readStoredGitHubSession();
-  if (session?.refreshToken == null || session.expiresAt == null) {
+  if (session?.expiresAt == null) {
     return undefined;
   }
-  return session.expiresAt - REFRESH_LEAD_MS;
+  return session.refreshToken == null
+    ? session.expiresAt
+    : session.expiresAt - REFRESH_LEAD_MS;
 }
 
 // Refreshes the stored access token when it is about to expire. Single-flight:
@@ -216,10 +220,20 @@ async function runRefresh(
   fetcher: PlainFetch
 ): Promise<GitHubSessionRefreshOutcome> {
   const session = readStoredGitHubSession();
-  if (readStoredGitHubToken() === '' || session?.refreshToken == null) {
+  if (readStoredGitHubToken() === '' || session == null) {
     return 'none';
   }
   const now = Date.now();
+  if (session.refreshToken == null) {
+    // An expiring token with nothing to refresh it (the deployment omits
+    // refresh tokens): once it dies the only recovery is a fresh sign-in, so
+    // clear it and let the sign-in prompt surface.
+    if (session.expiresAt == null || session.expiresAt > now) {
+      return 'none';
+    }
+    saveGitHubTokenToStorage('');
+    return 'signed-out';
+  }
   if (session.expiresAt != null && session.expiresAt - now > REFRESH_LEAD_MS) {
     return 'fresh';
   }

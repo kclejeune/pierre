@@ -11,6 +11,7 @@ import {
   SECTION_CARD_CLASS,
 } from '@/components/DashboardShell';
 import { Input } from '@/components/Input';
+import { RepoDirectory } from '@/components/RepoDirectory';
 import { RepoNameInput } from '@/components/RepoNameInput';
 import { useGitHubToken } from '@/components/useGitHubToken';
 import { usePinnedRepos } from '@/components/usePinnedRepos';
@@ -55,6 +56,16 @@ export function BrowseDashboard({ initialRepo }: BrowseDashboardProps) {
       <RepoPicker selected={repo} onSelect={selectRepo} />
       {repo != null && tokenState.hydrated && (
         <RepoRefsPanel key={repo} repoName={repo} token={token} />
+      )}
+      {tokenState.hydrated && tokenState.hasToken && (
+        <section className="space-y-3">
+          <h3 className="text-sm font-medium">Your repositories</h3>
+          <RepoDirectory
+            onSelectRepo={selectRepo}
+            selectedRepo={repo}
+            tokenVersion={tokenState.tokenVersion}
+          />
+        </section>
       )}
     </DashboardShell>
   );

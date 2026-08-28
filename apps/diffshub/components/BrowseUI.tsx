@@ -25,6 +25,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from './DropdownMenu';
+import { FileSearchPalette } from './FileSearchPalette';
 import { GitHubAssetImage } from './GitHubAssetImage';
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
 import { GitHubTokenControl } from './GitHubTokenControl';
@@ -337,6 +338,12 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
           />
         </div>
       </header>
+      {treeData != null && (
+        <FileSearchPalette
+          paths={treeData.paths}
+          onSelectPath={handleSelectFile}
+        />
+      )}
       <div className="flex min-h-0 flex-1">
         {treeState.kind === 'loading' && (
           <p className="text-muted-foreground m-auto font-sans text-[13px]">

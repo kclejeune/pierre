@@ -299,7 +299,7 @@ export async function requestJSON(
 
 export function buildHeaders(
   token: string | undefined
-): HeadersInit | undefined {
+): Record<string, string> | undefined {
   return token == null || token === ''
     ? undefined
     : { Authorization: `Bearer ${token}` };

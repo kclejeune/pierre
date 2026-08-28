@@ -1,9 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
-import { useChromeThemeProps } from './useChromeThemeProps';
+import { useDropdownChromeStyle } from './useDropdownChromeStyle';
 import { Button } from '@/components/Button';
 import {
   DropdownMenu,
@@ -12,8 +12,6 @@ import {
 } from '@/components/DropdownMenu';
 import { cn } from '@/lib/cn';
 import type { PullReviewEvent } from '@/lib/pullCommentsClient';
-import { diffshubChromeMapping } from '@/lib/theme/diffshubChromeMapping';
-import { getDropdownThemeStyle } from '@/lib/theme/dropdownChromeStyle';
 
 const REVIEW_EVENT_OPTIONS: {
   event: PullReviewEvent;
@@ -61,14 +59,7 @@ export function ReviewSubmitControl({
   const [body, setBody] = useState('');
   const [event, setEvent] = useState<PullReviewEvent>('COMMENT');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { style: chromeStyle } = useChromeThemeProps(diffshubChromeMapping);
-  const dropdownThemeStyle = useMemo(
-    () =>
-      getDropdownThemeStyle(
-        Object.keys(chromeStyle).length > 0 ? chromeStyle : undefined
-      ),
-    [chromeStyle]
-  );
+  const dropdownThemeStyle = useDropdownChromeStyle();
 
   // GitHub requires substance for a plain comment review; a verdict alone is
   // enough for approve / request changes.

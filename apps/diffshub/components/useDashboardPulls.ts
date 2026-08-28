@@ -16,8 +16,9 @@ export type DashboardPullsSource =
   // The main bucket list; excludeRepos drops pulls from repos already shown
   // in the pinned cards above it.
   | { kind: 'bucket'; bucket: PullBucket; excludeRepos?: readonly string[] }
-  // A pinned repo's card, scoped to the dashboard's active bucket tab.
-  | { kind: 'repo'; repo: string; bucket: PullBucket };
+  // A repo card: scoped to the dashboard's active bucket tab when one is
+  // given, every open pull in the repo otherwise.
+  | { kind: 'repo'; repo: string; bucket?: PullBucket };
 
 interface PullsPayload {
   pulls: PullSummary[];
@@ -70,16 +71,17 @@ export function useDashboardPulls(
     totalCount: 0,
   });
 
-  const excludeRepos =
-    source.kind === 'bucket' ? (source.excludeRepos ?? []) : [];
-  const excludeParam =
-    excludeRepos.length > 0
-      ? `&exclude=${encodeURIComponent(excludeRepos.join(','))}`
-      : '';
-  const sourceKey =
-    source.kind === 'bucket'
-      ? `bucket=${encodeURIComponent(source.bucket)}${excludeParam}`
-      : `bucket=${encodeURIComponent(source.bucket)}&repo=${encodeURIComponent(source.repo)}`;
+  // Doubles as the cache key and the query string.
+  const params = new URLSearchParams();
+  if (source.bucket != null) {
+    params.set('bucket', source.bucket);
+  }
+  if (source.kind === 'repo') {
+    params.set('repo', source.repo);
+  } else if ((source.excludeRepos ?? []).length > 0) {
+    params.set('exclude', (source.excludeRepos ?? []).join(','));
+  }
+  const sourceKey = params.toString();
 
   useEffect(() => {
     let cancelled = false;

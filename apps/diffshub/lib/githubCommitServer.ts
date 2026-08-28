@@ -75,7 +75,7 @@ export function commitErrorResponse(error: unknown): Response {
 async function gitDataRequest(
   path: string,
   token: string | undefined,
-  init: { method: 'GET' | 'PATCH' | 'POST'; body?: unknown },
+  init: { method: 'GET' | 'PATCH' | 'POST' | 'PUT'; body?: unknown },
   fetcher: PlainFetch
 ): Promise<unknown> {
   const response = await fetcher(
@@ -347,6 +347,19 @@ export function fetchGitHubJSON(
   fetcher: PlainFetch = fetch
 ): Promise<unknown> {
   return gitDataRequest(path, token, { method: 'GET' }, fetcher);
+}
+
+// Authenticated JSON write against the GitHub API that throws
+// GitHubCommitError on failure — used by routes whose GitHub call is a plain
+// REST mutation (e.g. merging a pull) rather than the git data API above.
+export function sendGitHubJSON(
+  path: string,
+  token: string | undefined,
+  method: 'PATCH' | 'POST' | 'PUT',
+  body: unknown,
+  fetcher: PlainFetch = fetch
+): Promise<unknown> {
+  return gitDataRequest(path, token, { method, body }, fetcher);
 }
 
 // Reads a nested string off an untyped GitHub payload, or undefined when any

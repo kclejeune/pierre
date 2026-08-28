@@ -29,11 +29,39 @@ export interface RepoDirectoryPayload {
   // Most recently pushed first, as GitHub returns them.
   repos: RepoDirectoryRepo[];
   viewer: RepoDirectoryOwner | null;
+  // Next /user/repos page when this payload is intentionally partial.
+  nextPage?: number;
 }
 
 export interface RepoDirectoryGroup {
   owner: RepoDirectoryOwner;
   repos: RepoDirectoryRepo[];
+}
+
+export function mergeRepoDirectoryPayload(
+  current: RepoDirectoryPayload,
+  next: RepoDirectoryPayload
+): RepoDirectoryPayload {
+  const ownerKey = (owner: RepoDirectoryOwner) => owner.login.toLowerCase();
+  const owners = new Map(
+    current.repoOwners.map((owner) => [ownerKey(owner), owner])
+  );
+  for (const owner of next.repoOwners) {
+    owners.set(ownerKey(owner), owner);
+  }
+  const repos = new Map(
+    current.repos.map((repo) => [repo.fullName.toLowerCase(), repo])
+  );
+  for (const repo of next.repos) {
+    repos.set(repo.fullName.toLowerCase(), repo);
+  }
+  return {
+    orgs: current.orgs,
+    repoOwners: [...owners.values()],
+    repos: [...repos.values()],
+    viewer: current.viewer,
+    nextPage: next.nextPage,
+  };
 }
 
 // One owner (user or org) from a GitHub payload; `fallbackKind` labels

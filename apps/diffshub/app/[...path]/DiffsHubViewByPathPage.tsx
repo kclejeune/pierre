@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { BrowseUI } from '@/components/BrowseUI';
 import { ReviewUI } from '@/components/ReviewUI';
 import { getGitHubEnvironment } from '@/lib/githubEnvironment';
+import { parsePullReturnPath } from '@/lib/pullCommitsList';
 import { resolveDiffshubViewerRoute } from '@/lib/resolveDiffshubViewerRoute';
 
 // Viewer route that mirrors the upstream path. GitHub is the public default,
@@ -12,10 +13,13 @@ export async function DiffsHubViewByPathPage({
   searchParams,
 }: {
   params: Promise<{ path: string[] }>;
-  searchParams: Promise<{ domain?: string | string[] }>;
+  searchParams: Promise<{
+    domain?: string | string[];
+    fromPull?: string | string[];
+  }>;
 }) {
   const { path } = await params;
-  const { domain } = await searchParams;
+  const { domain, fromPull } = await searchParams;
   const requestedDomain = Array.isArray(domain) ? domain[0] : domain;
   const route = resolveDiffshubViewerRoute(
     path,
@@ -44,6 +48,9 @@ export async function DiffsHubViewByPathPage({
         domain={route.domain}
         initialUrl={route.url}
         path={route.upstreamPath}
+        returnToPullPath={parsePullReturnPath(
+          Array.isArray(fromPull) ? fromPull[0] : fromPull
+        )}
       />
     </div>
   );

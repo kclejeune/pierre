@@ -2,7 +2,9 @@ import { describe, expect, test } from 'bun:test';
 
 import { parsePullCommitsPage } from '../githubPullDetailsServer';
 import {
+  commitRangeViewerHref,
   commitRangeViewerPath,
+  parsePullReturnPath,
   type PullCommitSummary,
 } from '../pullCommitsList';
 
@@ -43,6 +45,22 @@ describe('commitRangeViewerPath', () => {
     expect(
       commitRangeViewerPath(REPO, commit('root'), commit('c2', 'root'))
     ).toBeNull();
+  });
+});
+
+describe('commit range return navigation', () => {
+  test('carries a validated route back to the pull request', () => {
+    expect(
+      commitRangeViewerHref('/octo/demo/commit/c2', {
+        number: '12',
+        owner: 'octo',
+        repo: 'demo',
+      })
+    ).toBe('/octo/demo/commit/c2?fromPull=%2Focto%2Fdemo%2Fpull%2F12');
+    expect(parsePullReturnPath('/octo/demo/pull/12')).toBe(
+      '/octo/demo/pull/12'
+    );
+    expect(parsePullReturnPath('//evil.example/pull/12')).toBeUndefined();
   });
 });
 

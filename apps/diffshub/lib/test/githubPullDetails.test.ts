@@ -1,12 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  fetchPullChecks,
+  fetchPullReviewStates,
   foldReviewStates,
   mergeReviewerStates,
   normalizeCheckRun,
   normalizeCommitStatus,
   parsePullDetails,
+  parsePullMergeCapabilities,
 } from '../githubPullDetailsServer';
+import type { PlainFetch } from '../plainFetch';
+import { mergePullReviewers } from '../pullInfoClient';
 
 describe('parsePullDetails', () => {
   test('extracts display metadata from a pulls/{n} payload', () => {
@@ -109,6 +114,103 @@ describe('mergeReviewerStates', () => {
         state: 'APPROVED',
       },
       { avatarUrl: undefined, login: 'drive-by', state: 'COMMENTED' },
+    ]);
+  });
+});
+
+describe('pull details pagination and degradation', () => {
+  test('folds reviewer verdicts across every chronological page', async () => {
+    const fetcher: PlainFetch = (input) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const page = new URL(url).searchParams.get('page');
+      return Promise.resolve(
+        Response.json(
+          page === '1'
+            ? Array.from({ length: 100 }, () => ({
+                state: 'COMMENTED',
+                user: { login: 'reviewer' },
+              }))
+            : [{ state: 'APPROVED', user: { login: 'reviewer' } }]
+        )
+      );
+    };
+    const states = await fetchPullReviewStates(
+      { owner: 'octo', repo: 'demo' },
+      '1',
+      undefined,
+      fetcher
+    );
+    expect(states.get('reviewer')?.state).toBe('APPROVED');
+  });
+
+  test('keeps legacy statuses when check runs are unavailable', async () => {
+    const fetcher: PlainFetch = (input) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      if (url.includes('/check-runs')) {
+        return Promise.resolve(new Response('forbidden', { status: 403 }));
+      }
+      return Promise.resolve(
+        Response.json({
+          statuses: url.includes('page=1')
+            ? [{ context: 'legacy', state: 'success' }]
+            : [],
+        })
+      );
+    };
+    const checks = await fetchPullChecks(
+      { owner: 'octo', repo: 'demo' },
+      'abcdef0',
+      undefined,
+      fetcher
+    );
+    expect(checks).toEqual([{ name: 'legacy', state: 'success' }]);
+  });
+});
+
+describe('merge capabilities', () => {
+  test('uses viewer permissions and repository-enabled methods', () => {
+    expect(
+      parsePullMergeCapabilities({
+        allow_merge_commit: false,
+        allow_rebase_merge: true,
+        allow_squash_merge: true,
+        permissions: { push: true },
+      })
+    ).toEqual({ canMerge: true, methods: ['squash', 'rebase'] });
+    expect(parsePullMergeCapabilities(null)).toEqual({
+      canMerge: false,
+      methods: [],
+    });
+  });
+});
+
+describe('mergePullReviewers', () => {
+  test('overlays submitted verdicts without losing pending requests', () => {
+    expect(
+      mergePullReviewers(
+        [
+          { avatarUrl: 'requested.png', login: 'a', state: 'PENDING' },
+          { login: 'b', state: 'PENDING' },
+        ],
+        [
+          { avatarUrl: 'submitted.png', login: 'a', state: 'APPROVED' },
+          { login: 'c', state: 'COMMENTED' },
+        ]
+      )
+    ).toEqual([
+      { avatarUrl: 'requested.png', login: 'a', state: 'APPROVED' },
+      { login: 'b', state: 'PENDING' },
+      { login: 'c', state: 'COMMENTED' },
     ]);
   });
 });

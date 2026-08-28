@@ -7,6 +7,7 @@ import {
 export type PullMergeMethod = 'merge' | 'rebase' | 'squash';
 
 export interface PullMergeResult {
+  message?: string;
   merged: boolean;
   // The resulting merge (or head, for rebases) commit on the base branch.
   sha?: string;

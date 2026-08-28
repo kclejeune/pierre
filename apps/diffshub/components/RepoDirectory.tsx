@@ -33,7 +33,8 @@ export function RepoDirectory({
   selectedRepo,
   tokenVersion,
 }: RepoDirectoryProps) {
-  const { error, groups, loading } = useRepoDirectory(tokenVersion);
+  const { error, groups, hasMore, loadMore, loading, loadingMore, refresh } =
+    useRepoDirectory(tokenVersion);
   const [query, setQuery] = useState('');
   const [ownerFilter, setOwnerFilter] = useState<string | null>(null);
 
@@ -58,8 +59,15 @@ export function RepoDirectory({
       </p>
     );
   }
-  if (error != null) {
-    return <p className="text-destructive p-3 text-sm">{error}</p>;
+  if (error != null && groups.length === 0) {
+    return (
+      <div className="flex items-center justify-between gap-3 p-3">
+        <p className="text-destructive text-sm">{error}</p>
+        <Button variant="outline" size="xs" onClick={refresh}>
+          Retry
+        </Button>
+      </div>
+    );
   }
   if (groups.length === 0) {
     return (
@@ -71,12 +79,17 @@ export function RepoDirectory({
 
   return (
     <div className="space-y-3">
-      <Input
-        inputSize="sm"
-        placeholder="Filter organizations and repositories…"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-      />
+      <div className="flex items-center gap-2">
+        <Input
+          inputSize="sm"
+          placeholder="Filter organizations and repositories…"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <Button variant="ghost" size="xs" onClick={refresh}>
+          Refresh
+        </Button>
+      </div>
       <div className="flex flex-wrap items-center gap-1">
         <Button
           variant={ownerFilter == null ? 'secondary' : 'ghost'}
@@ -112,6 +125,26 @@ export function RepoDirectory({
             onSelectRepo={onSelectRepo}
           />
         ))
+      )}
+      {hasMore && (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-dashed px-3 py-2">
+          <p className="text-muted-foreground text-xs">
+            {query.trim() === ''
+              ? 'More repositories are available.'
+              : 'Search currently covers the repositories loaded so far.'}
+          </p>
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={loadingMore}
+            onClick={loadMore}
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </Button>
+        </div>
+      )}
+      {error != null && groups.length > 0 && (
+        <p className="text-destructive px-3 text-xs">{error}</p>
       )}
     </div>
   );
@@ -183,8 +216,7 @@ function RepoGroupCard({
       </h4>
       {group.repos.length === 0 ? (
         <p className="text-muted-foreground p-3 text-sm">
-          No repositories from this organization in your recent listing — search
-          for one by name above.
+          No repositories from this organization are loaded yet.
         </p>
       ) : (
         group.repos.map((repo) => (

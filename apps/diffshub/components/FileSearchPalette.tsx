@@ -51,6 +51,7 @@ export function FileSearchPalette({
     <PaletteDialog
       open={open}
       onOpenChange={handleOpenChange}
+      paletteId="file"
       shortcutKey="p"
       title="Go to file"
       description="Search the files in this view and jump to one."

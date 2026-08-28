@@ -18,12 +18,22 @@ interface PaletteDialogProps {
   // it, so callers reset per-open state (query, cached lists) here instead of
   // in an effect.
   onOpenChange(open: boolean): void;
+  paletteId: PaletteId;
   // Toggled by cmd/ctrl + this key, with shift/alt combinations left to the
   // browser.
   shortcutKey: string;
   title: string;
   description: string;
   children: ReactNode;
+}
+
+export type PaletteId = 'command' | 'file';
+const OPEN_PALETTE_EVENT = 'diffshub:open-palette';
+
+export function openPalette(paletteId: PaletteId): void {
+  window.dispatchEvent(
+    new CustomEvent<PaletteId>(OPEN_PALETTE_EVENT, { detail: paletteId })
+  );
 }
 
 // The shared shell of the command palettes (cmd+K diff switcher, cmd+P
@@ -35,6 +45,7 @@ export function PaletteDialog({
   description,
   onOpenChange,
   open,
+  paletteId,
   shortcutKey,
   title,
 }: PaletteDialogProps) {
@@ -47,12 +58,24 @@ export function PaletteDialog({
         event.key === shortcutKey
       ) {
         event.preventDefault();
-        onOpenChange(!open);
+        if (open) {
+          onOpenChange(false);
+        } else {
+          openPalette(paletteId);
+        }
       }
     };
+    const onOpenRequest = (event: Event) => {
+      const requested = (event as CustomEvent<PaletteId>).detail;
+      onOpenChange(requested === paletteId);
+    };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onOpenChange, open, shortcutKey]);
+    window.addEventListener(OPEN_PALETTE_EVENT, onOpenRequest);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener(OPEN_PALETTE_EVENT, onOpenRequest);
+    };
+  }, [onOpenChange, open, paletteId, shortcutKey]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

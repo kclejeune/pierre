@@ -20,8 +20,8 @@ import {
   type RepoDirectoryRepo,
 } from '@/lib/repoDirectory';
 
-// How many pages of /user/repos to walk (100 per page). Enough for the
-// dashboards' directory; heavier accounts fall back to the search box.
+// Load a useful first directory in two waves. Accounts beyond this initial
+// slice receive a continuation cursor and can fetch further pages on demand.
 const MAX_REPO_PAGES = 3;
 const REPO_PAGE_SIZE = 100;
 
@@ -54,6 +54,41 @@ export async function GET(request: NextRequest) {
     );
   }
   const environment = getGitHubEnvironment();
+  const requestedPage = request.nextUrl.searchParams.get('page');
+  if (requestedPage != null) {
+    const page = Number(requestedPage);
+    if (
+      !/^\d+$/.test(requestedPage) ||
+      !Number.isSafeInteger(page) ||
+      page < 2
+    ) {
+      return createJSONResponse(
+        { error: 'page must be an integer greater than one.' },
+        { status: 400 }
+      );
+    }
+    try {
+      const response = await fetchRepoPage(environment, token, page);
+      if (!response.ok) {
+        return await createGitHubFailureResponse(response);
+      }
+      const pagePayload: unknown = await response.json();
+      const { owners, repos } = parseRepoPages([pagePayload]);
+      const payload: RepoDirectoryPayload = {
+        orgs: [],
+        nextPage:
+          Array.isArray(pagePayload) && pagePayload.length === REPO_PAGE_SIZE
+            ? page + 1
+            : undefined,
+        repoOwners: [...owners.values()],
+        repos,
+        viewer: null,
+      };
+      return createJSONResponse(payload);
+    } catch {
+      return createUnreachableResponse(environment);
+    }
+  }
 
   try {
     // The first repos page rides in the same round-trip wave as the viewer
@@ -117,25 +152,17 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const repos: RepoDirectoryRepo[] = [];
-    const owners = new Map<string, RepoDirectoryOwner>();
-    for (const pagePayload of repoPages) {
-      if (!Array.isArray(pagePayload)) {
-        continue;
-      }
-      for (const item of pagePayload) {
-        const repo = parseRepoDirectoryRepo(item);
-        if (repo != null) {
-          repos.push(repo.repo);
-          if (!owners.has(repo.owner.login)) {
-            owners.set(repo.owner.login, repo.owner);
-          }
-        }
-      }
-    }
+    const { owners, repos } = parseRepoPages(repoPages);
+    const lastPage = repoPages.at(-1);
 
     const payload: RepoDirectoryPayload = {
       orgs,
+      nextPage:
+        repoPages.length === MAX_REPO_PAGES &&
+        Array.isArray(lastPage) &&
+        lastPage.length === REPO_PAGE_SIZE
+          ? MAX_REPO_PAGES + 1
+          : undefined,
       // Owners seen only through the repo listing (e.g. a collaborator
       // repo's owner), so the client can label and avatar every group.
       repoOwners: [...owners.values()],
@@ -146,4 +173,24 @@ export async function GET(request: NextRequest) {
   } catch {
     return createUnreachableResponse(environment);
   }
+}
+
+function parseRepoPages(pagePayloads: readonly unknown[]) {
+  const repos: RepoDirectoryRepo[] = [];
+  const owners = new Map<string, RepoDirectoryOwner>();
+  for (const pagePayload of pagePayloads) {
+    if (!Array.isArray(pagePayload)) {
+      continue;
+    }
+    for (const item of pagePayload) {
+      const repo = parseRepoDirectoryRepo(item);
+      if (repo != null) {
+        repos.push(repo.repo);
+        if (!owners.has(repo.owner.login)) {
+          owners.set(repo.owner.login, repo.owner);
+        }
+      }
+    }
+  }
+  return { owners, repos };
 }

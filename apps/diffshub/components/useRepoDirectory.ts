@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { storedGitHubTokenHeaders } from './githubSession';
 import { requestJSON } from '@/lib/pullCommentsClient';
 import {
   groupRepoDirectory,
+  mergeRepoDirectoryPayload,
   type RepoDirectoryGroup,
   type RepoDirectoryPayload,
 } from '@/lib/repoDirectory';
@@ -13,26 +14,37 @@ import {
 export interface RepoDirectoryState {
   error: string | null;
   groups: RepoDirectoryGroup[];
+  hasMore: boolean;
+  loadMore(): void;
   loading: boolean;
+  loadingMore: boolean;
+  refresh(): void;
 }
 
-// One directory fetch per token version: the browse and pulls pages share
-// the promise, and a saved token invalidates it naturally.
-const directoryCache = new Map<number, Promise<RepoDirectoryPayload>>();
+// Directory pages are shared per token version across the browse and pulls
+// dashboards. Refresh explicitly evicts the current token's pages.
+const directoryCache = new Map<string, Promise<RepoDirectoryPayload>>();
 
-function fetchDirectory(tokenVersion: number): Promise<RepoDirectoryPayload> {
-  let pending = directoryCache.get(tokenVersion);
+function fetchDirectory(
+  tokenVersion: number,
+  page?: number
+): Promise<RepoDirectoryPayload> {
+  const key = `${tokenVersion}|${page ?? 'initial'}`;
+  let pending = directoryCache.get(key);
   if (pending == null) {
-    pending = requestJSON('/api/github-repos', {
-      headers: storedGitHubTokenHeaders(),
-    })
+    pending = requestJSON(
+      page == null ? '/api/github-repos' : `/api/github-repos?page=${page}`,
+      {
+        headers: storedGitHubTokenHeaders(),
+      }
+    )
       .then((payload) => payload as RepoDirectoryPayload)
       .catch((error: unknown) => {
         // Failures are not cached so the next mount retries.
-        directoryCache.delete(tokenVersion);
+        directoryCache.delete(key);
         throw error instanceof Error ? error : new Error(String(error));
       });
-    directoryCache.set(tokenVersion, pending);
+    directoryCache.set(key, pending);
   }
   return pending;
 }
@@ -45,6 +57,8 @@ export function useRepoDirectory(tokenVersion: number): RepoDirectoryState {
     loading: boolean;
     payload: RepoDirectoryPayload | null;
   }>({ error: null, loading: true, payload: null });
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [reloadVersion, setReloadVersion] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -63,11 +77,58 @@ export function useRepoDirectory(tokenVersion: number): RepoDirectoryState {
     return () => {
       cancelled = true;
     };
+  }, [reloadVersion, tokenVersion]);
+
+  const refresh = useCallback(() => {
+    for (const key of directoryCache.keys()) {
+      if (key.startsWith(`${tokenVersion}|`)) {
+        directoryCache.delete(key);
+      }
+    }
+    setReloadVersion((version) => version + 1);
   }, [tokenVersion]);
+
+  const loadMore = useCallback(() => {
+    const page = state.payload?.nextPage;
+    if (page == null || loadingMore) {
+      return;
+    }
+    setLoadingMore(true);
+    setState((previous) => ({ ...previous, error: null }));
+    void fetchDirectory(tokenVersion, page).then(
+      (payload) => {
+        setState((previous) => ({
+          error: null,
+          loading: false,
+          payload:
+            previous.payload == null
+              ? payload
+              : mergeRepoDirectoryPayload(previous.payload, payload),
+        }));
+        setLoadingMore(false);
+      },
+      (error: Error) => {
+        setState((previous) => ({
+          ...previous,
+          error: error.message,
+          loading: false,
+        }));
+        setLoadingMore(false);
+      }
+    );
+  }, [loadingMore, state.payload, tokenVersion]);
 
   const groups = useMemo(
     () => (state.payload == null ? [] : groupRepoDirectory(state.payload)),
     [state.payload]
   );
-  return { error: state.error, groups, loading: state.loading };
+  return {
+    error: state.error,
+    groups,
+    hasMore: state.payload?.nextPage != null,
+    loadMore,
+    loading: state.loading,
+    loadingMore,
+    refresh,
+  };
 }

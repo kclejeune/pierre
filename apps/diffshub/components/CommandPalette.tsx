@@ -7,7 +7,7 @@ import {
   IconFolder,
 } from '@pierre/icons';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import {
   CommandEmpty,
@@ -17,7 +17,7 @@ import {
   CommandList,
 } from './Command';
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
-import { PaletteDialog } from './PaletteDialog';
+import { openPalette, PaletteDialog } from './PaletteDialog';
 import { useDiffUrlSuggestions } from './useDiffUrlSuggestions';
 import { usePinnedRepos } from './usePinnedRepos';
 import { buildPaletteItems, type PaletteItem } from '@/lib/commandPaletteItems';
@@ -33,10 +33,8 @@ const ITEM_ICONS: Record<PaletteItem['kind'], typeof IconBranch> = {
 
 // Fired by UI affordances (e.g. the home page's search bar) to open the
 // palette without a keyboard shortcut; the mounted palette listens globally.
-export const OPEN_COMMAND_PALETTE_EVENT = 'diffshub:open-command-palette';
-
 export function openCommandPalette(): void {
-  window.dispatchEvent(new Event(OPEN_COMMAND_PALETTE_EVENT));
+  openPalette('command');
 }
 
 // Global cmd+K / ctrl+K switcher: recent diffs and pinned repos when idle,
@@ -65,13 +63,6 @@ export function CommandPalette() {
       setRecents(loadRecentDiffs());
     }
   }, []);
-
-  useEffect(() => {
-    const onOpenRequest = () => handleOpenChange(true);
-    window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpenRequest);
-    return () =>
-      window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpenRequest);
-  }, [handleOpenChange]);
 
   const sections = useMemo(
     () =>
@@ -102,6 +93,7 @@ export function CommandPalette() {
     <PaletteDialog
       open={open}
       onOpenChange={handleOpenChange}
+      paletteId="command"
       shortcutKey="k"
       title="Diff switcher"
       description="Search repositories and pull requests, or jump to a recent diff."

@@ -3,7 +3,8 @@
 import {
   cloneFileDiffMetadata,
   type CodeViewItem,
-  type FileContents,
+  type CodeViewItemEditCompleteHandler,
+  type EditorChangeEvent,
   type FileDiffMetadata,
 } from '@pierre/diffs';
 import { type CodeViewHandle, useStableCallback } from '@pierre/diffs/react';
@@ -48,13 +49,10 @@ export interface PullEditSession {
   // longer match what GitHub knows.
   isFileLocked(itemId: string): boolean;
   onItemEditChange(
-    item: CodeViewItem<CommentMetadata>,
-    file: FileContents
+    event: EditorChangeEvent<CommentMetadata, 'file' | 'diff'>,
+    item: CodeViewItem<CommentMetadata>
   ): void;
-  onItemEditComplete(
-    item: CodeViewItem<CommentMetadata>,
-    file: FileContents
-  ): void;
+  onItemEditComplete: CodeViewItemEditCompleteHandler<CommentMetadata>;
   toggleEdit(itemId: string): void;
 }
 
@@ -201,7 +199,10 @@ export function usePullEditSession({
   });
 
   const onItemEditChange = useStableCallback(
-    (item: CodeViewItem<CommentMetadata>, file: FileContents) => {
+    (
+      { file }: EditorChangeEvent<CommentMetadata, 'file' | 'diff'>,
+      item: CodeViewItem<CommentMetadata>
+    ) => {
       contentsRef.current.set(item.id, file.contents);
       setDirtyFiles((previous) =>
         upsertDirtyFile(previous, { itemId: item.id, path: file.name })
@@ -209,28 +210,22 @@ export function usePullEditSession({
     }
   );
 
-  const onItemEditComplete = useStableCallback(
-    (item: CodeViewItem<CommentMetadata>, file: FileContents) => {
-      const viewer = viewerRef.current;
-      const current = viewer?.getItem(item.id);
+  const onItemEditComplete: CodeViewItemEditCompleteHandler<CommentMetadata> =
+    useStableCallback((event, item, nextItem) => {
+      if (item.type !== 'diff' || !('fileDiff' in event)) {
+        return 'reject';
+      }
+      const file = event.newFile;
+      if (file == null) {
+        return 'reject';
+      }
       contentsRef.current.set(item.id, file.contents);
       setDirtyFiles((previous) =>
         upsertDirtyFile(previous, { itemId: item.id, path: file.name })
       );
-      if (viewer == null || current == null || !isDiffItem(current)) {
-        return;
-      }
-      // The recommended single session-end write: the session already
-      // recomputed the fileDiff's hunks in place, so this stamps a fresh
-      // cacheKey (the old key caches pre-edit render output) and turns
-      // editing off in one version bump.
-      const version = (current.version ?? 0) + 1;
-      current.fileDiff.cacheKey = `${current.id}:edit:${version}`;
-      viewer.updateItem({
-        ...current,
-        edit: false,
-        version,
-      });
+      // CodeView installs nextItem after acceptance. Re-key the completed diff
+      // first so it cannot reuse render output from before the edit session.
+      event.fileDiff.cacheKey = `${item.id}:edit:${String(nextItem.version)}`;
       setEditingIds((previous) => {
         if (!previous.has(item.id)) {
           return previous;
@@ -239,8 +234,8 @@ export function usePullEditSession({
         next.delete(item.id);
         return next;
       });
-    }
-  );
+      return 'accept';
+    });
 
   const discardFile = useStableCallback((itemId: string) => {
     const viewer = viewerRef.current;

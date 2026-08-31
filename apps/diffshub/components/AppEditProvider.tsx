@@ -1,6 +1,6 @@
 'use client';
 
-import type { DiffsEditor } from '@pierre/diffs';
+import type { DiffsEditor, EditorDocumentKind } from '@pierre/diffs';
 import type { EditorOptions } from '@pierre/diffs/edit';
 import { EditProvider } from '@pierre/diffs/react';
 import { type ReactNode, useEffect } from 'react';
@@ -14,12 +14,14 @@ import { type ReactNode, useEffect } from 'react';
 let editModule: typeof import('@pierre/diffs/edit') | null = null;
 
 function createEditor<LAnnotation>(
-  options: EditorOptions<LAnnotation>
+  documentKind: EditorDocumentKind,
+  options: EditorOptions<LAnnotation>,
+  editStateKey?: string
 ): DiffsEditor<LAnnotation> {
   if (editModule == null) {
     throw new Error('The editor is still loading — try again in a moment.');
   }
-  return new editModule.Editor(options);
+  return new editModule.Editor(documentKind, options, editStateKey);
 }
 
 export function AppEditProvider({ children }: { children: ReactNode }) {

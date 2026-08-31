@@ -24,6 +24,7 @@ compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 # DIFFSHUB_PUBLIC_ORIGIN (the Worker sees the real request origin).
 [vars]
 DIFFSHUB_GITHUB_CLIENT_ID = "Ov23liNSMB9Nj1jWUU3n"
+DIFFSHUB_REQUIRE_SEALED_TOKENS = "true"
 
 [assets]
 directory = ".open-next/assets"

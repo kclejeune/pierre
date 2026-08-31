@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import {
   createGitHubAPIURL,
+  getGitHubClientEnvironment,
   getRefreshTokenMaxTTLSeconds,
   isConfiguredGitHubInstanceURL,
   isLoginRequired,
@@ -156,6 +157,45 @@ describe('require-login policy', () => {
     process.env.DIFFSHUB_REQUIRE_LOGIN = 'false';
     expect(isLoginRequired()).toBe(false);
     expect(rejectTokenlessRequestWhenLoginRequired(createRequest())).toBeNull();
+  });
+});
+
+describe('token encryption policy', () => {
+  afterEach(() => {
+    delete process.env.DIFFSHUB_TOKEN_ENCRYPTION_KEY;
+    delete process.env.DIFFSHUB_ENABLE_PAT_INPUT;
+    delete process.env.DIFFSHUB_REQUIRE_LOGIN;
+    resetGitHubEnvironmentCache();
+  });
+
+  test('rejects a bare bearer token when login and encryption are required', () => {
+    process.env.DIFFSHUB_REQUIRE_LOGIN = '1';
+    process.env.DIFFSHUB_TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString(
+      'base64'
+    );
+    resetGitHubEnvironmentCache();
+
+    expect(
+      rejectTokenlessRequestWhenLoginRequired(
+        createRequest('Bearer ghu_legacy')
+      )?.status
+    ).toBe(401);
+    expect(
+      rejectTokenlessRequestWhenLoginRequired(
+        createRequest('Bearer dhe1.access.nonce.ciphertext')
+      )
+    ).toBeNull();
+  });
+
+  test('hides PAT input when encryption is required', () => {
+    process.env.DIFFSHUB_ENABLE_PAT_INPUT = 'true';
+    process.env.DIFFSHUB_TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString(
+      'base64'
+    );
+    resetGitHubEnvironmentCache();
+
+    expect(isPATInputEnabled()).toBe(false);
+    expect(getGitHubClientEnvironment().tokenEncryptionRequired).toBe(true);
   });
 });
 

@@ -23,9 +23,9 @@
 
 import { readNonEmptyString } from './githubOAuthGrant';
 import { type UnwrappedRefreshToken } from './refreshTokenWrap';
+import { SEALED_TOKEN_PREFIX } from './tokenEnvelope';
 import { asRecord } from './untypedJson';
 
-const SEAL_PREFIX = 'dhe1';
 // 96-bit nonce, the standard GCM size.
 const NONCE_BYTES = 12;
 
@@ -36,17 +36,9 @@ const textEncoder = new TextEncoder();
 // The `dhe1.<kind>` prefix doubles as the additional-data domain separator:
 // it authenticates the envelope's declared kind without encrypting it.
 const SEAL_AAD: Record<SealedTokenKind, Uint8Array<ArrayBuffer>> = {
-  access: textEncoder.encode(`${SEAL_PREFIX}.access`),
-  refresh: textEncoder.encode(`${SEAL_PREFIX}.refresh`),
+  access: textEncoder.encode(`${SEALED_TOKEN_PREFIX}.access`),
+  refresh: textEncoder.encode(`${SEALED_TOKEN_PREFIX}.refresh`),
 };
-
-// Whether a stored credential is a sealed envelope rather than a bare GitHub
-// token. Callers key decryption off this shape, not off the current config,
-// so bare tokens (pasted PATs, sessions from before the key was configured)
-// keep working unchanged.
-export function isSealedToken(value: string): boolean {
-  return value.startsWith(`${SEAL_PREFIX}.`);
-}
 
 // One CryptoKey per raw key: getTokenEncryptionKey memoizes and hands back
 // the same array instance for the process lifetime, so identity-keying makes
@@ -79,7 +71,7 @@ async function seal(
   );
   const encodedNonce = Buffer.from(nonce).toString('base64url');
   const encodedCiphertext = Buffer.from(ciphertext).toString('base64url');
-  return `${SEAL_PREFIX}.${kind}.${encodedNonce}.${encodedCiphertext}`;
+  return `${SEALED_TOKEN_PREFIX}.${kind}.${encodedNonce}.${encodedCiphertext}`;
 }
 
 // Returns undefined for anything that is not a valid envelope of this kind
@@ -91,7 +83,11 @@ async function open(
   key: Uint8Array<ArrayBuffer>
 ): Promise<Record<string, unknown> | undefined> {
   const parts = sealed.split('.');
-  if (parts.length !== 4 || parts[0] !== SEAL_PREFIX || parts[1] !== kind) {
+  if (
+    parts.length !== 4 ||
+    parts[0] !== SEALED_TOKEN_PREFIX ||
+    parts[1] !== kind
+  ) {
     return undefined;
   }
   const [, , nonce = '', ciphertext = ''] = parts;

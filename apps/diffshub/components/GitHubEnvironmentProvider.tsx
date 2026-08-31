@@ -15,6 +15,7 @@ const DEFAULT_CLIENT_ENVIRONMENT: GitHubClientEnvironment = {
   oauthEnabled: false,
   patInputEnabled: true,
   requireLogin: false,
+  tokenEncryptionRequired: false,
   webURL: GITHUB_DOTCOM_WEB_URL,
 };
 

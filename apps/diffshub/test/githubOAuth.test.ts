@@ -626,24 +626,45 @@ describe('token sealing under an encryption key', () => {
     );
   });
 
-  test('the envelope subsumes the dhr1 wrap when a max TTL is also set', async () => {
+  test('rejects a legacy wrapped refresh token after encryption is enabled', async () => {
     process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL = '7d';
     resetGitHubEnvironmentCache();
     const issuedAt = nowSeconds() - 3 * DAY;
-    const grant = await refreshOAuthToken({
+    let contactedGitHub = false;
+    const rejected = await refreshOAuthToken({
       clientId: 'id',
       clientSecret: 'secret',
-      // A session wrapped before the key was configured still refreshes.
       refreshToken: await wrapRefreshToken('ghr_old', issuedAt, 'secret'),
       webURL: 'https://github.example.com',
-      fetcher: () => Promise.resolve(Response.json(GRANT_RESPONSE)),
-    });
-    expect(grant.refreshToken?.startsWith('dhe1.refresh.')).toBe(true);
-    expect(
-      (await openSealedRefreshToken(grant.refreshToken ?? '', KEY))?.issuedAt
-    ).toBe(issuedAt);
-    // The clamp still reports only the session's remaining allowance.
-    expect(grant.refreshTokenExpiresIn).toBeWithin(4 * DAY - 30, 4 * DAY + 1);
+      fetcher: () => {
+        contactedGitHub = true;
+        return Promise.resolve(Response.json(GRANT_RESPONSE));
+      },
+    }).then(
+      () => undefined,
+      (thrown: unknown) => thrown
+    );
+    expect(rejected).toBeInstanceOf(OAuthRefreshRejectedError);
+    expect(contactedGitHub).toBe(false);
+  });
+
+  test('rejects a bare refresh token after encryption is enabled', async () => {
+    let contactedGitHub = false;
+    const rejected = await refreshOAuthToken({
+      clientId: 'id',
+      clientSecret: 'secret',
+      refreshToken: 'ghr_legacy',
+      webURL: 'https://github.example.com',
+      fetcher: () => {
+        contactedGitHub = true;
+        return Promise.resolve(Response.json(GRANT_RESPONSE));
+      },
+    }).then(
+      () => undefined,
+      (thrown: unknown) => thrown
+    );
+    expect(rejected).toBeInstanceOf(OAuthRefreshRejectedError);
+    expect(contactedGitHub).toBe(false);
   });
 
   test('an envelope sealed under a rotated key is rejected without contacting GitHub', async () => {

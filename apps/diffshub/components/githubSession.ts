@@ -1,16 +1,17 @@
 import { type OAuthTokenGrant, parseGrantRecord } from '@/lib/githubOAuthGrant';
 import { type PlainFetch } from '@/lib/plainFetch';
 import { readStoredJSON, writeStoredJSON } from '@/lib/storedJSON';
+import { isSealedToken } from '@/lib/tokenEnvelope';
 import { syncTokenPresenceCookie } from '@/lib/tokenPresenceCookie';
 
 // Browser-side storage for the viewer's GitHub credentials, and the refresh
 // logic that keeps an expiring one alive.
 //
 // Two localStorage entries:
-//   - the token slot holds the bare access token, whatever its origin: a
-//     pasted PAT, an OAuth App token, or a GitHub App user token. Every
-//     request reader in the app looks only at this slot, so the auth method is
-//     invisible to the rest of the code.
+//   - the token slot holds the access credential: either a bare GitHub token
+//     when encryption is disabled or a server-sealed envelope when it is
+//     required. Every request reader in the app looks only at this slot, so
+//     the auth method is invisible to the rest of the code.
 //   - the session slot exists only for GitHub App sign-ins with token
 //     expiration enabled. It holds the refresh token and the absolute expiry
 //     times, anchored to this browser's clock when the grant arrived. PATs and
@@ -101,6 +102,21 @@ export function saveGitHubGrantToStorage(
   };
   const hasSession = Object.values(session).some((value) => value != null);
   writeStorage(grant.accessToken.trim(), hasSession ? session : undefined);
+}
+
+// Enabling token encryption is a credential-policy boundary, not a gradual
+// migration: discard any browser session whose access token is still bare.
+// Its refresh token is cleared with it so the old session cannot silently
+// upgrade itself without the viewer completing a fresh authorization.
+export function discardUnsealedGitHubCredentials(
+  tokenEncryptionRequired: boolean
+): boolean {
+  const token = readStoredGitHubToken();
+  if (!tokenEncryptionRequired || token === '' || isSealedToken(token)) {
+    return false;
+  }
+  saveGitHubTokenToStorage('');
+  return true;
 }
 
 function writeStorage(

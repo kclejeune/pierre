@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
+import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
 import {
+  discardUnsealedGitHubCredentials,
   getGitHubTokenSnapshot,
   getServerGitHubTokenSnapshot,
   isStoredGitHubTokenExpired,
@@ -35,6 +37,7 @@ export interface GitHubTokenState {
 // GitHubSessionRefresher, cleared in another tab, or pasted elsewhere on the
 // page reaches all of them without each keeping its own copy.
 export function useGitHubToken(): GitHubTokenState {
+  const { tokenEncryptionRequired } = useGitHubEnvironment();
   const { token, version } = useSyncExternalStore(
     subscribeToGitHubToken,
     getGitHubTokenSnapshot,
@@ -44,6 +47,10 @@ export function useGitHubToken(): GitHubTokenState {
 
   useEffect(() => {
     let cancelled = false;
+    if (discardUnsealedGitHubCredentials(tokenEncryptionRequired)) {
+      setHydrated(true);
+      return;
+    }
     // Always kick off a refresh check (cheap when nothing is expiring), but
     // only hold hydration for it when the stored token is already dead — so
     // the first wave of fetches keyed on `token` rides the new one instead of
@@ -63,7 +70,7 @@ export function useGitHubToken(): GitHubTokenState {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [tokenEncryptionRequired]);
 
   const setToken = useCallback((nextToken: string) => {
     saveGitHubTokenToStorage(nextToken);

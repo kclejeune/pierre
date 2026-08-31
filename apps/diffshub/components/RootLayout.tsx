@@ -124,14 +124,11 @@ export async function RootLayout({
 }: Readonly<{
   children: ReactNode;
 }>) {
-  // Standalone (container) builds defer all rendering to request time so the
-  // DIFFSHUB_* settings are read from the runtime environment instead of
-  // being baked into prerendered pages — the image needs no build-time
-  // configuration. Hosted builds keep static prerendering: the flag is only
-  // set during `next build`, and at runtime the pages are already dynamic.
-  if (process.env.NEXT_OUTPUT === 'standalone') {
-    await connection();
-  }
+  // DIFFSHUB_* settings are runtime policy, including whether browser-held
+  // credentials must be sealed. Force request-time rendering on every host so
+  // container env vars and Cloudflare bindings cannot be baked as absent into
+  // static HTML produced before secrets are available.
+  await connection();
   return (
     <html
       lang="en"

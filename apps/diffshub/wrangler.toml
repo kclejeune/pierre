@@ -9,6 +9,7 @@
 #
 # Runtime secrets (dashboard → Settings → Variables, or `wrangler secret put`):
 #   DIFFSHUB_GITHUB_CLIENT_SECRET — GitHub App / OAuth App client secret
+#   DIFFSHUB_TOKEN_ENCRYPTION_KEY — 32 base64-encoded bytes; forces sealed sessions
 name = "diffs"
 main = ".open-next/worker.js"
 

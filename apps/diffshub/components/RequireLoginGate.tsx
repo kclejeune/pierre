@@ -4,7 +4,11 @@ import { usePathname } from 'next/navigation';
 import { type ReactNode, useEffect, useState } from 'react';
 
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
-import { readStoredGitHubToken, subscribeToGitHubToken } from './githubSession';
+import {
+  discardUnsealedGitHubCredentials,
+  readStoredGitHubToken,
+  subscribeToGitHubToken,
+} from './githubSession';
 
 // Paths that must stay reachable without credentials: the login page itself
 // and the OAuth completion page that saves the token into storage.
@@ -24,7 +28,7 @@ function isLoginExemptPath(pathname: string): boolean {
 // be refreshed, a sign-out in another tab — lands on /login the same way.
 // Nothing else in the app needs to know how to redirect.
 export function RequireLoginGate({ children }: { children: ReactNode }) {
-  const { requireLogin } = useGitHubEnvironment();
+  const { requireLogin, tokenEncryptionRequired } = useGitHubEnvironment();
   const pathname = usePathname();
   const gated = requireLogin && !isLoginExemptPath(pathname);
   const [allowed, setAllowed] = useState(!gated);
@@ -35,6 +39,7 @@ export function RequireLoginGate({ children }: { children: ReactNode }) {
       return;
     }
     function check(): void {
+      discardUnsealedGitHubCredentials(tokenEncryptionRequired);
       if (readStoredGitHubToken() !== '') {
         setAllowed(true);
         return;
@@ -47,7 +52,7 @@ export function RequireLoginGate({ children }: { children: ReactNode }) {
     }
     check();
     return subscribeToGitHubToken(check);
-  }, [gated]);
+  }, [gated, tokenEncryptionRequired]);
 
   return allowed ? children : null;
 }

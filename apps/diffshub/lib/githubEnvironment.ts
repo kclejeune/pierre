@@ -25,6 +25,7 @@
 
 import { createJSONResponse } from './jsonResponse';
 import { parseBearerToken } from './parseBearerToken';
+import { isSealedToken } from './tokenEnvelope';
 
 export const GITHUB_DOTCOM_WEB_URL = 'https://github.com';
 const GITHUB_DOTCOM_API_URL = 'https://api.github.com';
@@ -85,10 +86,13 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
 // (short-lived, revocable, centrally managed tokens). When unset, the default
 // follows that reasoning: a require-login deployment with OAuth configured
 // hides the box, but one without OAuth keeps it — the PAT is then the only
-// way through the login gate, and hiding it would lock everyone out.
-// UI-only: a token set through devtools still works, since the server never
-// distinguishes token origins.
+// way through the login gate, and hiding it would lock everyone out. Token
+// encryption overrides the flag because client-supplied PATs cannot be sealed
+// by the OAuth callback and the server rejects every bare credential.
 export function isPATInputEnabled(): boolean {
+  if (getTokenEncryptionKey() != null) {
+    return false;
+  }
   return (
     parseBooleanEnv(process.env.DIFFSHUB_ENABLE_PAT_INPUT) ??
     !(isLoginRequired() && getOAuthClientId() != null)
@@ -203,9 +207,12 @@ export const LOGIN_REQUIRED_MESSAGE =
 export function isTokenlessRequestBlocked(request: {
   headers: { get(name: string): string | null };
 }): boolean {
+  if (!isLoginRequired()) {
+    return false;
+  }
+  const token = parseBearerToken(request.headers.get('authorization'));
   return (
-    isLoginRequired() &&
-    parseBearerToken(request.headers.get('authorization')) == null
+    token == null || (getTokenEncryptionKey() != null && !isSealedToken(token))
   );
 }
 
@@ -249,6 +256,9 @@ export interface GitHubClientEnvironment {
   // lives in localStorage); the API routes enforce the same rule server-side
   // via rejectTokenlessRequestWhenLoginRequired.
   requireLogin: boolean;
+  // True means browser-held credentials must use the server-sealed envelope
+  // format. Clients clear older bare sessions and require a fresh OAuth login.
+  tokenEncryptionRequired: boolean;
   webURL: string;
 }
 
@@ -345,6 +355,7 @@ export function getGitHubClientEnvironment(): GitHubClientEnvironment {
     oauthEnabled: getOAuthClientId() != null,
     patInputEnabled: isPATInputEnabled(),
     requireLogin: isLoginRequired(),
+    tokenEncryptionRequired: getTokenEncryptionKey() != null,
     webURL: environment.webURL,
   };
 }

@@ -3,7 +3,9 @@
 import { useEffect } from 'react';
 import { toast } from 'sonner';
 
+import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
 import {
+  discardUnsealedGitHubCredentials,
   nextGitHubRefreshDueAt,
   refreshGitHubSessionIfNeeded,
 } from './githubSession';
@@ -25,6 +27,7 @@ import {
 const RETRY_DELAY_MS = 60 * 1000;
 
 export function GitHubSessionRefresher() {
+  const { tokenEncryptionRequired } = useGitHubEnvironment();
   useEffect(() => {
     let disposed = false;
     let timer: number | undefined;
@@ -45,6 +48,9 @@ export function GitHubSessionRefresher() {
     }
 
     function check(): void {
+      if (discardUnsealedGitHubCredentials(tokenEncryptionRequired)) {
+        return;
+      }
       void refreshGitHubSessionIfNeeded().then((outcome) => {
         if (disposed) {
           return;
@@ -75,7 +81,7 @@ export function GitHubSessionRefresher() {
       window.removeEventListener('focus', check);
       window.removeEventListener('online', check);
     };
-  }, []);
+  }, [tokenEncryptionRequired]);
 
   return null;
 }

@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 
 import { resetGitHubEnvironmentCache } from '../lib/githubEnvironment';
 import { resolveBearerToken } from '../lib/resolveBearerToken';
+import { isSealedToken } from '../lib/tokenEnvelope';
 import {
-  isSealedToken,
   openSealedAccessToken,
   openSealedRefreshToken,
   sealAccessToken,
@@ -90,13 +90,23 @@ describe('resolveBearerToken', () => {
     };
   }
 
-  test('passes bare tokens through untouched', async () => {
+  test('passes bare tokens through when encryption is disabled', async () => {
     expect(await resolveBearerToken(requestWithAuth('Bearer ghp_pat'))).toBe(
       'ghp_pat'
     );
     expect(await resolveBearerToken(requestWithAuth())).toBeUndefined();
     expect(
       await resolveBearerToken(requestWithAuth('nonsense'))
+    ).toBeUndefined();
+  });
+
+  test('rejects bare tokens when encryption is required', async () => {
+    configureKey(KEY);
+    expect(
+      await resolveBearerToken(requestWithAuth('Bearer ghu_legacy'))
+    ).toBeUndefined();
+    expect(
+      await resolveBearerToken(requestWithAuth('Bearer ghp_manual'))
     ).toBeUndefined();
   });
 

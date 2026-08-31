@@ -29,8 +29,8 @@ import {
   unwrapRefreshToken,
   wrapRefreshToken,
 } from './refreshTokenWrap';
+import { isSealedToken } from './tokenEnvelope';
 import {
-  isSealedToken,
   openSealedRefreshToken,
   sealAccessToken,
   sealRefreshToken,
@@ -340,13 +340,16 @@ export async function refreshOAuthToken(options: {
       key == null ? undefined : await openSealedRefreshToken(refreshToken, key);
     if (opened == null) {
       // A sealed envelope that cannot be opened — the key was rotated or
-      // removed, or the value was tampered with — is an unrecoverable
-      // session, unlike a bare token, which may simply predate the key.
+      // removed, or the value was tampered with — is unrecoverable.
       throw new OAuthRefreshRejectedError(
         "The refresh token cannot be read under this deployment's encryption key. Sign in again."
       );
     }
     ({ issuedAt, refreshToken } = opened);
+  } else if (getTokenEncryptionKey() != null) {
+    throw new OAuthRefreshRejectedError(
+      "The refresh token predates this deployment's encryption policy. Sign in again."
+    );
   } else if (isWrappedRefreshToken(refreshToken)) {
     const unwrapped = await unwrapRefreshToken(
       refreshToken,

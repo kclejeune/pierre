@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { createFakeWindow } from './helpers/fakeWindow';
 import {
+  discardUnsealedGitHubCredentials,
   getGitHubTokenSnapshot,
   GITHUB_TOKEN_CHANGE_EVENT,
   isStoredGitHubTokenExpired,
@@ -89,6 +90,24 @@ describe('token and session storage', () => {
       GITHUB_TOKEN_CHANGE_EVENT,
       GITHUB_TOKEN_CHANGE_EVENT,
     ]);
+  });
+
+  test('discards a legacy session when sealed credentials are required', () => {
+    saveGitHubGrantToStorage(EXPIRING_GRANT, 1_000_000);
+
+    expect(discardUnsealedGitHubCredentials(true)).toBe(true);
+    expect(readStoredGitHubToken()).toBe('');
+    expect(readStoredGitHubSession()).toBeUndefined();
+  });
+
+  test('keeps sealed and policy-optional credentials', () => {
+    saveGitHubTokenToStorage('ghu_legacy');
+    expect(discardUnsealedGitHubCredentials(false)).toBe(false);
+    expect(readStoredGitHubToken()).toBe('ghu_legacy');
+
+    saveGitHubTokenToStorage('dhe1.access.nonce.ciphertext');
+    expect(discardUnsealedGitHubCredentials(true)).toBe(false);
+    expect(readStoredGitHubToken()).toBe('dhe1.access.nonce.ciphertext');
   });
 });
 

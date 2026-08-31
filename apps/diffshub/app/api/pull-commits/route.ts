@@ -1,19 +1,21 @@
 import { type NextRequest } from 'next/server';
 
 import { commitErrorResponse } from '@/lib/githubCommitServer';
-import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
 import {
   fetchPullCommitsListing,
   readPullRouteParams,
 } from '@/lib/githubPullDetailsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
+import {
+  rejectTokenlessRequestWhenLoginRequired,
+  resolveBearerToken,
+} from '@/lib/resolveBearerToken';
 
 // The pull request's commit listing (oldest first), for the viewer's
 // commit-range picker. Read-only; on github.com anonymous visitors can list
 // public-repo pulls without a login.
 export async function GET(request: NextRequest) {
-  const rejection = rejectTokenlessRequestWhenLoginRequired(request);
+  const rejection = await rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
   }
@@ -27,7 +29,7 @@ export async function GET(request: NextRequest) {
     const commits = await fetchPullCommitsListing(
       { owner: params.owner, repo: params.repo },
       params.pull,
-      parseBearerToken(request.headers.get('authorization'))
+      await resolveBearerToken(request)
     );
     return createJSONResponse({ commits });
   } catch (error) {

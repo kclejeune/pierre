@@ -17,6 +17,11 @@
 // verify as a wrap. Rotating the client secret invalidates every outstanding
 // wrapped token, which reads as a feature: it is the one credential the
 // operator can revoke fleet-wide.
+//
+// When DIFFSHUB_TOKEN_ENCRYPTION_KEY is configured, new grants carry the
+// dhe1 AES-GCM envelope (lib/tokenSeal) instead — it authenticates the same
+// issue time via GCM's auth tag while also encrypting the token — and this
+// wrap survives only to unwrap sessions issued before the key was set.
 
 import { readNonEmptyString } from './githubOAuthGrant';
 import { asRecord } from './untypedJson';

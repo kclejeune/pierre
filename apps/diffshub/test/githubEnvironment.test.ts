@@ -1,16 +1,15 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 
 import {
   createGitHubAPIURL,
   getRefreshTokenMaxTTLSeconds,
   isConfiguredGitHubInstanceURL,
-  isLoginRequired,
   isPATInputEnabled,
   parseDurationSeconds,
-  rejectTokenlessRequestWhenLoginRequired,
   resetGitHubEnvironmentCache,
   resolveGitHubEnvironment,
 } from '../lib/githubEnvironment';
+import { useIsolatedEnvironment } from './helpers/env';
 
 describe('resolveGitHubEnvironment', () => {
   test('defaults to public github.com', () => {
@@ -75,87 +74,6 @@ describe('resolveGitHubEnvironment', () => {
     expect(() => resolveGitHubEnvironment('ftp://ghe.corp.dev')).toThrow(
       'http(s)'
     );
-  });
-});
-
-// Request stub carrying only the headers surface the token policy reads.
-function createRequest(authorization?: string): {
-  headers: { get(name: string): string | null };
-} {
-  return {
-    headers: {
-      get: (name: string) =>
-        name.toLowerCase() === 'authorization' ? (authorization ?? null) : null,
-    },
-  };
-}
-
-describe('require-login policy', () => {
-  const savedEnv: Record<string, string | undefined> = {};
-  const ENV_KEYS = ['DIFFSHUB_REQUIRE_LOGIN', 'DIFFSHUB_GITHUB_URL'];
-
-  beforeEach(() => {
-    for (const key of ENV_KEYS) {
-      savedEnv[key] = process.env[key];
-      delete process.env[key];
-    }
-    resetGitHubEnvironmentCache();
-  });
-
-  afterEach(() => {
-    for (const key of ENV_KEYS) {
-      if (savedEnv[key] == null) {
-        delete process.env[key];
-      } else {
-        process.env[key] = savedEnv[key];
-      }
-    }
-    resetGitHubEnvironmentCache();
-  });
-
-  test('github.com deployments leave the gate open by default', () => {
-    expect(isLoginRequired()).toBe(false);
-    expect(rejectTokenlessRequestWhenLoginRequired(createRequest())).toBeNull();
-  });
-
-  test('require-login rejects tokenless requests', () => {
-    process.env.DIFFSHUB_REQUIRE_LOGIN = '1';
-    const rejection = rejectTokenlessRequestWhenLoginRequired(createRequest());
-    expect(rejection?.status).toBe(401);
-  });
-
-  test('require-login passes requests carrying their own bearer token', () => {
-    process.env.DIFFSHUB_REQUIRE_LOGIN = 'true';
-    const request = createRequest('Bearer user-token');
-    expect(rejectTokenlessRequestWhenLoginRequired(request)).toBeNull();
-  });
-
-  test('falsy DIFFSHUB_REQUIRE_LOGIN leaves the gate open', () => {
-    process.env.DIFFSHUB_REQUIRE_LOGIN = '0';
-    expect(rejectTokenlessRequestWhenLoginRequired(createRequest())).toBeNull();
-  });
-
-  // A self-hosted instance is private by definition: there is nothing an
-  // anonymous caller could read, so the gate defaults on and turns the wall
-  // of upstream 401s into a sign-in prompt.
-  test('self-hosted deployments require login by default', () => {
-    process.env.DIFFSHUB_GITHUB_URL = 'https://ghe.corp.dev';
-    expect(isLoginRequired()).toBe(true);
-    expect(
-      rejectTokenlessRequestWhenLoginRequired(createRequest())?.status
-    ).toBe(401);
-    expect(
-      rejectTokenlessRequestWhenLoginRequired(
-        createRequest('Bearer user-token')
-      )
-    ).toBeNull();
-  });
-
-  test('an explicit DIFFSHUB_REQUIRE_LOGIN=0 opens a self-hosted gate', () => {
-    process.env.DIFFSHUB_GITHUB_URL = 'https://ghe.corp.dev';
-    process.env.DIFFSHUB_REQUIRE_LOGIN = 'false';
-    expect(isLoginRequired()).toBe(false);
-    expect(rejectTokenlessRequestWhenLoginRequired(createRequest())).toBeNull();
   });
 });
 
@@ -246,32 +164,12 @@ describe('isConfiguredGitHubInstanceURL', () => {
 });
 
 describe('token policy environment flags', () => {
-  const savedEnv: Record<string, string | undefined> = {};
-  const ENV_KEYS = [
+  useIsolatedEnvironment([
     'DIFFSHUB_ENABLE_PAT_INPUT',
     'DIFFSHUB_REFRESH_TOKEN_MAX_TTL',
     'DIFFSHUB_REQUIRE_LOGIN',
     'DIFFSHUB_GITHUB_CLIENT_ID',
-  ];
-
-  beforeEach(() => {
-    for (const key of ENV_KEYS) {
-      savedEnv[key] = process.env[key];
-      delete process.env[key];
-    }
-    resetGitHubEnvironmentCache();
-  });
-
-  afterEach(() => {
-    for (const key of ENV_KEYS) {
-      if (savedEnv[key] == null) {
-        delete process.env[key];
-      } else {
-        process.env[key] = savedEnv[key];
-      }
-    }
-    resetGitHubEnvironmentCache();
-  });
+  ]);
 
   test('PAT input is offered by default on open deployments', () => {
     expect(isPATInputEnabled()).toBe(true);

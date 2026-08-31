@@ -8,8 +8,8 @@ import {
 } from '@/lib/githubCommitServer';
 import { encodeURLSegment } from '@/lib/githubDiffSource';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
 import { parseJSONBody } from '@/lib/parseJSONBody';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 import { asRecord } from '@/lib/untypedJson';
 
 const MERGE_METHODS = new Set(['merge', 'rebase', 'squash']);
@@ -21,7 +21,7 @@ const MERGE_METHODS = new Set(['merge', 'rebase', 'squash']);
 // compare-and-swap: GitHub answers 409 when the branch moved since the
 // viewer looked at the diff, which commitErrorResponse forwards.
 export async function POST(request: NextRequest) {
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
       { error: 'Merging requires signing in or saving a token.' },

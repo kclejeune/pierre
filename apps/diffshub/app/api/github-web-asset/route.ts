@@ -2,17 +2,17 @@ import { type NextRequest } from 'next/server';
 
 import { fetchAssetFollowingRedirects } from '@/lib/assetRedirects';
 import { createGitHubRawHeaders } from '@/lib/githubDiffFileServer';
-import {
-  getGitHubEnvironment,
-  rejectTokenlessRequestWhenLoginRequired,
-} from '@/lib/githubEnvironment';
+import { getGitHubEnvironment } from '@/lib/githubEnvironment';
 import {
   matchGitHubWebAsset,
   resolveGitHubWebAssetUpstreamURL,
 } from '@/lib/githubWebAssets';
 import { createInertAssetResponse } from '@/lib/inertAssetResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
+import {
+  rejectTokenlessRequestWhenLoginRequired,
+  resolveBearerToken,
+} from '@/lib/resolveBearerToken';
 
 // Same-origin proxy for assets the GitHub instance serves outside the repo
 // tree: comment-author avatars and pasted user-attachment images. On a
@@ -22,7 +22,7 @@ import { parseBearerToken } from '@/lib/parseBearerToken';
 // are fetched — this must not become an open proxy.
 
 export async function GET(request: NextRequest) {
-  const rejection = rejectTokenlessRequestWhenLoginRequired(request);
+  const rejection = await rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
   }
@@ -42,9 +42,7 @@ export async function GET(request: NextRequest) {
   try {
     upstream = await fetchAssetFollowingRedirects(
       resolveGitHubWebAssetUpstreamURL(assetURL, environment),
-      createGitHubRawHeaders(
-        parseBearerToken(request.headers.get('authorization'))
-      )
+      createGitHubRawHeaders(await resolveBearerToken(request))
     );
   } catch (error) {
     return createJSONResponse(

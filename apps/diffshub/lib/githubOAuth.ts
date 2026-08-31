@@ -14,6 +14,7 @@
 
 import {
   getRefreshTokenMaxTTLSeconds,
+  getTokenEncryptionKey,
   GITHUB_USER_AGENT,
 } from './githubEnvironment';
 import {
@@ -28,6 +29,12 @@ import {
   unwrapRefreshToken,
   wrapRefreshToken,
 } from './refreshTokenWrap';
+import {
+  isSealedToken,
+  openSealedRefreshToken,
+  sealAccessToken,
+  sealRefreshToken,
+} from './tokenSeal';
 
 // Cookie carrying the JSON-encoded state payload between the login redirect
 // and the OAuth callback. Scoped to the auth routes so it rides along with
@@ -36,6 +43,13 @@ export const OAUTH_STATE_COOKIE = 'diffshub-github-oauth-state';
 export const OAUTH_STATE_COOKIE_MAX_AGE_SECONDS = 10 * 60;
 export const OAUTH_CALLBACK_PATH = '/api/auth/github/callback';
 const OAUTH_COMPLETION_PATH = '/auth/github';
+const OAUTH_LOGIN_PATH = '/api/auth/github/login';
+
+// Browser href that starts the OAuth flow and returns the viewer to
+// `returnTo` afterward (the login route sanitizes it again server-side).
+export function githubLoginHref(returnTo: string): string {
+  return `${OAUTH_LOGIN_PATH}?returnTo=${encodeURIComponent(returnTo)}`;
+}
 
 // Read requests can see private repository diffs, so ask for classic `repo`
 // scope — OAuth apps (unlike fine-grained PATs) have no read-only repo scope.
@@ -241,35 +255,57 @@ export function clampRefreshTokenGrant(
   };
 }
 
-// Applies the deployment's max-TTL policy (see refreshTokenWrap for the
-// design) to a freshly minted grant. Called inside requestOAuthToken — the
-// one place grants are constructed — so no grant can leave this module
-// unchecked, whatever route obtained it. The session is anchored to
-// `issuedAtSeconds` (the original authorization time on a refresh) or to now
-// on a first sign-in.
+// Applies the deployment's browser-credential policies to a freshly minted
+// grant: the max-TTL clamp (DIFFSHUB_REFRESH_TOKEN_MAX_TTL, see
+// refreshTokenWrap) and at-rest encryption (DIFFSHUB_TOKEN_ENCRYPTION_KEY,
+// see tokenSeal). Called inside requestOAuthToken — the one place grants are
+// constructed — so no grant can leave this module unchecked, whatever route
+// obtained it. The session is anchored to `issuedAtSeconds` (the original
+// authorization time on a refresh) or to now on a first sign-in.
 async function interceptGrant(
   grant: OAuthTokenGrant,
   clientSecret: string,
   issuedAtSeconds?: number
 ): Promise<OAuthTokenGrant> {
-  const maxTTL = getRefreshTokenMaxTTLSeconds();
-  if (maxTTL == null) {
-    return grant;
-  }
   const now = nowSeconds();
   const issuedAt = issuedAtSeconds ?? now;
-  const policed = clampRefreshTokenGrant(grant, issuedAt + maxTTL - now);
-  if (policed.refreshToken == null) {
-    return policed;
+  const maxTTL = getRefreshTokenMaxTTLSeconds();
+  const policed =
+    maxTTL == null
+      ? grant
+      : clampRefreshTokenGrant(grant, issuedAt + maxTTL - now);
+
+  const key = getTokenEncryptionKey();
+  if (key == null) {
+    // Without encryption, the max-TTL policy still needs the authorization
+    // time bound to the refresh token, so it ships in the HMAC wrap.
+    if (maxTTL == null || policed.refreshToken == null) {
+      return policed;
+    }
+    return {
+      ...policed,
+      refreshToken: await wrapRefreshToken(
+        policed.refreshToken,
+        issuedAt,
+        clientSecret
+      ),
+    };
   }
-  return {
+
+  // Sealed envelopes carry the authorization time as authenticated data, so
+  // they subsume the HMAC wrap rather than layering on it.
+  const sealed: OAuthTokenGrant = {
     ...policed,
-    refreshToken: await wrapRefreshToken(
+    accessToken: await sealAccessToken(policed.accessToken, key),
+  };
+  if (policed.refreshToken != null) {
+    sealed.refreshToken = await sealRefreshToken(
       policed.refreshToken,
       issuedAt,
-      clientSecret
-    ),
-  };
+      key
+    );
+  }
+  return sealed;
 }
 
 // GitHub's error code for a refresh token that is expired, revoked, or was
@@ -305,7 +341,20 @@ export async function refreshOAuthToken(options: {
   // the cap; the age gate applies only while a cap is set.
   let refreshToken = options.refreshToken;
   let issuedAt: number | undefined;
-  if (isWrappedRefreshToken(refreshToken)) {
+  if (isSealedToken(refreshToken)) {
+    const key = getTokenEncryptionKey();
+    const opened =
+      key == null ? undefined : await openSealedRefreshToken(refreshToken, key);
+    if (opened == null) {
+      // A sealed envelope that cannot be opened — the key was rotated or
+      // removed, or the value was tampered with — is an unrecoverable
+      // session, unlike a bare token, which may simply predate the key.
+      throw new OAuthRefreshRejectedError(
+        "The refresh token cannot be read under this deployment's encryption key. Sign in again."
+      );
+    }
+    ({ issuedAt, refreshToken } = opened);
+  } else if (isWrappedRefreshToken(refreshToken)) {
     const unwrapped = await unwrapRefreshToken(
       refreshToken,
       options.clientSecret

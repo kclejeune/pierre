@@ -19,9 +19,12 @@
 //   DIFFSHUB_REFRESH_TOKEN_MAX_TTL
 //                              How refresh tokens may reach the browser; see
 //                              getRefreshTokenMaxTTLSeconds.
-
-import { createJSONResponse } from './jsonResponse';
-import { parseBearerToken } from './parseBearerToken';
+//   DIFFSHUB_TOKEN_ENCRYPTION_KEY
+//                              Opt-in at-rest encryption of browser-held
+//                              credentials; see getTokenEncryptionKey.
+//   DIFFSHUB_REQUIRE_SEALED_TOKENS
+//                              Accept only server-sealed credentials; see
+//                              isSealedTokenRequired.
 
 export const GITHUB_DOTCOM_WEB_URL = 'https://github.com';
 const GITHUB_DOTCOM_API_URL = 'https://api.github.com';
@@ -152,33 +155,70 @@ export function parseDurationSeconds(
   return Number(match[1]) * multipliers[match[2] ?? 's'];
 }
 
+// Key for sealing browser-held credentials into AES-256-GCM envelopes, from
+// DIFFSHUB_TOKEN_ENCRYPTION_KEY (base64, exactly 32 bytes — e.g.
+// `openssl rand -base64 32`). Unset leaves tokens in the clear, exactly as
+// before the option existed; set, every grant leaves the server sealed and
+// the API routes decrypt on arrival — see lib/tokenSeal for the mechanism.
+// Deliberately independent of the OAuth client secret so PAT-only
+// deployments can use it, and so rotating one credential does not silently
+// revoke the other's sessions.
+let cachedEncryptionKey:
+  | { key: Uint8Array<ArrayBuffer> | undefined }
+  | undefined;
+
+export function getTokenEncryptionKey(): Uint8Array<ArrayBuffer> | undefined {
+  cachedEncryptionKey ??= {
+    key: parseEncryptionKey(process.env.DIFFSHUB_TOKEN_ENCRYPTION_KEY),
+  };
+  return cachedEncryptionKey.key;
+}
+
+// Throws on a malformed value rather than silently running unencrypted: an
+// operator who set the variable expects sealing to be in force.
+function parseEncryptionKey(
+  input: string | undefined
+): Uint8Array<ArrayBuffer> | undefined {
+  const trimmed = input?.trim();
+  if (trimmed == null || trimmed === '') {
+    return undefined;
+  }
+  // Node's base64 decoder skips characters it cannot use, so malformed input
+  // is caught by re-encoding: anything dropped or normalized in the round
+  // trip (stray characters, whitespace, base64url alphabet, misplaced
+  // padding) makes the canonical form differ from the input.
+  const decoded = Buffer.from(trimmed, 'base64');
+  const canonicalInput = trimmed.replace(/=+$/, '');
+  const canonicalDecoded = decoded.toString('base64').replace(/=+$/, '');
+  if (canonicalInput !== canonicalDecoded || decoded.length !== 32) {
+    throw new Error(
+      'DIFFSHUB_TOKEN_ENCRYPTION_KEY must be 32 base64-encoded bytes (openssl rand -base64 32).'
+    );
+  }
+  return new Uint8Array(decoded);
+}
+
+// Whether the API routes accept only sealed dhe1 envelopes as credentials
+// (DIFFSHUB_REQUIRE_SEALED_TOKENS). This is the server-enforced counterpart
+// of hiding the PAT box: an envelope can only have come from this
+// deployment's own OAuth flow, so bare tokens — pasted PATs, tokens minted by
+// other apps, sessions predating the encryption key — stop working. Only
+// meaningful with an encryption key; setting it without one is a
+// configuration error rather than a silently open door.
+export function isSealedTokenRequired(): boolean {
+  if (parseBooleanEnv(process.env.DIFFSHUB_REQUIRE_SEALED_TOKENS) !== true) {
+    return false;
+  }
+  if (getTokenEncryptionKey() == null) {
+    throw new Error(
+      'DIFFSHUB_REQUIRE_SEALED_TOKENS needs DIFFSHUB_TOKEN_ENCRYPTION_KEY to be configured.'
+    );
+  }
+  return true;
+}
+
 export const LOGIN_REQUIRED_MESSAGE =
   'This deployment requires signing in to load GitHub data.';
-
-// Server-side enforcement of DIFFSHUB_REQUIRE_LOGIN for API routes: true when
-// a tokenless request must be refused on a require-login deployment. Every
-// anonymously reachable read route checks this before doing upstream work, so
-// the client-side login gate cannot be bypassed by requesting the APIs
-// directly.
-export function isTokenlessRequestBlocked(request: {
-  headers: { get(name: string): string | null };
-}): boolean {
-  return (
-    isLoginRequired() &&
-    parseBearerToken(request.headers.get('authorization')) == null
-  );
-}
-
-// The JSON form of the refusal: a 401 when the request must be blocked, null
-// when it may proceed.
-export function rejectTokenlessRequestWhenLoginRequired(request: {
-  headers: { get(name: string): string | null };
-}): Response | null {
-  if (!isTokenlessRequestBlocked(request)) {
-    return null;
-  }
-  return createJSONResponse({ error: LOGIN_REQUIRED_MESSAGE }, { status: 401 });
-}
 
 export interface GitHubEnvironment {
   // REST API root without a trailing slash, e.g. https://github.example.com/api/v3
@@ -207,7 +247,7 @@ export interface GitHubClientEnvironment {
   // token: anonymous visitors are redirected to /login and returned to their
   // original URL after signing in. The redirect is client-side (the token
   // lives in localStorage); the API routes enforce the same rule server-side
-  // via rejectTokenlessRequestWhenLoginRequired.
+  // via rejectTokenlessRequestWhenLoginRequired (lib/resolveBearerToken).
   requireLogin: boolean;
   webURL: string;
 }
@@ -267,6 +307,7 @@ export function getGitHubEnvironment(): GitHubEnvironment {
 export function resetGitHubEnvironmentCache(): void {
   cachedEnvironment = undefined;
   cachedMaxTTL = undefined;
+  cachedEncryptionKey = undefined;
 }
 
 // Whether a URL sits on the configured instance's web origin. Every code path

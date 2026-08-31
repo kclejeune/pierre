@@ -23,16 +23,18 @@ import { encodePath, encodeURLSegment } from '@/lib/githubDiffSource';
 import {
   createGitHubAPIURL,
   getGitHubEnvironment,
-  rejectTokenlessRequestWhenLoginRequired,
 } from '@/lib/githubEnvironment';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
 import {
   type CompareFile,
   isBinaryContent,
   planMerge,
   renderConflictMarkers,
 } from '@/lib/pullMerge';
+import {
+  rejectTokenlessRequestWhenLoginRequired,
+  resolveBearerToken,
+} from '@/lib/resolveBearerToken';
 
 // Merge-conflict resolution for pull requests.
 //
@@ -56,7 +58,7 @@ type PullMergeContext = PullRefs & {
 };
 
 export async function GET(request: NextRequest) {
-  const rejection = rejectTokenlessRequestWhenLoginRequired(request);
+  const rejection = await rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
   }
@@ -71,7 +73,7 @@ export async function GET(request: NextRequest) {
       { status: 400 }
     );
   }
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
 
   try {
     const repoRef = { owner, repo };
@@ -144,7 +146,7 @@ export interface PullMergeCommitRequestBody {
 }
 
 export async function POST(request: NextRequest) {
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
       { error: 'A GitHub token is required to commit a merge.' },

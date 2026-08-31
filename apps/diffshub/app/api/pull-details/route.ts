@@ -1,7 +1,6 @@
 import { type NextRequest } from 'next/server';
 
 import { commitErrorResponse } from '@/lib/githubCommitServer';
-import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
 import {
   fetchPullChecks,
   fetchPullMergeCapabilities,
@@ -9,8 +8,11 @@ import {
   readPullRouteParams,
 } from '@/lib/githubPullDetailsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
 import type { PullDetailsSupplement } from '@/lib/pullInfoClient';
+import {
+  rejectTokenlessRequestWhenLoginRequired,
+  resolveBearerToken,
+} from '@/lib/resolveBearerToken';
 
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
 
@@ -18,7 +20,7 @@ const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
 // request is independent so an unavailable Checks API does not discard legacy
 // statuses, reviewer state, or merge capabilities.
 export async function GET(request: NextRequest) {
-  const rejection = rejectTokenlessRequestWhenLoginRequired(request);
+  const rejection = await rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
   }
@@ -35,7 +37,7 @@ export async function GET(request: NextRequest) {
   }
 
   const repo = { owner: params.owner, repo: params.repo };
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   try {
     const [reviewStates, checks, mergeCapabilities] = await Promise.all([
       fetchPullReviewStates(repo, params.pull, token).catch(() => null),

@@ -4,14 +4,16 @@ import {
   createGitHubAPIURL,
   createGitHubJSONHeaders,
   getGitHubEnvironment,
-  rejectTokenlessRequestWhenLoginRequired,
 } from '@/lib/githubEnvironment';
 import {
   createGitHubFailureResponse,
   createUnreachableResponse,
 } from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
+import {
+  rejectTokenlessRequestWhenLoginRequired,
+  resolveBearerToken,
+} from '@/lib/resolveBearerToken';
 
 // Proxies user lookups on the configured GitHub instance so the browser never
 // talks to the GitHub API cross-origin. Without a `login` parameter this
@@ -20,12 +22,12 @@ import { parseBearerToken } from '@/lib/parseBearerToken';
 // (GET /users/{login}), which supplies the display name behind avatar
 // initials.
 export async function GET(request: NextRequest) {
-  const rejection = rejectTokenlessRequestWhenLoginRequired(request);
+  const rejection = await rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
   }
 
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   const login = request.nextUrl.searchParams.get('login');
   if (login == null && token == null) {
     return createJSONResponse(

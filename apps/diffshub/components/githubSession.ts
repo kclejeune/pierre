@@ -234,11 +234,15 @@ export async function reportGitHubAuthFailure(
 // dead". Explicit headers win over the attached token, and every response
 // passes through reportGitHubAuthFailure before the caller sees it.
 export async function githubFetch(
-  input: string,
+  input: Parameters<typeof fetch>[0],
   init?: RequestInit,
   fetcher: PlainFetch = fetch
 ): Promise<Response> {
-  const headers = new Headers(init?.headers);
+  // A Request input carries its own headers and method; init replaces the
+  // headers and overrides the method (fetch(input, init) semantics), so
+  // resolve those before deciding whether to attach the stored token or retry.
+  const request = input instanceof Request ? input : undefined;
+  const headers = new Headers(init?.headers ?? request?.headers);
   if (!headers.has('authorization')) {
     const storedAuthorization = storedGitHubTokenHeaders().Authorization;
     if (storedAuthorization != null) {
@@ -255,7 +259,7 @@ export async function githubFetch(
     attemptedToken,
     fetcher
   );
-  const method = init?.method?.toUpperCase() ?? 'GET';
+  const method = (init?.method ?? request?.method ?? 'GET').toUpperCase();
   if (retryToken == null || (method !== 'GET' && method !== 'HEAD')) {
     return response;
   }

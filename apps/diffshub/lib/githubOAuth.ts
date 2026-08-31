@@ -16,6 +16,7 @@ import {
   getRefreshTokenMaxTTLSeconds,
   getTokenEncryptionKey,
   GITHUB_USER_AGENT,
+  isSealedTokenRequired,
 } from './githubEnvironment';
 import {
   type OAuthTokenGrant,
@@ -333,6 +334,15 @@ export async function refreshOAuthToken(options: {
   if (maxTTL === 0) {
     throw new OAuthRefreshRejectedError(
       'Refresh tokens are disabled on this deployment.'
+    );
+  }
+  // The refresh-side counterpart of resolveBearerToken's bearer check: a
+  // sealed-only deployment must not upgrade a bare refresh token (a pre-key
+  // session, or one minted elsewhere) into fresh sealed credentials, or the
+  // wall around unsealed tokens would have a refresh-shaped hole.
+  if (isSealedTokenRequired() && !isSealedToken(options.refreshToken)) {
+    throw new OAuthRefreshRejectedError(
+      'This deployment only accepts refresh tokens from its own sign-in flow. Sign in again.'
     );
   }
 

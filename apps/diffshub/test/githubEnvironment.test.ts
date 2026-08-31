@@ -5,6 +5,7 @@ import {
   getRefreshTokenMaxTTLSeconds,
   isConfiguredGitHubInstanceURL,
   isPATInputEnabled,
+  isSealedTokenRequired,
   parseDurationSeconds,
   resetGitHubEnvironmentCache,
   resolveGitHubEnvironment,
@@ -166,9 +167,12 @@ describe('isConfiguredGitHubInstanceURL', () => {
 describe('token policy environment flags', () => {
   useIsolatedEnvironment([
     'DIFFSHUB_ENABLE_PAT_INPUT',
+    'DIFFSHUB_GITHUB_CLIENT_SECRET',
     'DIFFSHUB_REFRESH_TOKEN_MAX_TTL',
     'DIFFSHUB_REQUIRE_LOGIN',
+    'DIFFSHUB_REQUIRE_SEALED_TOKENS',
     'DIFFSHUB_GITHUB_CLIENT_ID',
+    'DIFFSHUB_TOKEN_ENCRYPTION_KEY',
   ]);
 
   test('PAT input is offered by default on open deployments', () => {
@@ -214,6 +218,51 @@ describe('token policy environment flags', () => {
     process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL = 'soon';
     expect(() => getRefreshTokenMaxTTLSeconds()).toThrow(
       'DIFFSHUB_REFRESH_TOKEN_MAX_TTL'
+    );
+  });
+});
+
+describe('isSealedTokenRequired', () => {
+  const VALID_KEY = Buffer.from(new Uint8Array(32).fill(7)).toString('base64');
+
+  useIsolatedEnvironment([
+    'DIFFSHUB_REQUIRE_SEALED_TOKENS',
+    'DIFFSHUB_TOKEN_ENCRYPTION_KEY',
+    'DIFFSHUB_GITHUB_CLIENT_ID',
+    'DIFFSHUB_GITHUB_CLIENT_SECRET',
+  ]);
+
+  test('is off unless explicitly enabled', () => {
+    expect(isSealedTokenRequired()).toBe(false);
+  });
+
+  // The OAuth gate reads the client id only: this path runs during static
+  // prerender, where the secret is intentionally absent, so requiring it here
+  // would break the build. The secret is validated at the OAuth routes.
+  test('an encryption key and an OAuth client id are enough, no secret', () => {
+    process.env.DIFFSHUB_REQUIRE_SEALED_TOKENS = '1';
+    process.env.DIFFSHUB_TOKEN_ENCRYPTION_KEY = VALID_KEY;
+    process.env.DIFFSHUB_GITHUB_CLIENT_ID = 'Iv1.example';
+    expect(isSealedTokenRequired()).toBe(true);
+  });
+
+  // Nothing to seal with: fail fast rather than leave a silently open door.
+  test('without an encryption key it throws', () => {
+    process.env.DIFFSHUB_REQUIRE_SEALED_TOKENS = '1';
+    process.env.DIFFSHUB_GITHUB_CLIENT_ID = 'Iv1.example';
+    expect(() => isSealedTokenRequired()).toThrow(
+      'DIFFSHUB_TOKEN_ENCRYPTION_KEY'
+    );
+  });
+
+  // Sealing only happens in the OAuth grant path, so a sealed-only deployment
+  // without a client id can mint no acceptable credential — a total lockout
+  // that should surface as a config error, not a dead login page.
+  test('without OAuth configured it throws', () => {
+    process.env.DIFFSHUB_REQUIRE_SEALED_TOKENS = '1';
+    process.env.DIFFSHUB_TOKEN_ENCRYPTION_KEY = VALID_KEY;
+    expect(() => isSealedTokenRequired()).toThrow(
+      'sealed credentials are only minted by the OAuth grant flow'
     );
   });
 });

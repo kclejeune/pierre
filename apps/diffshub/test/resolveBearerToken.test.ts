@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 
 import {
   isLoginRequired,
@@ -15,11 +15,18 @@ const KEY = new Uint8Array(32).fill(7);
 const OTHER_KEY = new Uint8Array(32).fill(9);
 
 useIsolatedEnvironment([
+  'DIFFSHUB_GITHUB_CLIENT_ID',
+  'DIFFSHUB_GITHUB_CLIENT_SECRET',
   'DIFFSHUB_REQUIRE_LOGIN',
   'DIFFSHUB_GITHUB_URL',
   'DIFFSHUB_TOKEN_ENCRYPTION_KEY',
   'DIFFSHUB_REQUIRE_SEALED_TOKENS',
 ]);
+
+beforeEach(() => {
+  process.env.DIFFSHUB_GITHUB_CLIENT_ID = 'id';
+  process.env.DIFFSHUB_GITHUB_CLIENT_SECRET = 'secret';
+});
 
 function configureKey(key: Uint8Array): void {
   process.env.DIFFSHUB_TOKEN_ENCRYPTION_KEY =

@@ -20,20 +20,27 @@ import { githubLoginHref, sanitizeReturnTo } from '@/lib/githubOAuth';
 // is configured: they already chose GitHub sign-in once, and with a live
 // GitHub/SSO session the authorize round trip returns without interaction.
 export function LoginPage() {
-  const { clearToken, hasToken, setToken } = useGitHubToken();
+  const { clearToken, hasToken, hydrated, setToken } = useGitHubToken();
   const { oauthEnabled, patInputEnabled } = useGitHubEnvironment();
 
   useEffect(() => {
+    // The hydration render reports no token regardless of storage, and a
+    // still-refreshable session may heal during hydration. Acting on that
+    // stale state would consume the one-shot re-auth stamp and bounce
+    // through GitHub even though a valid token is already saved.
+    if (!hydrated) {
+      return;
+    }
     const url = new URL(window.location.href);
     const returnTo = sanitizeReturnTo(url.searchParams.get('returnTo'));
     if (hasToken) {
       window.location.replace(returnTo);
       return;
     }
-    if (consumeReauthIntent() && oauthEnabled) {
+    if (oauthEnabled && consumeReauthIntent()) {
       window.location.replace(githubLoginHref(returnTo));
     }
-  }, [hasToken, oauthEnabled]);
+  }, [hasToken, hydrated, oauthEnabled]);
 
   return (
     <main className="flex min-h-[100svh] flex-col items-center justify-center px-6">

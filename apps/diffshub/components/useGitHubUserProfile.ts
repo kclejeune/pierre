@@ -2,7 +2,7 @@
 
 import { githubFetch } from './githubSession';
 import { useGitHubTokenSnapshot } from './useGitHubToken';
-import { createCachedLookup } from '@/lib/cachedLookup';
+import { createTokenScopedLookup } from '@/lib/cachedLookup';
 
 // A user's profile as served by /api/github-user?login=: the display name
 // behind avatar initials, plus a freshly issued avatar URL. The avatar URLs
@@ -16,9 +16,7 @@ export interface GitHubUserProfile {
 
 // Profiles are scoped to the token generation so an auth failure or account
 // switch cannot pin a lookup from the previous identity.
-const profileByLogin = createCachedLookup(async (key: string) => {
-  // The key is `${tokenVersion}|${login}`; only the login reaches the API.
-  const login = key.slice(key.indexOf('|') + 1);
+const profileByLogin = createTokenScopedLookup(async (login: string) => {
   const response = await githubFetch(
     `/api/github-user?login=${encodeURIComponent(login)}`
   );
@@ -42,7 +40,5 @@ export function useGitHubUserProfile(
   login: string | null
 ): GitHubUserProfile | null {
   const { version: tokenVersion } = useGitHubTokenSnapshot();
-  return profileByLogin.useValue(
-    login == null ? null : `${tokenVersion}|${login}`
-  );
+  return profileByLogin.useValue(tokenVersion, login);
 }

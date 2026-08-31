@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 
 import { resetGitHubEnvironmentCache } from '../lib/githubEnvironment';
 import {
@@ -24,6 +24,7 @@ import {
   openSealedRefreshToken,
   sealRefreshToken,
 } from '../lib/tokenSeal';
+import { useIsolatedEnvironment } from './helpers/env';
 
 describe('sanitizeReturnTo', () => {
   test('keeps same-origin paths', () => {
@@ -474,13 +475,10 @@ describe('refresh-token wrapping under a max TTL', () => {
     refresh_token_expires_in: 15_811_200,
   };
 
+  useIsolatedEnvironment(['DIFFSHUB_REFRESH_TOKEN_MAX_TTL']);
+
   beforeEach(() => {
     process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL = '7d';
-    resetGitHubEnvironmentCache();
-  });
-
-  afterEach(() => {
-    delete process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL;
     resetGitHubEnvironmentCache();
   });
 
@@ -573,15 +571,19 @@ describe('token sealing under an encryption key', () => {
     refresh_token_expires_in: 15_811_200,
   };
 
+  useIsolatedEnvironment([
+    'DIFFSHUB_GITHUB_CLIENT_ID',
+    'DIFFSHUB_GITHUB_CLIENT_SECRET',
+    'DIFFSHUB_REFRESH_TOKEN_MAX_TTL',
+    'DIFFSHUB_REQUIRE_SEALED_TOKENS',
+    'DIFFSHUB_TOKEN_ENCRYPTION_KEY',
+  ]);
+
   beforeEach(() => {
+    process.env.DIFFSHUB_GITHUB_CLIENT_ID = 'id';
+    process.env.DIFFSHUB_GITHUB_CLIENT_SECRET = 'secret';
     process.env.DIFFSHUB_TOKEN_ENCRYPTION_KEY =
       Buffer.from(KEY).toString('base64');
-    resetGitHubEnvironmentCache();
-  });
-
-  afterEach(() => {
-    delete process.env.DIFFSHUB_TOKEN_ENCRYPTION_KEY;
-    delete process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL;
     resetGitHubEnvironmentCache();
   });
 
@@ -656,6 +658,24 @@ describe('token sealing under an encryption key', () => {
       clientId: 'id',
       clientSecret: 'secret',
       refreshToken: sealed,
+      webURL: 'https://github.example.com',
+      fetcher: () => {
+        throw new Error('GitHub must not be contacted');
+      },
+    }).then(
+      () => undefined,
+      (thrown: unknown) => thrown
+    );
+    expect(rejected).toBeInstanceOf(OAuthRefreshRejectedError);
+  });
+
+  test('a bare refresh token is rejected when sealed tokens are required', async () => {
+    process.env.DIFFSHUB_REQUIRE_SEALED_TOKENS = '1';
+    resetGitHubEnvironmentCache();
+    const rejected = await refreshOAuthToken({
+      clientId: 'id',
+      clientSecret: 'secret',
+      refreshToken: 'ghr_bare_predates_key',
       webURL: 'https://github.example.com',
       fetcher: () => {
         throw new Error('GitHub must not be contacted');

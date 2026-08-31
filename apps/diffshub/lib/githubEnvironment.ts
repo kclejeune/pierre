@@ -85,13 +85,18 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
 // (short-lived, revocable, centrally managed tokens). When unset, the default
 // follows that reasoning: a require-login deployment with OAuth configured
 // hides the box, but one without OAuth keeps it — the PAT is then the only
-// way through the login gate, and hiding it would lock everyone out.
-// UI-only: a token set through devtools still works, since the server never
-// distinguishes token origins.
+// way through the login gate, and hiding it would lock everyone out. A
+// sealed-tokens-only deployment also hides it: the API routes drop every
+// bare token, so offering a paste box would save credentials that can never
+// work. UI-only: a token set through devtools still works on other
+// deployments, since the server never distinguishes token origins.
 export function isPATInputEnabled(): boolean {
   return (
     parseBooleanEnv(process.env.DIFFSHUB_ENABLE_PAT_INPUT) ??
-    !(isLoginRequired() && getOAuthClientId() != null)
+    !(
+      isSealedTokenRequired() ||
+      (isLoginRequired() && getOAuthClientId() != null)
+    )
   );
 }
 
@@ -202,9 +207,22 @@ function parseEncryptionKey(
 // (DIFFSHUB_REQUIRE_SEALED_TOKENS). This is the server-enforced counterpart
 // of hiding the PAT box: an envelope can only have come from this
 // deployment's own OAuth flow, so bare tokens — pasted PATs, tokens minted by
-// other apps, sessions predating the encryption key — stop working. Only
-// meaningful with an encryption key; setting it without one is a
-// configuration error rather than a silently open door.
+// other apps, sessions predating the encryption key — stop working.
+//
+// Two dependencies make it a configuration error to set this alone rather
+// than a silently open (or silently shut) door. It needs an encryption key,
+// or there is nothing to seal with. It also needs OAuth, since sealing only
+// happens in the OAuth grant path — a sealed-only deployment with no OAuth
+// configured can mint no acceptable credential at all.
+//
+// The OAuth check reads the client id, not the full config, and deliberately
+// so: this function runs during static prerender (isPATInputEnabled ->
+// getGitHubClientEnvironment in RootLayout), where the client secret is kept
+// out of the build to avoid baking it into image layers (see getOAuthClientId).
+// A deployment that sets the id but omits the secret still can't sign anyone
+// in, but that is caught at request time by the OAuth routes (the login route
+// returns 404), where the secret is present — not here, where throwing would
+// break `next build`.
 export function isSealedTokenRequired(): boolean {
   if (parseBooleanEnv(process.env.DIFFSHUB_REQUIRE_SEALED_TOKENS) !== true) {
     return false;
@@ -212,6 +230,11 @@ export function isSealedTokenRequired(): boolean {
   if (getTokenEncryptionKey() == null) {
     throw new Error(
       'DIFFSHUB_REQUIRE_SEALED_TOKENS needs DIFFSHUB_TOKEN_ENCRYPTION_KEY to be configured.'
+    );
+  }
+  if (getOAuthClientId() == null) {
+    throw new Error(
+      'DIFFSHUB_REQUIRE_SEALED_TOKENS needs GitHub OAuth (DIFFSHUB_GITHUB_CLIENT_ID) configured: sealed credentials are only minted by the OAuth grant flow, so without it no one can sign in.'
     );
   }
   return true;

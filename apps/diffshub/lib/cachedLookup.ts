@@ -69,3 +69,120 @@ export function createCachedLookup<K, V>(
 
   return { load, useValue };
 }
+
+// A promise cache whose entries are valid for exactly one token generation
+// (GitHubTokenSnapshot.version): touching it under a newer version drops the
+// previous generation wholesale, so an identity change cannot serve values
+// cached as someone else and steady-state reads stay O(1). The version is
+// monotonic per page, so a stale caller carrying an older version simply
+// bypasses the cache instead of clobbering the current generation. onEvict
+// runs on each discarded entry's settled value (e.g. revoking blob object
+// URLs).
+export function createTokenScopedCache<V>(onEvict?: (value: V) => void): {
+  delete(version: number, key: string): void;
+  get(version: number, key: string): Promise<V> | undefined;
+  set(version: number, key: string, pending: Promise<V>): void;
+} {
+  let scope: { version: number; entries: Map<string, Promise<V>> } | undefined;
+
+  function entriesFor(version: number): Map<string, Promise<V>> | undefined {
+    if (scope == null || version > scope.version) {
+      if (scope != null && onEvict != null) {
+        for (const stale of scope.entries.values()) {
+          void stale.then(onEvict, () => undefined);
+        }
+      }
+      scope = { version, entries: new Map() };
+    }
+    return version === scope.version ? scope.entries : undefined;
+  }
+
+  return {
+    delete: (version, key) => {
+      if (scope?.version === version) {
+        scope.entries.delete(key);
+      }
+    },
+    get: (version, key) => entriesFor(version)?.get(key),
+    set: (version, key, pending) => {
+      entriesFor(version)?.set(key, pending);
+    },
+  };
+}
+
+// createCachedLookup scoped to a token generation: each generation gets
+// fresh maps and the previous ones are abandoned wholesale, so an auth
+// failure or account switch cannot pin values fetched as the previous
+// identity, and old generations do not accumulate for the page lifetime.
+export function createTokenScopedLookup<V>(
+  fetcher: (key: string) => Promise<V | null>
+): { useValue(version: number, key: string | null): V | null } {
+  let scope:
+    | {
+        version: number;
+        pending: Map<string, Promise<V | null>>;
+        resolved: Map<string, V | null>;
+      }
+    | undefined;
+
+  // Monotonic like createTokenScopedCache: a stale render's older version
+  // reads the current generation rather than resurrecting a discarded one.
+  function scopeFor(version: number) {
+    if (scope == null || version > scope.version) {
+      scope = { version, pending: new Map(), resolved: new Map() };
+    }
+    return scope;
+  }
+
+  function load(version: number, key: string): Promise<V | null> {
+    const generation = scopeFor(version);
+    let pending = generation.pending.get(key);
+    if (pending == null) {
+      pending = fetcher(key).catch(() => null);
+      void pending.then((value) => generation.resolved.set(key, value));
+      generation.pending.set(key, pending);
+    }
+    return pending;
+  }
+
+  function useValue(version: number, key: string | null): V | null {
+    const [resolved, setResolved] = useState<{
+      key: string;
+      value: V | null;
+      version: number;
+    } | null>(() =>
+      key == null
+        ? null
+        : { key, value: scopeFor(version).resolved.get(key) ?? null, version }
+    );
+
+    useEffect(() => {
+      if (key == null) {
+        return;
+      }
+      let cancelled = false;
+      void load(version, key).then((value) => {
+        if (!cancelled) {
+          setResolved({ key, value, version });
+        }
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [version, key]);
+
+    if (key == null) {
+      return null;
+    }
+    // Same rule as createCachedLookup.useValue: never expose a previous
+    // key's — or a previous generation's — value during the render where it
+    // changed.
+    return resolved != null &&
+      resolved.version === version &&
+      Object.is(resolved.key, key)
+      ? resolved.value
+      : (scopeFor(version).resolved.get(key) ?? null);
+  }
+
+  return { useValue };
+}

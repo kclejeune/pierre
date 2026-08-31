@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 
 import { githubFetch } from './githubSession';
 import { useGitHubTokenSnapshot } from './useGitHubToken';
+import { createTokenScopedCache } from '@/lib/cachedLookup';
 import {
   deriveSuggestQuery,
   filterPullSuggestions,
@@ -18,9 +19,10 @@ export interface DiffUrlSuggestion {
   fill: string;
 }
 
-// Suggestion payloads keyed by token generation and query so repeated
-// keystrokes reuse lookups without carrying results across identities.
-const suggestCache = new Map<string, Promise<unknown>>();
+// Suggestion payloads scoped to the token generation and keyed by query so
+// repeated keystrokes reuse lookups without carrying results across
+// identities.
+const suggestCache = createTokenScopedCache<unknown>();
 
 // Fetches /api/github-suggest with the given params, deduped through
 // suggestCache. Resolves the parsed JSON payload, or null on any failure.
@@ -29,19 +31,13 @@ function fetchSuggestPayload(
   tokenVersion: number
 ): Promise<unknown> {
   const search = new URLSearchParams(params);
-  const cacheKey = `${tokenVersion}|${search}`;
-  let pending = suggestCache.get(cacheKey);
+  const cacheKey = String(search);
+  let pending = suggestCache.get(tokenVersion, cacheKey);
   if (pending == null) {
-    // Entries from previous token generations can never be read again.
-    for (const key of suggestCache.keys()) {
-      if (!key.startsWith(`${tokenVersion}|`)) {
-        suggestCache.delete(key);
-      }
-    }
     pending = githubFetch(`/api/github-suggest?${search}`)
       .then((response) => (response.ok ? response.json() : null))
       .catch(() => null);
-    suggestCache.set(cacheKey, pending);
+    suggestCache.set(tokenVersion, cacheKey, pending);
   }
   return pending;
 }

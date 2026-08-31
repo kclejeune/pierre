@@ -423,6 +423,76 @@ describe('re-auth intent and auth-failure reporting', () => {
     ]);
   });
 
+  // A Request input carries its own headers and method; githubFetch must read
+  // both from the Request, not only from init, or it clobbers a caller's auth
+  // and misjudges a mutating request as a retryable GET.
+  test('githubFetch honors a Request input over the stored token', async () => {
+    saveGitHubTokenToStorage('ghp_stored');
+    const seen: Array<string | null> = [];
+    const fetcher: PlainFetch = (_input, init) => {
+      seen.push(new Headers(init?.headers).get('authorization'));
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+
+    await githubFetch(
+      new Request('https://diffs.example.com/resource', {
+        headers: { authorization: 'Bearer ghp_request' },
+      }),
+      undefined,
+      fetcher
+    );
+    expect(seen).toEqual(['Bearer ghp_request']);
+  });
+
+  test('githubFetch lets init headers replace Request headers', async () => {
+    saveGitHubTokenToStorage('ghp_stored');
+    const seen: Array<Record<string, string>> = [];
+    const fetcher: PlainFetch = (_input, init) => {
+      seen.push(Object.fromEntries(new Headers(init?.headers)));
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+
+    await githubFetch(
+      new Request('https://diffs.example.com/resource', {
+        headers: {
+          authorization: 'Bearer ghp_request',
+          'x-request': 'request',
+        },
+      }),
+      { headers: { 'x-init': 'init' } },
+      fetcher
+    );
+    expect(seen).toEqual([
+      { authorization: 'Bearer ghp_stored', 'x-init': 'init' },
+    ]);
+  });
+
+  test('githubFetch does not retry a Request-carried POST after a 401', async () => {
+    saveGitHubGrantToStorage(EXPIRING_GRANT, Date.now());
+    let attempts = 0;
+    const fetcher: PlainFetch = (input) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      if (url === '/api/auth/github/refresh') {
+        return Promise.resolve(GRANT_RESPONSE.clone());
+      }
+      attempts += 1;
+      return Promise.resolve(new Response('{}', { status: 401 }));
+    };
+
+    const response = await githubFetch(
+      new Request('https://diffs.example.com/resource', { method: 'POST' }),
+      undefined,
+      fetcher
+    );
+    expect(response.status).toBe(401);
+    expect(attempts).toBe(1);
+  });
+
   // Consuming enforces the one-automatic-hop window itself, so a second
   // credential death moments after an auto-forward falls back to the form.
   test('consumption enforces the auto-reauth window', async () => {

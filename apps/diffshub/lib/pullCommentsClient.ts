@@ -6,8 +6,7 @@ import type {
   PullDiscussionComment,
   PullReviewComment,
 } from './types';
-import { reportGitHubAuthFailure } from '@/components/githubSession';
-import { parseBearerToken } from '@/lib/parseBearerToken';
+import { githubFetch } from '@/components/githubSession';
 
 // Identifies the pull request a viewer route displays, for review-comment
 // API calls.
@@ -276,14 +275,13 @@ export async function requestJSON(
 ): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetch(input, { cache: 'no-store', ...init });
+    // githubFetch reacts to a 401 (forced refresh, or clearing a dead
+    // credential with re-auth intent) and retries idempotent requests with
+    // the refreshed token.
+    response = await githubFetch(input, { cache: 'no-store', ...init });
   } catch {
     throw new Error('Could not reach the DiffsHub server.');
   }
-  void reportGitHubAuthFailure(
-    response,
-    parseBearerToken(new Headers(init.headers).get('authorization')) ?? ''
-  );
   let payload: unknown = null;
   try {
     payload = await response.json();

@@ -20,6 +20,7 @@ import { DiffsHubSidebar } from './DiffsHubSidebar';
 import { DiffsHubStatusPanel } from './DiffsHubStatusPanel';
 import { DiffsHubViewer } from './DiffsHubViewer';
 import { FileSearchPalette } from './FileSearchPalette';
+import { githubFetch } from './githubSession';
 import { PullCommitPanel } from './PullCommitPanel';
 import { PullCommitRangePicker } from './PullCommitRangePicker';
 import {
@@ -262,6 +263,9 @@ function ReviewUIInner({
     () =>
       domain == null && hasGitHubToken
         ? createGitHubDiffFileLoader(path, {
+            // githubFetch lets a 401 on an expired/rejected token trigger the
+            // session's refresh-or-reauth path instead of failing silently.
+            fetch: githubFetch,
             getAuthVersion: () => githubTokenVersionRef.current,
             getToken: () => githubTokenRef.current,
           })

@@ -5,26 +5,18 @@ import { type ImgHTMLAttributes, useEffect, useState } from 'react';
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
 import { githubFetch } from './githubSession';
 import { useGitHubTokenSnapshot } from './useGitHubToken';
+import { createTokenScopedCache } from '@/lib/cachedLookup';
 
-// Object URLs keyed by token generation and proxy src so repeated renders
-// share one authorized fetch without carrying private blobs across identities.
-const objectURLBySrc = new Map<string, Promise<string>>();
-
-// Drops cache entries from previous token generations and releases their
-// object URLs — without this, every sign-in/sign-out cycle would orphan a
-// full generation of blobs for the lifetime of the page.
-function evictStaleGenerations(tokenVersion: number): void {
-  for (const [key, stale] of objectURLBySrc) {
-    if (!key.startsWith(`${tokenVersion}|`)) {
-      objectURLBySrc.delete(key);
-      void stale.then((url) => {
-        if (url.startsWith('blob:')) {
-          URL.revokeObjectURL(url);
-        }
-      });
-    }
+// Object URLs scoped to the token generation and keyed by proxy src, so
+// repeated renders share one authorized fetch without carrying private blobs
+// across identities. Evicted generations release their object URLs — without
+// this, every sign-in/sign-out cycle would orphan a full generation of blobs
+// for the lifetime of the page.
+const objectURLBySrc = createTokenScopedCache<string>((url) => {
+  if (url.startsWith('blob:')) {
+    URL.revokeObjectURL(url);
   }
-}
+});
 
 // A data: URI that is not a decodable image: assigning it to <img src> fires
 // the element's native error event without issuing a network request. Stands
@@ -42,10 +34,8 @@ function resolveAssetSrc(
   if (token === '') {
     return Promise.resolve(requireLogin ? UNLOADABLE_ASSET_SRC : src);
   }
-  const cacheKey = `${tokenVersion}|${src}`;
-  let pending = objectURLBySrc.get(cacheKey);
+  let pending = objectURLBySrc.get(tokenVersion, src);
   if (pending == null) {
-    evictStaleGenerations(tokenVersion);
     pending = githubFetch(src, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -56,10 +46,10 @@ function resolveAssetSrc(
         return URL.createObjectURL(await response.blob());
       })
       .catch(() => {
-        objectURLBySrc.delete(cacheKey);
+        objectURLBySrc.delete(tokenVersion, src);
         return requireLogin ? UNLOADABLE_ASSET_SRC : src;
       });
-    objectURLBySrc.set(cacheKey, pending);
+    objectURLBySrc.set(tokenVersion, src, pending);
   }
   return pending;
 }

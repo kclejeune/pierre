@@ -364,7 +364,7 @@ importers:
     dependencies:
       '@opennextjs/cloudflare':
         specifier: 'catalog:'
-        version: 1.20.2(next@16.2.9(@babel/core@7.29.7)(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(wrangler@4.115.0)
+        version: 1.20.2(next@16.2.9(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(wrangler@4.115.0)
       '@pierre/diffs':
         specifier: workspace:*
         version: link:../../packages/diffs
@@ -394,10 +394,10 @@ importers:
         version: 1.2.6(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@vercel/analytics':
         specifier: 'catalog:'
-        version: 2.0.1(next@16.2.9(@babel/core@7.29.7)(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)
+        version: 2.0.1(next@16.2.9(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)
       '@vercel/speed-insights':
         specifier: 'catalog:'
-        version: 2.0.0(next@16.2.9(@babel/core@7.29.7)(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)
+        version: 2.0.0(next@16.2.9(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)
       babel-plugin-react-compiler:
         specifier: 'catalog:'
         version: 1.0.0
@@ -566,10 +566,10 @@ importers:
         version: 4.4.1
       '@vercel/analytics':
         specifier: 'catalog:'
-        version: 2.0.1(next@16.2.9(@babel/core@7.29.7)(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)
+        version: 2.0.1(next@16.2.9(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)
       '@vercel/speed-insights':
         specifier: 'catalog:'
-        version: 2.0.0(next@16.2.9(@babel/core@7.29.7)(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)
+        version: 2.0.0(next@16.2.9(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)
       '@vscode/web-custom-data':
         specifier: 'catalog:'
         version: 0.6.3
@@ -1023,10 +1023,6 @@ packages:
 
   '@aws-sdk/client-sqs@3.984.0':
     resolution: {integrity: sha512-TDvHpOUWlpanc3xQ5Xw0y8L2hoojBFCCSmXQ/6rKqGOf1ScX3dMA+K9aF0Zp0iwjhSh4VvsHD42esl8XwQZDjA==}
-    engines: {node: '>=20.0.0'}
-
-  '@aws-sdk/core@3.976.0':
-    resolution: {integrity: sha512-0cjRaEdlVoOrsNb9pP5q1Syyc8pXw5xSj2Np2ryReRTr9FppIIRVSdZK4lbnfmc2Hvgux/xBOUU6baB7z8//uA==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/core@3.977.4':
@@ -8123,7 +8119,7 @@ snapshots:
     dependencies:
       '@aws-crypto/sha256-browser': 5.2.0
       '@aws-crypto/sha256-js': 5.2.0
-      '@aws-sdk/core': 3.976.0
+      '@aws-sdk/core': 3.977.4
       '@aws-sdk/credential-provider-node': 3.972.76
       '@aws-sdk/middleware-host-header': 3.972.40
       '@aws-sdk/middleware-logger': 3.972.39
@@ -8167,7 +8163,7 @@ snapshots:
     dependencies:
       '@aws-crypto/sha256-browser': 5.2.0
       '@aws-crypto/sha256-js': 5.2.0
-      '@aws-sdk/core': 3.976.0
+      '@aws-sdk/core': 3.977.4
       '@aws-sdk/credential-provider-node': 3.972.76
       '@aws-sdk/dynamodb-codec': 3.973.39
       '@aws-sdk/middleware-endpoint-discovery': 3.972.27
@@ -8212,7 +8208,7 @@ snapshots:
     dependencies:
       '@aws-crypto/sha256-browser': 5.2.0
       '@aws-crypto/sha256-js': 5.2.0
-      '@aws-sdk/core': 3.976.0
+      '@aws-sdk/core': 3.977.4
       '@aws-sdk/credential-provider-node': 3.972.76
       '@aws-sdk/middleware-host-header': 3.972.40
       '@aws-sdk/middleware-logger': 3.972.39
@@ -8260,7 +8256,7 @@ snapshots:
       '@aws-crypto/sha1-browser': 5.2.0
       '@aws-crypto/sha256-browser': 5.2.0
       '@aws-crypto/sha256-js': 5.2.0
-      '@aws-sdk/core': 3.976.0
+      '@aws-sdk/core': 3.977.4
       '@aws-sdk/credential-provider-node': 3.972.76
       '@aws-sdk/middleware-bucket-endpoint': 3.972.43
       '@aws-sdk/middleware-expect-continue': 3.972.39
@@ -8317,7 +8313,7 @@ snapshots:
     dependencies:
       '@aws-crypto/sha256-browser': 5.2.0
       '@aws-crypto/sha256-js': 5.2.0
-      '@aws-sdk/core': 3.976.0
+      '@aws-sdk/core': 3.977.4
       '@aws-sdk/credential-provider-node': 3.972.76
       '@aws-sdk/middleware-host-header': 3.972.40
       '@aws-sdk/middleware-logger': 3.972.39
@@ -8355,17 +8351,6 @@ snapshots:
       '@smithy/util-middleware': 4.4.16
       '@smithy/util-retry': 4.5.16
       '@smithy/util-utf8': 4.4.16
-      tslib: 2.8.1
-
-  '@aws-sdk/core@3.976.0':
-    dependencies:
-      '@aws-sdk/types': 3.974.2
-      '@aws-sdk/xml-builder': 3.972.37
-      '@aws/lambda-invoke-store': 0.3.0
-      '@smithy/core': 3.31.1
-      '@smithy/signature-v4': 5.6.12
-      '@smithy/types': 4.16.1
-      bowser: 2.14.1
       tslib: 2.8.1
 
   '@aws-sdk/core@3.977.4':
@@ -9780,7 +9765,7 @@ snapshots:
 
   '@open-draft/until@2.1.0': {}
 
-  '@opennextjs/aws@4.1.0(next@16.2.9(@babel/core@7.29.7)(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))':
+  '@opennextjs/aws@4.1.0(next@16.2.9(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))':
     dependencies:
       '@ast-grep/napi': 0.40.5
       '@aws-sdk/client-cloudfront': 3.984.0
@@ -9803,11 +9788,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@opennextjs/cloudflare@1.20.2(next@16.2.9(@babel/core@7.29.7)(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(wrangler@4.115.0)':
+  '@opennextjs/cloudflare@1.20.2(next@16.2.9(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(wrangler@4.115.0)':
     dependencies:
       '@ast-grep/napi': 0.40.5
       '@dotenvx/dotenvx': 1.31.0
-      '@opennextjs/aws': 4.1.0(next@16.2.9(@babel/core@7.29.7)(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))
+      '@opennextjs/aws': 4.1.0(next@16.2.9(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))
       ci-info: 4.4.0
       cloudflare: 4.5.0
       comment-json: 4.6.2
@@ -11242,12 +11227,12 @@ snapshots:
       d3-selection: 3.0.0
       d3-transition: 3.0.1(d3-selection@3.0.0)
 
-  '@vercel/analytics@2.0.1(next@16.2.9(@babel/core@7.29.7)(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)':
+  '@vercel/analytics@2.0.1(next@16.2.9(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)':
     optionalDependencies:
       next: 16.2.9(@babel/core@7.29.7)(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       react: 19.2.7
 
-  '@vercel/speed-insights@2.0.0(next@16.2.9(@babel/core@7.29.7)(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)':
+  '@vercel/speed-insights@2.0.0(next@16.2.9(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)':
     optionalDependencies:
       next: 16.2.9(@babel/core@7.29.7)(@playwright/test@1.51.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       react: 19.2.7

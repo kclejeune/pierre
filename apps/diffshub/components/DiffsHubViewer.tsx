@@ -2,11 +2,12 @@ import {
   areSelectionsEqual,
   type CodeViewDiffItem,
   type CodeViewItem,
+  type CodeViewItemEditCompleteHandler,
   type CodeViewLineSelection,
   type CodeViewOptions,
   type DiffIndicators,
   type DiffLineAnnotation,
-  type FileContents,
+  type EditorChangeEvent,
   type FileDiffContentsLoader,
   isDiffAnnotation,
   type LineAnnotation,
@@ -120,13 +121,10 @@ export interface ViewerEditSession {
   isEditing(itemId: string): boolean;
   isFileLocked(itemId: string): boolean;
   onItemEditChange(
-    item: CodeViewItem<CommentMetadata>,
-    file: FileContents
+    event: EditorChangeEvent<CommentMetadata, 'file' | 'diff'>,
+    item: CodeViewItem<CommentMetadata>
   ): void;
-  onItemEditComplete(
-    item: CodeViewItem<CommentMetadata>,
-    file: FileContents
-  ): void;
+  onItemEditComplete: CodeViewItemEditCompleteHandler<CommentMetadata>;
   toggleEdit(itemId: string): void;
 }
 

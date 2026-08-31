@@ -327,7 +327,7 @@ export function PullConflictResolver({
                       file={state.editSeed}
                       edit
                       editorOptions={{
-                        onChange: (updated: FileContents) => {
+                        onChange: ({ file: updated }) => {
                           patchFile(file.path, {
                             contents: updated.contents,
                             remaining: countRemainingConflicts(

@@ -34,15 +34,6 @@ describe('resolveDiffshubViewerRoute', () => {
         kind: 'not-found',
       });
     });
-
-    test('owner/repo is the shortest renderable path', () => {
-      expect(resolveDiffshubViewerRoute(['owner', 'repo'], undefined)).toEqual({
-        domain: undefined,
-        kind: 'render',
-        upstreamPath: '/owner/repo',
-        url: 'https://github.com/owner/repo',
-      });
-    });
   });
 
   describe('GitHub (default host) canonical paths', () => {

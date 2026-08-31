@@ -11,7 +11,7 @@ import {
   createUnreachableResponse,
 } from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Autocomplete data for the diff URL bar: repository name search while the
 // user types "owner/rep…", and the open pull requests of a repo once one is
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
   const params = request.nextUrl.searchParams;
   const kind = params.get('kind');
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   const environment = getGitHubEnvironment();
 
   if (kind === 'repos') {

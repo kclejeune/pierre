@@ -11,8 +11,8 @@ import {
   readPullRouteParams,
 } from '@/lib/githubPullDetailsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
 import type { PullInfo } from '@/lib/pullInfoClient';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // The pull request's refs plus metadata carried by pulls/{n}. Keep this first
 // chrome request to one GitHub round trip; reviews, checks, and viewer merge
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     const data = await fetchPullData(
       { owner, repo },
       pull,
-      parseBearerToken(request.headers.get('authorization'))
+      await resolveBearerToken(request)
     );
     const refs = parsePullRefs(data, { owner, repo });
     const payload: PullInfo = {

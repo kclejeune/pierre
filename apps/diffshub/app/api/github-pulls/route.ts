@@ -18,8 +18,8 @@ import {
   parseSearchIssuesPayload,
 } from '@/lib/githubPullSummaries';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
 import { isValidRepoName, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Pull request lists for the /pulls dashboard: cross-repo buckets built on
 // @me search qualifiers (optionally scoped to one repo, for pinned-repo cards
@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
     }
     // The @me qualifiers resolve to whoever the token belongs to, so there
     // is nothing to list without one.
-    const token = parseBearerToken(request.headers.get('authorization'));
+    const token = await resolveBearerToken(request);
     if (token == null) {
       return createJSONResponse(
         { error: 'A GitHub token is required to list your pull requests.' },
@@ -110,7 +110,7 @@ export async function GET(request: NextRequest) {
           state: 'open',
         }
       ),
-      parseBearerToken(request.headers.get('authorization'))
+      await resolveBearerToken(request)
     );
     if (result.error != null) {
       return result.error;

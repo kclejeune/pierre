@@ -19,6 +19,11 @@ import {
   unwrapRefreshToken,
   wrapRefreshToken,
 } from '../lib/refreshTokenWrap';
+import {
+  openSealedAccessToken,
+  openSealedRefreshToken,
+  sealRefreshToken,
+} from '../lib/tokenSeal';
 
 describe('sanitizeReturnTo', () => {
   test('keeps same-origin paths', () => {
@@ -551,5 +556,136 @@ describe('refresh-token wrapping under a max TTL', () => {
     await expectRefreshRejected(
       await wrapRefreshToken('ghr_old', now, 'other-secret')
     );
+  });
+});
+
+// Opt-in at-rest encryption: with DIFFSHUB_TOKEN_ENCRYPTION_KEY configured,
+// every grant leaves the server with its tokens sealed into dhe1 envelopes
+// (lib/tokenSeal), and the refresh route opens submitted envelopes before
+// contacting GitHub.
+describe('token sealing under an encryption key', () => {
+  const DAY = 24 * 3600;
+  const KEY = new Uint8Array(32).fill(7);
+  const GRANT_RESPONSE = {
+    access_token: 'ghu_new',
+    expires_in: 28_800,
+    refresh_token: 'ghr_new',
+    refresh_token_expires_in: 15_811_200,
+  };
+
+  beforeEach(() => {
+    process.env.DIFFSHUB_TOKEN_ENCRYPTION_KEY =
+      Buffer.from(KEY).toString('base64');
+    resetGitHubEnvironmentCache();
+  });
+
+  afterEach(() => {
+    delete process.env.DIFFSHUB_TOKEN_ENCRYPTION_KEY;
+    delete process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL;
+    resetGitHubEnvironmentCache();
+  });
+
+  test('a first sign-in seals both tokens', async () => {
+    const now = nowSeconds();
+    const grant = await exchangeOAuthCode({
+      clientId: 'id',
+      clientSecret: 'secret',
+      code: 'code',
+      redirectURI: 'https://diffs.example.com/api/auth/github/callback',
+      webURL: 'https://github.example.com',
+      fetcher: () => Promise.resolve(Response.json(GRANT_RESPONSE)),
+    });
+    expect(grant.accessToken.startsWith('dhe1.access.')).toBe(true);
+    expect(await openSealedAccessToken(grant.accessToken, KEY)).toBe('ghu_new');
+    const opened = await openSealedRefreshToken(grant.refreshToken ?? '', KEY);
+    expect(opened?.refreshToken).toBe('ghr_new');
+    expect(opened?.issuedAt).toBeWithin(now, now + 31);
+    // Lifetimes stay GitHub's own — sealing changes representation, not policy.
+    expect(grant.expiresIn).toBe(28_800);
+    expect(grant.refreshTokenExpiresIn).toBe(15_811_200);
+  });
+
+  test('a refresh opens the envelope, forwards the bare token, and reseals with the original time', async () => {
+    const issuedAt = nowSeconds() - 3 * DAY;
+    let requestedToken: unknown;
+    const grant = await refreshOAuthToken({
+      clientId: 'id',
+      clientSecret: 'secret',
+      refreshToken: await sealRefreshToken('ghr_old', issuedAt, KEY),
+      webURL: 'https://github.example.com',
+      fetcher: (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestedToken = (
+          JSON.parse(init?.body as string) as Record<string, unknown>
+        ).refresh_token;
+        return Promise.resolve(Response.json(GRANT_RESPONSE));
+      },
+    });
+    expect(requestedToken).toBe('ghr_old');
+    expect(await openSealedRefreshToken(grant.refreshToken ?? '', KEY)).toEqual(
+      { issuedAt, refreshToken: 'ghr_new' }
+    );
+  });
+
+  test('the envelope subsumes the dhr1 wrap when a max TTL is also set', async () => {
+    process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL = '7d';
+    resetGitHubEnvironmentCache();
+    const issuedAt = nowSeconds() - 3 * DAY;
+    const grant = await refreshOAuthToken({
+      clientId: 'id',
+      clientSecret: 'secret',
+      // A session wrapped before the key was configured still refreshes.
+      refreshToken: await wrapRefreshToken('ghr_old', issuedAt, 'secret'),
+      webURL: 'https://github.example.com',
+      fetcher: () => Promise.resolve(Response.json(GRANT_RESPONSE)),
+    });
+    expect(grant.refreshToken?.startsWith('dhe1.refresh.')).toBe(true);
+    expect(
+      (await openSealedRefreshToken(grant.refreshToken ?? '', KEY))?.issuedAt
+    ).toBe(issuedAt);
+    // The clamp still reports only the session's remaining allowance.
+    expect(grant.refreshTokenExpiresIn).toBeWithin(4 * DAY - 30, 4 * DAY + 1);
+  });
+
+  test('an envelope sealed under a rotated key is rejected without contacting GitHub', async () => {
+    const sealed = await sealRefreshToken(
+      'ghr_old',
+      nowSeconds(),
+      new Uint8Array(32).fill(9)
+    );
+    const rejected = await refreshOAuthToken({
+      clientId: 'id',
+      clientSecret: 'secret',
+      refreshToken: sealed,
+      webURL: 'https://github.example.com',
+      fetcher: () => {
+        throw new Error('GitHub must not be contacted');
+      },
+    }).then(
+      () => undefined,
+      (thrown: unknown) => thrown
+    );
+    expect(rejected).toBeInstanceOf(OAuthRefreshRejectedError);
+  });
+
+  test('an over-age sealed session is rejected under a max TTL', async () => {
+    process.env.DIFFSHUB_REFRESH_TOKEN_MAX_TTL = '7d';
+    resetGitHubEnvironmentCache();
+    const rejected = await refreshOAuthToken({
+      clientId: 'id',
+      clientSecret: 'secret',
+      refreshToken: await sealRefreshToken(
+        'ghr_old',
+        nowSeconds() - 8 * DAY,
+        KEY
+      ),
+      webURL: 'https://github.example.com',
+      fetcher: () => {
+        throw new Error('GitHub must not be contacted');
+      },
+    }).then(
+      () => undefined,
+      (thrown: unknown) => thrown
+    );
+    expect(rejected).toBeInstanceOf(OAuthRefreshRejectedError);
   });
 });

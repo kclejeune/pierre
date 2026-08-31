@@ -9,8 +9,8 @@ import {
   readPullRouteParams,
 } from '@/lib/githubPullDetailsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
 import type { PullDetailsSupplement } from '@/lib/pullInfoClient';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
 
@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
   }
 
   const repo = { owner: params.owner, repo: params.repo };
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   try {
     const [reviewStates, checks, mergeCapabilities] = await Promise.all([
       fetchPullReviewStates(repo, params.pull, token).catch(() => null),

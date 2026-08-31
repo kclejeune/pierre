@@ -6,7 +6,7 @@ import {
   repoBrowserErrorResponse,
 } from '@/lib/githubRepoBrowserServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Fetches one file's contents for the browse view, at the commit sha the
 // tree listing resolved (so contents always match the listing).
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const payload = await loadRepoBrowserFile({ owner, repo }, ref, file, {
-      token: parseBearerToken(request.headers.get('authorization')),
+      token: await resolveBearerToken(request),
     });
     // The tree listing pins `ref` to a commit sha, so the contents can never
     // change — let the browser cache them for as long as it likes.

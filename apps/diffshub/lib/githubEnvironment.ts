@@ -19,6 +19,9 @@
 //   DIFFSHUB_REFRESH_TOKEN_MAX_TTL
 //                              How refresh tokens may reach the browser; see
 //                              getRefreshTokenMaxTTLSeconds.
+//   DIFFSHUB_TOKEN_ENCRYPTION_KEY
+//                              Opt-in at-rest encryption of browser-held
+//                              credentials; see getTokenEncryptionKey.
 
 import { createJSONResponse } from './jsonResponse';
 import { parseBearerToken } from './parseBearerToken';
@@ -152,6 +155,43 @@ export function parseDurationSeconds(
   return Number(match[1]) * multipliers[match[2] ?? 's'];
 }
 
+// Key for sealing browser-held credentials into AES-256-GCM envelopes, from
+// DIFFSHUB_TOKEN_ENCRYPTION_KEY (base64, exactly 32 bytes — e.g.
+// `openssl rand -base64 32`). Unset leaves tokens in the clear, exactly as
+// before the option existed; set, every grant leaves the server sealed and
+// the API routes decrypt on arrival — see lib/tokenSeal for the mechanism.
+// Deliberately independent of the OAuth client secret so PAT-only
+// deployments can use it, and so rotating one credential does not silently
+// revoke the other's sessions.
+let cachedEncryptionKey:
+  | { key: Uint8Array<ArrayBuffer> | undefined }
+  | undefined;
+
+export function getTokenEncryptionKey(): Uint8Array<ArrayBuffer> | undefined {
+  cachedEncryptionKey ??= {
+    key: parseEncryptionKey(process.env.DIFFSHUB_TOKEN_ENCRYPTION_KEY),
+  };
+  return cachedEncryptionKey.key;
+}
+
+// Throws on a malformed value rather than silently running unencrypted: an
+// operator who set the variable expects sealing to be in force.
+function parseEncryptionKey(
+  input: string | undefined
+): Uint8Array<ArrayBuffer> | undefined {
+  const trimmed = input?.trim();
+  if (trimmed == null || trimmed === '') {
+    return undefined;
+  }
+  const key = new Uint8Array(Buffer.from(trimmed, 'base64'));
+  if (key.length !== 32) {
+    throw new Error(
+      'DIFFSHUB_TOKEN_ENCRYPTION_KEY must be 32 base64-encoded bytes (openssl rand -base64 32).'
+    );
+  }
+  return key;
+}
+
 export const LOGIN_REQUIRED_MESSAGE =
   'This deployment requires signing in to load GitHub data.';
 
@@ -267,6 +307,7 @@ export function getGitHubEnvironment(): GitHubEnvironment {
 export function resetGitHubEnvironmentCache(): void {
   cachedEnvironment = undefined;
   cachedMaxTTL = undefined;
+  cachedEncryptionKey = undefined;
 }
 
 // Whether a URL sits on the configured instance's web origin. Every code path

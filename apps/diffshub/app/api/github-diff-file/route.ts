@@ -3,7 +3,7 @@ import { type NextRequest } from 'next/server';
 
 import { loadGitHubDiffFiles } from '@/lib/githubDiffFileServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 const CHANGE_TYPES = new Set<ChangeTypes>([
   'change',
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
   const name = params.get('name');
   const type = parseChangeType(params.get('type'));
   const prevName = params.get('prevName') ?? undefined;
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
 
   if (path == null || name == null || type == null) {
     return createJSONResponse(

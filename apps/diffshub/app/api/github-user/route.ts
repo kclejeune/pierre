@@ -11,7 +11,7 @@ import {
   createUnreachableResponse,
 } from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Proxies user lookups on the configured GitHub instance so the browser never
 // talks to the GitHub API cross-origin. Without a `login` parameter this
@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
     return rejection;
   }
 
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   const login = request.nextUrl.searchParams.get('login');
   if (login == null && token == null) {
     return createJSONResponse(

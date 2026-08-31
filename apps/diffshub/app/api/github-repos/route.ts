@@ -11,7 +11,6 @@ import {
   createUnreachableResponse,
 } from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
 import {
   parseRepoDirectoryOwner,
   parseRepoDirectoryRepo,
@@ -19,6 +18,7 @@ import {
   type RepoDirectoryPayload,
   type RepoDirectoryRepo,
 } from '@/lib/repoDirectory';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Load a useful first directory in two waves. Accounts beyond this initial
 // slice receive a continuation cursor and can fetch further pages on demand.
@@ -46,7 +46,7 @@ function fetchRepoPage(
 // on, or can reach through an org, most recently pushed first. Requires a
 // token — GitHub has no anonymous notion of "your repositories".
 export async function GET(request: NextRequest) {
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
       { error: 'Listing your repositories requires signing in.' },

@@ -7,7 +7,7 @@ import {
 } from '@/lib/githubRepoBrowserServer';
 import { loadRepoRefs } from '@/lib/githubRepoRefsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Lists a repository's default branch, branches, and tags for the /browse
 // dashboard's ref picker.
@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
   try {
     return createJSONResponse(
       await loadRepoRefs(repo, {
-        token: parseBearerToken(request.headers.get('authorization')),
+        token: await resolveBearerToken(request),
       })
     );
   } catch (error) {

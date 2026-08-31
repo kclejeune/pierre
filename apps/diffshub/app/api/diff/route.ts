@@ -17,6 +17,7 @@ import {
   LOGIN_REQUIRED_MESSAGE,
 } from '@/lib/githubEnvironment';
 import { parseBearerToken } from '@/lib/parseBearerToken';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 const CACHE_CONTROL = 'no-store';
 const EMPTY_PATCH_MESSAGE = 'GitHub returned an empty diff.';
@@ -107,7 +108,7 @@ export async function GET(request: NextRequest) {
   const path = searchParams.get('path');
   const domain = searchParams.get('domain');
   const url = searchParams.get('url');
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
 
   if (path == null && url == null) {
     return createTextResponse('Path or URL parameter is required', {
@@ -483,6 +484,9 @@ function createGitHubJSONAPIHeaders(token: string): Record<string, string> {
   };
 }
 
+// `requestHeaders` here are the *outbound* GitHub headers, built from a token
+// this route already resolved — never a sealed envelope — so a plain parse
+// recovers it.
 function getAuthorizationToken(
   requestHeaders: Record<string, string> | undefined
 ): string | undefined {

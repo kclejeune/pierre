@@ -12,8 +12,8 @@ import {
   createUnreachableResponse,
 } from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
 import { parseJSONBody } from '@/lib/parseJSONBody';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 import type {
   GitHubDiffSide,
   PullDiscussionComment,
@@ -64,7 +64,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   const environment = getGitHubEnvironment();
 
   // Review comments are the core payload — their failures fail the request.
@@ -171,7 +171,7 @@ async function fetchAllPages(
 }
 
 export async function POST(request: NextRequest) {
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
       { error: 'Posting a comment requires signing in or saving a token.' },
@@ -283,7 +283,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
       { error: 'Editing a comment requires signing in or saving a token.' },
@@ -333,7 +333,7 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
       { error: 'Deleting a comment requires signing in or saving a token.' },

@@ -7,7 +7,7 @@ import {
   readPullRouteParams,
 } from '@/lib/githubPullDetailsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // The pull request's commit listing (oldest first), for the viewer's
 // commit-range picker. Read-only; on github.com anonymous visitors can list
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     const commits = await fetchPullCommitsListing(
       { owner: params.owner, repo: params.repo },
       params.pull,
-      parseBearerToken(request.headers.get('authorization'))
+      await resolveBearerToken(request)
     );
     return createJSONResponse({ commits });
   } catch (error) {

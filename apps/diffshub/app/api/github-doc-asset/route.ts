@@ -4,7 +4,7 @@ import { loadGitHubDiffAssetResponse } from '@/lib/githubDiffFileServer';
 import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
 import { createInertAssetResponse } from '@/lib/inertAssetResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Same-origin proxy for images referenced by rendered markdown documents.
 // Relative references in a doc resolve to repository paths, which the browser
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   if (token == null && !ANONYMOUS_IMAGE_FILE_PATTERN.test(file)) {
     return createJSONResponse(
       { error: 'Anonymous asset requests are limited to image files.' },

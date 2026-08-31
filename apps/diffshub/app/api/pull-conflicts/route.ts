@@ -26,13 +26,13 @@ import {
   rejectTokenlessRequestWhenLoginRequired,
 } from '@/lib/githubEnvironment';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
 import {
   type CompareFile,
   isBinaryContent,
   planMerge,
   renderConflictMarkers,
 } from '@/lib/pullMerge';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Merge-conflict resolution for pull requests.
 //
@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
       { status: 400 }
     );
   }
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
 
   try {
     const repoRef = { owner, repo };
@@ -144,7 +144,7 @@ export interface PullMergeCommitRequestBody {
 }
 
 export async function POST(request: NextRequest) {
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
       { error: 'A GitHub token is required to commit a merge.' },

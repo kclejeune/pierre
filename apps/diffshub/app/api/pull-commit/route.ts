@@ -18,7 +18,7 @@ import {
 } from '@/lib/githubCommitServer';
 import { encodeURLSegment, isSameGitHubRepo } from '@/lib/githubDiffSource';
 import { createJSONResponse } from '@/lib/jsonResponse';
-import { parseBearerToken } from '@/lib/parseBearerToken';
+import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Committing edited files back to a pull request's head branch.
 //
@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
       { status: 400 }
     );
   }
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
       { error: 'A GitHub token is required.' },
@@ -98,7 +98,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const token = parseBearerToken(request.headers.get('authorization'));
+  const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
       { error: 'A GitHub token is required to commit.' },

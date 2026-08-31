@@ -9,6 +9,7 @@ import { Button } from '@/components/Button';
 import { useGitHubEnvironment } from '@/components/GitHubEnvironmentProvider';
 import { Input } from '@/components/Input';
 import { cn } from '@/lib/cn';
+import { githubLoginHref } from '@/lib/githubOAuth';
 
 // pull_requests=write (not read) so review comments and replies can be
 // posted from the viewer; contents stays read-only.
@@ -113,10 +114,7 @@ export const GitHubTokenControl = memo(function GitHubTokenControl({
   // the return path is captured at click time rather than render time.
   const handleSignIn = () => {
     const { hash, pathname, search } = window.location;
-    const returnTo = `${pathname}${search}${hash}`;
-    window.location.assign(
-      `/api/auth/github/login?returnTo=${encodeURIComponent(returnTo)}`
-    );
+    window.location.assign(githubLoginHref(`${pathname}${search}${hash}`));
   };
 
   return (

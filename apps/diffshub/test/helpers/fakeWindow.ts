@@ -3,7 +3,13 @@
 // Callers swap it into globalThis.window around each test.
 export function createFakeWindow() {
   const store = new Map<string, string>();
+  const sessionStore = new Map<string, string>();
   const events: Event[] = [];
+  const storageFor = (map: Map<string, string>) => ({
+    getItem: (key: string) => map.get(key) ?? null,
+    removeItem: (key: string) => void map.delete(key),
+    setItem: (key: string, value: string) => void map.set(key, value),
+  });
   return {
     events,
     store,
@@ -12,11 +18,8 @@ export function createFakeWindow() {
         events.push(event);
         return true;
       },
-      localStorage: {
-        getItem: (key: string) => store.get(key) ?? null,
-        removeItem: (key: string) => void store.delete(key),
-        setItem: (key: string, value: string) => void store.set(key, value),
-      },
+      localStorage: storageFor(store),
+      sessionStorage: storageFor(sessionStore),
     } as unknown as Window & typeof globalThis,
   };
 }

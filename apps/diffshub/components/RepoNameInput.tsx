@@ -8,6 +8,7 @@ import {
   type DiffUrlSuggestion,
   loadSuggestions,
 } from './useDiffUrlSuggestions';
+import { useGitHubTokenSnapshot } from './useGitHubToken';
 import { isValidRepoName } from '@/lib/pinnedRepos';
 
 // Free-text "owner/name" input with live GitHub repo-name suggestions,
@@ -24,6 +25,7 @@ export function RepoNameInput({
 }) {
   const [value, setValue] = useState('');
   const [suggestions, setSuggestions] = useState<DiffUrlSuggestion[]>([]);
+  const { version: tokenVersion } = useGitHubTokenSnapshot();
 
   useEffect(() => {
     const query = value.trim();
@@ -41,7 +43,8 @@ export function RepoNameInput({
               kind: 'repos',
               owner: query.slice(0, slash),
               query: query.slice(slash + 1),
-            }
+            },
+        tokenVersion
       ).then((items) => {
         if (!cancelled) {
           setSuggestions(items.slice(0, 5));
@@ -52,7 +55,7 @@ export function RepoNameInput({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [value]);
+  }, [value, tokenVersion]);
 
   const submit = (repo: string) => {
     if (isValidRepoName(repo)) {

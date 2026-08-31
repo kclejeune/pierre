@@ -1,6 +1,7 @@
 'use client';
 
-import { storedGitHubTokenHeaders } from './githubSession';
+import { githubFetch } from './githubSession';
+import { useGitHubTokenSnapshot } from './useGitHubToken';
 import { createCachedLookup } from '@/lib/cachedLookup';
 
 // A user's profile as served by /api/github-user?login=: the display name
@@ -13,14 +14,13 @@ export interface GitHubUserProfile {
   name: string | null;
 }
 
-// Profiles keyed by login so every avatar fallback shares one
-// /api/github-user?login= request per author instead of refetching on each
-// mount. Failed lookups cache as null so a missing profile does not
-// retrigger a request storm.
-const profileByLogin = createCachedLookup(async (login: string) => {
-  const response = await fetch(
-    `/api/github-user?login=${encodeURIComponent(login)}`,
-    { headers: storedGitHubTokenHeaders() }
+// Profiles are scoped to the token generation so an auth failure or account
+// switch cannot pin a lookup from the previous identity.
+const profileByLogin = createCachedLookup(async (key: string) => {
+  // The key is `${tokenVersion}|${login}`; only the login reaches the API.
+  const login = key.slice(key.indexOf('|') + 1);
+  const response = await githubFetch(
+    `/api/github-user?login=${encodeURIComponent(login)}`
   );
   if (!response.ok) {
     return null;
@@ -41,5 +41,8 @@ const profileByLogin = createCachedLookup(async (login: string) => {
 export function useGitHubUserProfile(
   login: string | null
 ): GitHubUserProfile | null {
-  return profileByLogin.useValue(login);
+  const { version: tokenVersion } = useGitHubTokenSnapshot();
+  return profileByLogin.useValue(
+    login == null ? null : `${tokenVersion}|${login}`
+  );
 }

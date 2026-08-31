@@ -19,6 +19,7 @@ import {
   useState,
 } from 'react';
 
+import { reportGitHubAuthFailure } from '@/components/githubSession';
 import { matchesCollapsePattern } from '@/lib/collapsePatterns';
 import { CODE_VIEW_BATCH_COUNT, getInitialBatchSize } from '@/lib/constants';
 import {
@@ -562,14 +563,18 @@ export function usePatchLoader({
           }
         }
 
+        // Foreign-domain diffs go out without the stored GitHub token, so
+        // only the tokened branch may speak for the session on a 401.
+        const sessionToken =
+          domain == null || domain === '' ? getGitHubToken?.() : undefined;
         const response = await fetch(
           `/api/diff?${patchSearchParams}`,
-          createPatchRequestInit(
-            controller.signal,
-            domain == null || domain === '' ? getGitHubToken?.() : undefined
-          )
+          createPatchRequestInit(controller.signal, sessionToken)
         );
 
+        if (sessionToken != null) {
+          void reportGitHubAuthFailure(response, sessionToken);
+        }
         // This only catches route setup errors. GitHub fetch failures are
         // delivered while consuming the stream so the UI can enter the
         // streaming state as soon as the local transport opens.

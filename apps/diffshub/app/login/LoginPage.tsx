@@ -4,26 +4,36 @@ import { useEffect } from 'react';
 
 import { DiffsHubLogo } from '@/components/DiffsHubLogo';
 import { useGitHubEnvironment } from '@/components/GitHubEnvironmentProvider';
+import { consumeReauthIntent } from '@/components/githubSession';
 import { GitHubTokenControl } from '@/components/GitHubTokenControl';
 import { useGitHubToken } from '@/components/useGitHubToken';
-import { sanitizeReturnTo } from '@/lib/githubOAuth';
+import { githubLoginHref, sanitizeReturnTo } from '@/lib/githubOAuth';
 
 // Sign-in page for deployments that require credentials
 // (DIFFSHUB_REQUIRE_LOGIN). RequireLoginGate sends anonymous visitors here
 // with their original destination in ?returnTo; as soon as a token lands in
 // storage — a pasted PAT, or the OAuth round trip returning through the
 // completion page — the effect below sends them back to it.
+//
+// Visitors whose credentials *died* (rather than never existed) arrive with
+// a re-auth stamp (see githubSession) and skip the form entirely when OAuth
+// is configured: they already chose GitHub sign-in once, and with a live
+// GitHub/SSO session the authorize round trip returns without interaction.
 export function LoginPage() {
   const { clearToken, hasToken, setToken } = useGitHubToken();
-  const { patInputEnabled } = useGitHubEnvironment();
+  const { oauthEnabled, patInputEnabled } = useGitHubEnvironment();
 
   useEffect(() => {
-    if (!hasToken) {
+    const url = new URL(window.location.href);
+    const returnTo = sanitizeReturnTo(url.searchParams.get('returnTo'));
+    if (hasToken) {
+      window.location.replace(returnTo);
       return;
     }
-    const url = new URL(window.location.href);
-    window.location.replace(sanitizeReturnTo(url.searchParams.get('returnTo')));
-  }, [hasToken]);
+    if (consumeReauthIntent() && oauthEnabled) {
+      window.location.replace(githubLoginHref(returnTo));
+    }
+  }, [hasToken, oauthEnabled]);
 
   return (
     <main className="flex min-h-[100svh] flex-col items-center justify-center px-6">

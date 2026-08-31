@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-import { storedGitHubTokenHeaders } from './githubSession';
+import { githubFetch } from './githubSession';
 import type { PullBucket, PullSummary } from '@/lib/githubPullSummaries';
 
 export interface DashboardPullsState {
@@ -34,8 +34,7 @@ const pullsCache = new Map<string, Promise<PullsPayload>>();
 function fetchPulls(cacheKey: string, search: string): Promise<PullsPayload> {
   let pending = pullsCache.get(cacheKey);
   if (pending == null) {
-    pending = fetch(`/api/github-pulls?${search}`, {
-      headers: storedGitHubTokenHeaders(),
+    pending = githubFetch(`/api/github-pulls?${search}`, {
       cache: 'no-store',
     })
       .then(async (response) => {

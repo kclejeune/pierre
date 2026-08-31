@@ -1,4 +1,5 @@
 import { type OAuthTokenGrant, parseGrantRecord } from '@/lib/githubOAuthGrant';
+import { parseBearerToken } from '@/lib/parseBearerToken';
 import { type PlainFetch } from '@/lib/plainFetch';
 import { readStoredJSON, writeStoredJSON } from '@/lib/storedJSON';
 import { syncTokenPresenceCookie } from '@/lib/tokenPresenceCookie';
@@ -23,6 +24,16 @@ import { syncTokenPresenceCookie } from '@/lib/tokenPresenceCookie';
 
 const GITHUB_TOKEN_STORAGE_KEY = 'diffshub.github.token';
 const GITHUB_SESSION_STORAGE_KEY = 'diffshub.github.session';
+// Session-scoped marker that the token slot was cleared because credentials
+// died (expired, rejected, or unreadable by the server) rather than by an
+// explicit sign-out. See stampReauthIntent.
+const REAUTH_INTENT_STORAGE_KEY = 'diffshub.github.reauth';
+// When the last automatic OAuth re-run was attempted, enforcing one hop per
+// window: if the previous attempt was moments ago, the credentials it minted
+// are already being rejected — a broken deployment — so the login page falls
+// back to its form instead of bouncing against GitHub forever.
+const REAUTH_ATTEMPT_STORAGE_KEY = 'diffshub.github.reauth-attempt';
+const REAUTH_ATTEMPT_WINDOW_MS = 60_000;
 
 // Fired on window after every storage write. The native `storage` event only
 // reaches *other* tabs; this covers the same one.
@@ -51,7 +62,7 @@ export function readStoredGitHubToken(): string {
 // The stored token as request headers: a Bearer Authorization header when a
 // token is saved, empty otherwise. The single client-side spelling of
 // "attach my token if I have one".
-export function storedGitHubTokenHeaders(): HeadersInit {
+export function storedGitHubTokenHeaders(): Record<string, string> {
   const token = readStoredGitHubToken();
   return token === '' ? {} : { Authorization: `Bearer ${token}` };
 }
@@ -121,6 +132,144 @@ function writeStorage(
   globalThis.window?.dispatchEvent(new Event(GITHUB_TOKEN_CHANGE_EVENT));
 }
 
+// --- Re-authentication intent ----------------------------------------------
+
+// Distinguishes "credentials died out from under the viewer" from "no
+// credentials were ever saved" across the redirect to /login: the login page
+// consumes the stamp and, when OAuth is available, skips the form and re-runs
+// the GitHub flow directly — the viewer already chose their sign-in method,
+// so a dead session should heal with one round trip, not a form.
+export function stampReauthIntent(): void {
+  try {
+    globalThis.window?.sessionStorage.setItem(REAUTH_INTENT_STORAGE_KEY, '1');
+  } catch {
+    // Without sessionStorage the login page simply shows its normal form.
+  }
+}
+
+// The login page's one question: did credentials just die, and may an
+// automatic re-auth hop run? Consuming clears the intent and records the
+// attempt, so the one-hop-per-window loop guard lives with the stamp rather
+// than in the page.
+export function consumeReauthIntent(now: number = Date.now()): boolean {
+  try {
+    const storage = globalThis.window?.sessionStorage;
+    if (storage?.getItem(REAUTH_INTENT_STORAGE_KEY) == null) {
+      return false;
+    }
+    storage.removeItem(REAUTH_INTENT_STORAGE_KEY);
+    // Number(null) is 0, so a missing attempt stamp compares as ancient.
+    if (
+      now - Number(storage.getItem(REAUTH_ATTEMPT_STORAGE_KEY)) <
+      REAUTH_ATTEMPT_WINDOW_MS
+    ) {
+      return false;
+    }
+    storage.setItem(REAUTH_ATTEMPT_STORAGE_KEY, String(now));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Sign-out for dead credentials: the emptied slot is what RequireLoginGate
+// watches, so on require-login deployments this *is* the redirect to sign-in,
+// and the stamp upgrades that redirect to the automatic OAuth re-run.
+function clearGitHubTokenForReauth(
+  expectedToken: string,
+  expectedRefreshToken?: string
+): boolean {
+  if (
+    readStoredGitHubToken() !== expectedToken ||
+    (expectedRefreshToken != null &&
+      readStoredGitHubSession()?.refreshToken !== expectedRefreshToken)
+  ) {
+    return false;
+  }
+  stampReauthIntent();
+  saveGitHubTokenToStorage('');
+  return true;
+}
+
+// Entry point for data loaders that saw a 401 with a credential attached.
+// Refreshable sessions get a forced refresh: a merely-stale access token
+// heals silently, and the refresh path below clears the slot itself when
+// GitHub rejects the whole session. Anything else is unrecoverable
+// client-side, so the credential is dropped with re-auth intent. Resolves
+// the replacement token an idempotent request may retry with, or null when
+// there is none.
+export async function reportGitHubAuthFailure(
+  response: { status: number },
+  attemptedToken: string,
+  fetcher: PlainFetch = fetch
+): Promise<string | null> {
+  if (response.status !== 401 || attemptedToken === '') {
+    return null;
+  }
+  const currentToken = readStoredGitHubToken();
+  if (currentToken !== attemptedToken) {
+    // The response belongs to an older credential. It must not mutate the
+    // replacement, but idempotent callers may retry with the current token.
+    return currentToken === '' ? null : currentToken;
+  }
+  const session = readStoredGitHubSession();
+  if (session?.refreshToken != null) {
+    await refreshGitHubSessionIfNeeded(
+      fetcher,
+      true,
+      attemptedToken,
+      session.refreshToken
+    );
+    const refreshedToken = readStoredGitHubToken();
+    return refreshedToken !== '' && refreshedToken !== attemptedToken
+      ? refreshedToken
+      : null;
+  }
+  clearGitHubTokenForReauth(attemptedToken);
+  return null;
+}
+
+// The response-side sibling of storedGitHubTokenHeaders: one spelling of
+// "call a DiffsHub API with my token and let the session react if it is
+// dead". Explicit headers win over the attached token, and every response
+// passes through reportGitHubAuthFailure before the caller sees it.
+export async function githubFetch(
+  input: string,
+  init?: RequestInit,
+  fetcher: PlainFetch = fetch
+): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  if (!headers.has('authorization')) {
+    const storedAuthorization = storedGitHubTokenHeaders().Authorization;
+    if (storedAuthorization != null) {
+      headers.set('authorization', storedAuthorization);
+    }
+  }
+  const attemptedToken = parseBearerToken(headers.get('authorization')) ?? '';
+  const response = await fetcher(input, {
+    ...init,
+    headers,
+  });
+  const retryToken = await reportGitHubAuthFailure(
+    response,
+    attemptedToken,
+    fetcher
+  );
+  const method = init?.method?.toUpperCase() ?? 'GET';
+  if (retryToken == null || (method !== 'GET' && method !== 'HEAD')) {
+    return response;
+  }
+
+  const retryHeaders = new Headers(headers);
+  retryHeaders.set('authorization', `Bearer ${retryToken}`);
+  const retryResponse = await fetcher(input, {
+    ...init,
+    headers: retryHeaders,
+  });
+  await reportGitHubAuthFailure(retryResponse, retryToken, fetcher);
+  return retryResponse;
+}
+
 // --- External store for React ---------------------------------------------
 
 export interface GitHubTokenSnapshot {
@@ -180,7 +329,13 @@ export type GitHubSessionRefreshOutcome =
   // the next check tries again.
   | 'failed';
 
-let inflightRefresh: Promise<GitHubSessionRefreshOutcome> | undefined;
+interface InflightRefresh {
+  forced: boolean;
+  promise: Promise<GitHubSessionRefreshOutcome>;
+}
+
+const inflightRefreshByCredential = new Map<string, InflightRefresh>();
+const GITHUB_REFRESH_LOCK_NAME = 'diffshub.github.refresh';
 
 // Whether the stored token is already past its expiry (not merely near it).
 // False when the session carries no expiry.
@@ -204,24 +359,77 @@ export function nextGitHubRefreshDueAt(): number | undefined {
     : session.expiresAt - REFRESH_LEAD_MS;
 }
 
-// Refreshes the stored access token when it is about to expire. Single-flight:
-// concurrent callers share one request, since GitHub rotates the refresh
-// token and a second exchange with the same one would be rejected.
+// Refreshes the stored access token when it is about to expire — or
+// immediately with `force`, for callers who just saw the current token
+// rejected regardless of its expected lifetime. Single-flight: concurrent
+// callers share one request, since GitHub rotates the refresh token and a
+// second exchange with the same one would be rejected.
 export function refreshGitHubSessionIfNeeded(
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = fetch,
+  force = false,
+  expectedToken: string = readStoredGitHubToken(),
+  expectedRefreshToken: string | undefined = readStoredGitHubSession()
+    ?.refreshToken
 ): Promise<GitHubSessionRefreshOutcome> {
-  inflightRefresh ??= runRefresh(fetcher).finally(() => {
-    inflightRefresh = undefined;
+  const refreshKey = JSON.stringify([expectedToken, expectedRefreshToken]);
+  const existing = inflightRefreshByCredential.get(refreshKey);
+  if (existing != null) {
+    if (!force || existing.forced) {
+      return existing.promise;
+    }
+    // A 401-triggered refresh may arrive while a proactive check is waiting
+    // for the cross-tab lock. If that check later decides the credential is
+    // still fresh, follow it with the forced exchange the 401 requires. When
+    // it actually refreshed (or failed trying), sharing its outcome is enough.
+    return existing.promise.then((outcome) =>
+      outcome === 'fresh' &&
+      sessionGenerationStillMatches(expectedToken, expectedRefreshToken)
+        ? refreshGitHubSessionIfNeeded(
+            fetcher,
+            true,
+            expectedToken,
+            expectedRefreshToken
+          )
+        : outcome
+    );
+  }
+  const pending = withCrossTabRefreshLock(() =>
+    runRefresh(fetcher, force, expectedToken, expectedRefreshToken)
+  ).finally(() => {
+    // The entry blocks re-registration of this key until it is deleted here,
+    // so it can only ever hold this promise.
+    inflightRefreshByCredential.delete(refreshKey);
   });
-  return inflightRefresh;
+  inflightRefreshByCredential.set(refreshKey, {
+    forced: force,
+    promise: pending,
+  });
+  return pending;
+}
+
+function withCrossTabRefreshLock<T>(operation: () => Promise<T>): Promise<T> {
+  const locks = globalThis.navigator?.locks;
+  return locks == null
+    ? operation()
+    : locks.request(GITHUB_REFRESH_LOCK_NAME, operation);
 }
 
 async function runRefresh(
-  fetcher: PlainFetch
+  fetcher: PlainFetch,
+  force: boolean,
+  expectedToken: string,
+  expectedRefreshToken: string | undefined
 ): Promise<GitHubSessionRefreshOutcome> {
+  const storedToken = readStoredGitHubToken();
   const session = readStoredGitHubSession();
-  if (readStoredGitHubToken() === '' || session == null) {
+  if (storedToken === '' || session == null) {
     return 'none';
+  }
+  if (
+    storedToken !== expectedToken ||
+    session.refreshToken !== expectedRefreshToken
+  ) {
+    return 'fresh';
   }
   const now = Date.now();
   if (session.refreshToken == null) {
@@ -231,18 +439,22 @@ async function runRefresh(
     if (session.expiresAt == null || session.expiresAt > now) {
       return 'none';
     }
-    saveGitHubTokenToStorage('');
-    return 'signed-out';
+    return clearGitHubTokenForReauth(expectedToken) ? 'signed-out' : 'fresh';
   }
-  if (session.expiresAt != null && session.expiresAt - now > REFRESH_LEAD_MS) {
+  if (
+    !force &&
+    session.expiresAt != null &&
+    session.expiresAt - now > REFRESH_LEAD_MS
+  ) {
     return 'fresh';
   }
   if (
     session.refreshTokenExpiresAt != null &&
     session.refreshTokenExpiresAt <= now
   ) {
-    saveGitHubTokenToStorage('');
-    return 'signed-out';
+    return clearGitHubTokenForReauth(expectedToken, session.refreshToken)
+      ? 'signed-out'
+      : 'fresh';
   }
 
   let response: Response;
@@ -258,8 +470,9 @@ async function runRefresh(
   }
 
   if (response.status === 401) {
-    saveGitHubTokenToStorage('');
-    return 'signed-out';
+    return clearGitHubTokenForReauth(expectedToken, session.refreshToken)
+      ? 'signed-out'
+      : 'fresh';
   }
   if (!response.ok) {
     return 'failed';
@@ -278,6 +491,19 @@ async function runRefresh(
   if (grant == null) {
     return 'failed';
   }
+  if (!sessionGenerationStillMatches(expectedToken, session.refreshToken)) {
+    return 'fresh';
+  }
   saveGitHubGrantToStorage(grant);
   return 'refreshed';
+}
+
+function sessionGenerationStillMatches(
+  accessToken: string,
+  refreshToken: string | undefined
+): boolean {
+  return (
+    readStoredGitHubToken() === accessToken &&
+    readStoredGitHubSession()?.refreshToken === refreshToken
+  );
 }

@@ -1,5 +1,6 @@
 'use client';
 
+import { githubFetch } from './githubSession';
 import { useGitHubToken } from './useGitHubToken';
 import { createCachedLookup } from '@/lib/cachedLookup';
 import type { CommentAuthor } from '@/lib/types';
@@ -9,7 +10,7 @@ import type { CommentAuthor } from '@/lib/types';
 // mount. Failed lookups cache as null so a bad token does not retrigger a
 // request storm; changing the token naturally retries under the new key.
 const gitHubUserByToken = createCachedLookup((token: string) =>
-  fetch('/api/github-user', {
+  githubFetch('/api/github-user', {
     headers: { Authorization: `Bearer ${token}` },
   }).then((response) =>
     response.ok ? (response.json() as Promise<CommentAuthor>) : null

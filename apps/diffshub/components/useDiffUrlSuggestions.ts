@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 
-import { storedGitHubTokenHeaders } from './githubSession';
+import { githubFetch } from './githubSession';
+import { useGitHubTokenSnapshot } from './useGitHubToken';
 import {
   deriveSuggestQuery,
   filterPullSuggestions,
@@ -17,20 +18,27 @@ export interface DiffUrlSuggestion {
   fill: string;
 }
 
-// Suggestion payloads keyed by query so repeated keystrokes reuse in-flight
-// or completed lookups; a failed load caches as null until the page reloads.
+// Suggestion payloads keyed by token generation and query so repeated
+// keystrokes reuse lookups without carrying results across identities.
 const suggestCache = new Map<string, Promise<unknown>>();
 
 // Fetches /api/github-suggest with the given params, deduped through
 // suggestCache. Resolves the parsed JSON payload, or null on any failure.
-function fetchSuggestPayload(params: Record<string, string>): Promise<unknown> {
+function fetchSuggestPayload(
+  params: Record<string, string>,
+  tokenVersion: number
+): Promise<unknown> {
   const search = new URLSearchParams(params);
-  const cacheKey = search.toString();
+  const cacheKey = `${tokenVersion}|${search}`;
   let pending = suggestCache.get(cacheKey);
   if (pending == null) {
-    pending = fetch(`/api/github-suggest?${search}`, {
-      headers: storedGitHubTokenHeaders(),
-    })
+    // Entries from previous token generations can never be read again.
+    for (const key of suggestCache.keys()) {
+      if (!key.startsWith(`${tokenVersion}|`)) {
+        suggestCache.delete(key);
+      }
+    }
+    pending = githubFetch(`/api/github-suggest?${search}`)
       .then((response) => (response.ok ? response.json() : null))
       .catch(() => null);
     suggestCache.set(cacheKey, pending);
@@ -41,14 +49,18 @@ function fetchSuggestPayload(params: Record<string, string>): Promise<unknown> {
 // Exported for the command palette, which shares the URL bar's progressive
 // repo → pull-request suggestion flow (and its request cache).
 export async function loadSuggestions(
-  query: SuggestQuery
+  query: SuggestQuery,
+  tokenVersion: number
 ): Promise<DiffUrlSuggestion[]> {
   if (query.kind === 'repos') {
-    const payload = (await fetchSuggestPayload({
-      kind: 'repos',
-      owner: query.owner ?? '',
-      q: query.query,
-    })) as { repos?: string[] } | null;
+    const payload = (await fetchSuggestPayload(
+      {
+        kind: 'repos',
+        owner: query.owner ?? '',
+        q: query.query,
+      },
+      tokenVersion
+    )) as { repos?: string[] } | null;
     return (payload?.repos ?? []).map((fullName) => ({
       key: `repo:${fullName}`,
       label: fullName,
@@ -58,11 +70,14 @@ export async function loadSuggestions(
     }));
   }
 
-  const payload = (await fetchSuggestPayload({
-    kind: 'pulls',
-    owner: query.owner,
-    repo: query.repo,
-  })) as { pulls?: PullSuggestion[] } | null;
+  const payload = (await fetchSuggestPayload(
+    {
+      kind: 'pulls',
+      owner: query.owner,
+      repo: query.repo,
+    },
+    tokenVersion
+  )) as { pulls?: PullSuggestion[] } | null;
   const pulls = filterPullSuggestions(payload?.pulls ?? [], query.filter);
   return pulls.slice(0, 8).map((pull) => ({
     key: `pull:${pull.number}`,
@@ -77,6 +92,7 @@ export async function loadSuggestions(
 // debounced; PR filtering reuses the cached list per repo.
 export function useDiffUrlSuggestions(input: string): DiffUrlSuggestion[] {
   const [suggestions, setSuggestions] = useState<DiffUrlSuggestion[]>([]);
+  const { version: tokenVersion } = useGitHubTokenSnapshot();
 
   useEffect(() => {
     const query = deriveSuggestQuery(input);
@@ -87,7 +103,7 @@ export function useDiffUrlSuggestions(input: string): DiffUrlSuggestion[] {
     let cancelled = false;
     const timer = setTimeout(
       () => {
-        void loadSuggestions(query).then((items) => {
+        void loadSuggestions(query, tokenVersion).then((items) => {
           if (!cancelled) {
             setSuggestions(items);
           }
@@ -99,7 +115,7 @@ export function useDiffUrlSuggestions(input: string): DiffUrlSuggestion[] {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [input]);
+  }, [input, tokenVersion]);
 
   return suggestions;
 }

@@ -2,13 +2,16 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { createFakeWindow } from './helpers/fakeWindow';
 import {
+  consumeReauthIntent,
   getGitHubTokenSnapshot,
   GITHUB_TOKEN_CHANGE_EVENT,
+  githubFetch,
   isStoredGitHubTokenExpired,
   nextGitHubRefreshDueAt,
   readStoredGitHubSession,
   readStoredGitHubToken,
   refreshGitHubSessionIfNeeded,
+  reportGitHubAuthFailure,
   saveGitHubGrantToStorage,
   saveGitHubTokenToStorage,
 } from '@/components/githubSession';
@@ -46,6 +49,20 @@ function refreshFetcher(response: () => Response): {
     return Promise.resolve(response());
   };
   return { calls, fetcher };
+}
+
+// A fetch stub that stays pending until the test answers it, for exercising
+// what happens when storage changes while a refresh is in flight.
+function deferredFetcher(): {
+  answer: (response: Response) => void;
+  fetcher: PlainFetch;
+} {
+  let answer: (response: Response) => void = () => undefined;
+  const fetcher: PlainFetch = () =>
+    new Promise<Response>((resolve) => {
+      answer = resolve;
+    });
+  return { answer: (response) => answer(response), fetcher };
 }
 
 describe('token and session storage', () => {
@@ -163,6 +180,53 @@ describe('refreshGitHubSessionIfNeeded', () => {
     expect(calls).toHaveLength(1);
   });
 
+  test('a forced refresh follows a queued proactive check that does no work', async () => {
+    saveGitHubGrantToStorage(EXPIRING_GRANT, Date.now());
+    const { calls, fetcher } = refreshFetcher(() =>
+      Response.json({ access_token: 'ghu_next', refresh_token: 'ghr_next' })
+    );
+    const originalNavigator = Object.getOwnPropertyDescriptor(
+      globalThis,
+      'navigator'
+    );
+    let releaseFirstLock = () => undefined;
+    let lockRequests = 0;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        locks: {
+          request<T>(_name: string, operation: () => Promise<T>): Promise<T> {
+            lockRequests += 1;
+            if (lockRequests > 1) {
+              return operation();
+            }
+            return new Promise<T>((resolve, reject) => {
+              releaseFirstLock = () => {
+                void operation().then(resolve, reject);
+              };
+            });
+          },
+        },
+      },
+    });
+
+    try {
+      const proactive = refreshGitHubSessionIfNeeded(fetcher);
+      const forced = refreshGitHubSessionIfNeeded(fetcher, true);
+      expect(calls).toHaveLength(0);
+      releaseFirstLock();
+      expect(await proactive).toBe('fresh');
+      expect(await forced).toBe('refreshed');
+      expect(calls).toHaveLength(1);
+    } finally {
+      if (originalNavigator == null) {
+        Reflect.deleteProperty(globalThis, 'navigator');
+      } else {
+        Object.defineProperty(globalThis, 'navigator', originalNavigator);
+      }
+    }
+  });
+
   test('signs out when the refresh token is rejected', async () => {
     saveGitHubGrantToStorage(EXPIRING_GRANT, Date.now() - 8 * HOUR_MS);
     const { fetcher } = refreshFetcher(
@@ -229,5 +293,160 @@ describe('refreshGitHubSessionIfNeeded', () => {
     const thrower: PlainFetch = () => Promise.reject(new Error('offline'));
     expect(await refreshGitHubSessionIfNeeded(thrower)).toBe('failed');
     expect(readStoredGitHubToken()).toBe('ghu_access');
+  });
+});
+
+describe('re-auth intent and auth-failure reporting', () => {
+  const GRANT_RESPONSE = Response.json({
+    access_token: 'ghu_next',
+    expires_in: 8 * 3600,
+    refresh_token: 'ghr_next',
+    refresh_token_expires_in: 183 * 24 * 3600,
+  });
+
+  test('a rejected refresh stamps re-auth intent alongside the sign-out', async () => {
+    saveGitHubGrantToStorage(EXPIRING_GRANT, Date.now() - 9 * HOUR_MS);
+    const { fetcher } = refreshFetcher(
+      () => new Response('{}', { status: 401 })
+    );
+    expect(await refreshGitHubSessionIfNeeded(fetcher)).toBe('signed-out');
+    expect(readStoredGitHubToken()).toBe('');
+    expect(consumeReauthIntent()).toBe(true);
+    // The stamp is consumed exactly once.
+    expect(consumeReauthIntent()).toBe(false);
+  });
+
+  test('force refreshes a token that is nowhere near expiring', async () => {
+    saveGitHubGrantToStorage(EXPIRING_GRANT, Date.now());
+    const { calls, fetcher } = refreshFetcher(() => GRANT_RESPONSE.clone());
+    expect(await refreshGitHubSessionIfNeeded(fetcher)).toBe('fresh');
+    expect(calls.length).toBe(0);
+    expect(await refreshGitHubSessionIfNeeded(fetcher, true)).toBe('refreshed');
+    expect(calls.length).toBe(1);
+    expect(readStoredGitHubToken()).toBe('ghu_next');
+  });
+
+  test('a 401 with a refreshable session forces a refresh instead of signing out', async () => {
+    saveGitHubGrantToStorage(EXPIRING_GRANT, Date.now());
+    const { calls, fetcher } = refreshFetcher(() => GRANT_RESPONSE.clone());
+    await reportGitHubAuthFailure({ status: 401 }, 'ghu_access', fetcher);
+    expect(calls.length).toBe(1);
+    expect(consumeReauthIntent()).toBe(false);
+
+    // A straggler tied to the old token cannot rotate the replacement again.
+    await reportGitHubAuthFailure({ status: 401 }, 'ghu_access', fetcher);
+    expect(calls.length).toBe(1);
+  });
+
+  test('a 401 with an unrefreshable credential signs out with re-auth intent', async () => {
+    saveGitHubTokenToStorage('ghp_revoked_pat');
+    await reportGitHubAuthFailure({ status: 401 }, 'ghp_revoked_pat');
+    expect(readStoredGitHubToken()).toBe('');
+    expect(consumeReauthIntent()).toBe(true);
+  });
+
+  test('a stale 401 cannot clear a replacement credential', async () => {
+    saveGitHubTokenToStorage('ghp_old');
+    saveGitHubTokenToStorage('ghp_replacement');
+    expect(await reportGitHubAuthFailure({ status: 401 }, 'ghp_old')).toBe(
+      'ghp_replacement'
+    );
+    expect(readStoredGitHubToken()).toBe('ghp_replacement');
+    expect(consumeReauthIntent()).toBe(false);
+  });
+
+  test('a late refresh response cannot overwrite a replacement credential', async () => {
+    saveGitHubGrantToStorage(EXPIRING_GRANT, Date.now());
+    const { answer, fetcher } = deferredFetcher();
+    const refresh = refreshGitHubSessionIfNeeded(fetcher, true, 'ghu_access');
+    await Promise.resolve();
+    saveGitHubTokenToStorage('ghp_replacement');
+    answer(GRANT_RESPONSE.clone());
+
+    expect(await refresh).toBe('fresh');
+    expect(readStoredGitHubToken()).toBe('ghp_replacement');
+  });
+
+  test('a late rejected refresh cannot clear a session rotated elsewhere', async () => {
+    saveGitHubGrantToStorage(EXPIRING_GRANT, Date.now());
+    const { answer, fetcher } = deferredFetcher();
+    const refresh = refreshGitHubSessionIfNeeded(fetcher, true, 'ghu_access');
+    await Promise.resolve();
+    saveGitHubGrantToStorage({
+      // The refresh token is the generation marker even if an upstream ever
+      // reuses the access-token string.
+      accessToken: 'ghu_access',
+      refreshToken: 'ghr_rotated',
+    });
+    answer(new Response('{}', { status: 401 }));
+
+    expect(await refresh).toBe('fresh');
+    expect(readStoredGitHubToken()).toBe('ghu_access');
+    expect(readStoredGitHubSession()?.refreshToken).toBe('ghr_rotated');
+  });
+
+  test('githubFetch refreshes and retries an authenticated GET once', async () => {
+    saveGitHubGrantToStorage(EXPIRING_GRANT, Date.now());
+    const calls: Array<{ authorization: string | null; url: string }> = [];
+    let firstResourceAttempt = true;
+    const fetcher: PlainFetch = (input, init) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      calls.push({
+        authorization: new Headers(init?.headers).get('authorization'),
+        url,
+      });
+      if (url === '/api/auth/github/refresh') {
+        return Promise.resolve(GRANT_RESPONSE.clone());
+      }
+      if (firstResourceAttempt) {
+        firstResourceAttempt = false;
+        return Promise.resolve(new Response('{}', { status: 401 }));
+      }
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+
+    const response = await githubFetch(
+      '/resource',
+      { headers: { authorization: 'Bearer ghu_access' } },
+      fetcher
+    );
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([
+      { authorization: 'Bearer ghu_access', url: '/resource' },
+      { authorization: null, url: '/api/auth/github/refresh' },
+      { authorization: 'Bearer ghu_next', url: '/resource' },
+    ]);
+  });
+
+  // Consuming enforces the one-automatic-hop window itself, so a second
+  // credential death moments after an auto-forward falls back to the form.
+  test('consumption enforces the auto-reauth window', async () => {
+    const start = 1_000_000_000;
+    saveGitHubTokenToStorage('ghp_dead');
+    await reportGitHubAuthFailure({ status: 401 }, 'ghp_dead');
+    expect(consumeReauthIntent(start)).toBe(true);
+
+    saveGitHubTokenToStorage('ghp_dead_again');
+    await reportGitHubAuthFailure({ status: 401 }, 'ghp_dead_again');
+    expect(consumeReauthIntent(start + 30_000)).toBe(false);
+
+    saveGitHubTokenToStorage('ghp_dead_later');
+    await reportGitHubAuthFailure({ status: 401 }, 'ghp_dead_later');
+    expect(consumeReauthIntent(start + 90_000)).toBe(true);
+  });
+
+  test('ignores non-401 responses and tokenless 401s', async () => {
+    saveGitHubTokenToStorage('ghp_pat');
+    await reportGitHubAuthFailure({ status: 403 }, 'ghp_pat');
+    expect(readStoredGitHubToken()).toBe('ghp_pat');
+
+    saveGitHubTokenToStorage('');
+    await reportGitHubAuthFailure({ status: 401 }, '');
+    expect(consumeReauthIntent()).toBe(false);
   });
 });

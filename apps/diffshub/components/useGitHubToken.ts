@@ -26,6 +26,18 @@ export interface GitHubTokenState {
   tokenVersion: number;
 }
 
+// Passive subscription to the stored token slot: re-renders on every token
+// change and nothing else. Prefer this over useGitHubToken for consumers that
+// only read — the full hook kicks off a session refresh check per mount,
+// which is wasted work at avatar scale.
+export function useGitHubTokenSnapshot() {
+  return useSyncExternalStore(
+    subscribeToGitHubToken,
+    getGitHubTokenSnapshot,
+    getServerGitHubTokenSnapshot
+  );
+}
+
 // React view of the stored GitHub token (see githubSession.ts). The token is
 // persisted only in localStorage for this browser and is not sent anywhere
 // until the loader explicitly reads it. useSyncExternalStore renders the
@@ -35,11 +47,7 @@ export interface GitHubTokenState {
 // GitHubSessionRefresher, cleared in another tab, or pasted elsewhere on the
 // page reaches all of them without each keeping its own copy.
 export function useGitHubToken(): GitHubTokenState {
-  const { token, version } = useSyncExternalStore(
-    subscribeToGitHubToken,
-    getGitHubTokenSnapshot,
-    getServerGitHubTokenSnapshot
-  );
+  const { token, version } = useGitHubTokenSnapshot();
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {

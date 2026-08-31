@@ -3,15 +3,28 @@
 import { type ImgHTMLAttributes, useEffect, useState } from 'react';
 
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
-import { readStoredGitHubToken } from './githubSession';
+import { githubFetch } from './githubSession';
+import { useGitHubTokenSnapshot } from './useGitHubToken';
 
-// Object URLs keyed by proxy src so repeated renders of the same asset (the
-// same author's avatar on every comment, re-mounts under virtualization)
-// share one authorized fetch and one blob. Entries live for the page's
-// lifetime — the set of distinct assets on a diff is small, so the object
-// URLs are intentionally never revoked. A failed fetch removes its entry and
-// resolves to the plain proxy URL so a public asset still renders anonymously.
+// Object URLs keyed by token generation and proxy src so repeated renders
+// share one authorized fetch without carrying private blobs across identities.
 const objectURLBySrc = new Map<string, Promise<string>>();
+
+// Drops cache entries from previous token generations and releases their
+// object URLs — without this, every sign-in/sign-out cycle would orphan a
+// full generation of blobs for the lifetime of the page.
+function evictStaleGenerations(tokenVersion: number): void {
+  for (const [key, stale] of objectURLBySrc) {
+    if (!key.startsWith(`${tokenVersion}|`)) {
+      objectURLBySrc.delete(key);
+      void stale.then((url) => {
+        if (url.startsWith('blob:')) {
+          URL.revokeObjectURL(url);
+        }
+      });
+    }
+  }
+}
 
 // A data: URI that is not a decodable image: assigning it to <img src> fires
 // the element's native error event without issuing a network request. Stands
@@ -20,14 +33,22 @@ const objectURLBySrc = new Map<string, Promise<string>>();
 // the console before reaching the same onError.
 const UNLOADABLE_ASSET_SRC = 'data:,';
 
-function resolveAssetSrc(src: string, requireLogin: boolean): Promise<string> {
-  const token = readStoredGitHubToken();
+function resolveAssetSrc(
+  src: string,
+  token: string,
+  tokenVersion: number,
+  requireLogin: boolean
+): Promise<string> {
   if (token === '') {
     return Promise.resolve(requireLogin ? UNLOADABLE_ASSET_SRC : src);
   }
-  let pending = objectURLBySrc.get(src);
+  const cacheKey = `${tokenVersion}|${src}`;
+  let pending = objectURLBySrc.get(cacheKey);
   if (pending == null) {
-    pending = fetch(src, { headers: { Authorization: `Bearer ${token}` } })
+    evictStaleGenerations(tokenVersion);
+    pending = githubFetch(src, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(`Asset request failed: ${response.status}`);
@@ -35,10 +56,10 @@ function resolveAssetSrc(src: string, requireLogin: boolean): Promise<string> {
         return URL.createObjectURL(await response.blob());
       })
       .catch(() => {
-        objectURLBySrc.delete(src);
+        objectURLBySrc.delete(cacheKey);
         return requireLogin ? UNLOADABLE_ASSET_SRC : src;
       });
-    objectURLBySrc.set(src, pending);
+    objectURLBySrc.set(cacheKey, pending);
   }
   return pending;
 }
@@ -59,19 +80,22 @@ export function GitHubAssetImage({
   ...rest
 }: ImgHTMLAttributes<HTMLImageElement> & { src: string }) {
   const { requireLogin } = useGitHubEnvironment();
+  const { token, version: tokenVersion } = useGitHubTokenSnapshot();
   const [resolvedSrc, setResolvedSrc] = useState<string>();
 
   useEffect(() => {
     let cancelled = false;
-    void resolveAssetSrc(src, requireLogin).then((resolved) => {
-      if (!cancelled) {
-        setResolvedSrc(resolved);
+    void resolveAssetSrc(src, token, tokenVersion, requireLogin).then(
+      (resolved) => {
+        if (!cancelled) {
+          setResolvedSrc(resolved);
+        }
       }
-    });
+    );
     return () => {
       cancelled = true;
     };
-  }, [src, requireLogin]);
+  }, [src, token, tokenVersion, requireLogin]);
 
   return <img {...rest} alt={alt ?? ''} loading="lazy" src={resolvedSrc} />;
 }

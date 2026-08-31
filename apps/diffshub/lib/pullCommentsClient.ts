@@ -6,6 +6,8 @@ import type {
   PullDiscussionComment,
   PullReviewComment,
 } from './types';
+import { reportGitHubAuthFailure } from '@/components/githubSession';
+import { parseBearerToken } from '@/lib/parseBearerToken';
 
 // Identifies the pull request a viewer route displays, for review-comment
 // API calls.
@@ -278,6 +280,10 @@ export async function requestJSON(
   } catch {
     throw new Error('Could not reach the DiffsHub server.');
   }
+  void reportGitHubAuthFailure(
+    response,
+    parseBearerToken(new Headers(init.headers).get('authorization')) ?? ''
+  );
   let payload: unknown = null;
   try {
     payload = await response.json();

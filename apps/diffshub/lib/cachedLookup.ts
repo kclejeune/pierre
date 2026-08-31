@@ -34,8 +34,11 @@ export function createCachedLookup<K, V>(
   }
 
   function useValue(key: K | null): V | null {
-    const [value, setValue] = useState<V | null>(() =>
-      key == null ? null : (resolvedByKey.get(key) ?? null)
+    const [resolved, setResolved] = useState<{
+      key: K;
+      value: V | null;
+    } | null>(() =>
+      key == null ? null : { key, value: resolvedByKey.get(key) ?? null }
     );
 
     useEffect(() => {
@@ -43,9 +46,9 @@ export function createCachedLookup<K, V>(
         return;
       }
       let cancelled = false;
-      void load(key).then((resolvedValue) => {
+      void load(key).then((value) => {
         if (!cancelled) {
-          setValue(resolvedValue);
+          setResolved({ key, value });
         }
       });
       return () => {
@@ -53,7 +56,15 @@ export function createCachedLookup<K, V>(
       };
     }, [key]);
 
-    return key == null ? null : value;
+    if (key == null) {
+      return null;
+    }
+    // A key can change before its effect runs. Never expose the previous
+    // key's value during that render; use a synchronously cached result for
+    // the new key when one exists, otherwise return the unresolved sentinel.
+    return resolved != null && Object.is(resolved.key, key)
+      ? resolved.value
+      : (resolvedByKey.get(key) ?? null);
   }
 
   return { load, useValue };

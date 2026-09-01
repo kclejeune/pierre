@@ -49,16 +49,17 @@ export function matchGitHubWebAsset(src: string, webURL: string): URL | null {
 //
 // GHES serves /avatars/ to browser session cookies only: a PAT gets a 302 to
 // /login regardless of how it is presented (Bearer, token, Basic, query
-// param). The same bytes are available to a Bearer token under the REST API
-// at <apiURL>/enterprise/avatars/, which also honors the ?s= size param and
-// returns a generated identicon for users with no uploaded image. Avatars on
-// dotcom come from avatars.githubusercontent.com, which never reaches this
-// proxy (different origin), so the redirect applies to GHES only.
+// param). Its private-mode-safe avatar API is the email lookup endpoint at
+// <apiURL>/enterprise/avatars/u/e, not a path-preserving
+// /enterprise/avatars/u/<id> route. GitHub recognizes its generated no-reply
+// address, so the numeric id from /avatars/u/<id> plus the author's login is
+// enough to use that endpoint without exposing the user's real email.
 //
 // Everything else — user-attachment images — is fetched at its original URL.
 export function resolveGitHubWebAssetUpstreamURL(
   assetURL: URL,
-  environment: Pick<GitHubEnvironment, 'apiURL' | 'isGitHubDotCom'>
+  environment: Pick<GitHubEnvironment, 'apiURL' | 'isGitHubDotCom' | 'webURL'>,
+  avatarLogin?: string
 ): string {
   if (
     environment.isGitHubDotCom ||
@@ -66,16 +67,36 @@ export function resolveGitHubWebAssetUpstreamURL(
   ) {
     return assetURL.toString();
   }
-  return `${environment.apiURL}/enterprise${assetURL.pathname}${assetURL.search}`;
+
+  const userID = /^\/avatars\/u\/(\d+)$/.exec(assetURL.pathname)?.[1];
+  if (userID == null || avatarLogin == null || avatarLogin === '') {
+    return assetURL.toString();
+  }
+
+  const upstream = new URL(`${environment.apiURL}/enterprise/avatars/u/e`);
+  upstream.searchParams.set(
+    'email',
+    `${userID}+${avatarLogin}@users.noreply.${new URL(environment.webURL).hostname}`
+  );
+  const size = assetURL.searchParams.get('s');
+  if (size != null) {
+    upstream.searchParams.set('s', size);
+  }
+  return upstream.toString();
 }
 
 export function createGitHubWebAssetProxyURL(
   src: string,
-  webURL: string
+  webURL: string,
+  avatarLogin?: string
 ): string | null {
   const url = matchGitHubWebAsset(src, webURL);
   if (url == null) {
     return null;
   }
-  return `/api/github-web-asset?${new URLSearchParams({ url: url.toString() })}`;
+  const search = new URLSearchParams({ url: url.toString() });
+  if (avatarLogin != null && avatarLogin !== '') {
+    search.set('login', avatarLogin);
+  }
+  return `/api/github-web-asset?${search}`;
 }

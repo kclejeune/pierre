@@ -125,7 +125,7 @@ export function CommentAuthorAvatar({
     );
   }
 
-  const proxied = createGitHubWebAssetProxyURL(src, webURL);
+  const proxied = createGitHubWebAssetProxyURL(src, webURL, author.login);
   const imageProps = {
     alt: author.login,
     className: 'block size-full rounded-full object-cover',

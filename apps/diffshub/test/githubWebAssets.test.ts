@@ -45,9 +45,13 @@ describe('matchGitHubWebAsset', () => {
 describe('createGitHubWebAssetProxyURL', () => {
   test('wraps matching URLs and preserves the query string', () => {
     expect(
-      createGitHubWebAssetProxyURL(`${GHES}/avatars/u/123?s=64`, GHES)
+      createGitHubWebAssetProxyURL(
+        `${GHES}/avatars/u/123?s=64`,
+        GHES,
+        'octocat'
+      )
     ).toBe(
-      `/api/github-web-asset?url=${encodeURIComponent(`${GHES}/avatars/u/123?s=64`)}`
+      `/api/github-web-asset?url=${encodeURIComponent(`${GHES}/avatars/u/123?s=64`)}&login=octocat`
     );
     expect(
       createGitHubWebAssetProxyURL('https://cdn.example.com/x.png', GHES)
@@ -56,25 +60,43 @@ describe('createGitHubWebAssetProxyURL', () => {
 });
 
 describe('resolveGitHubWebAssetUpstreamURL', () => {
-  const ghes = { apiURL: `${GHES}/api/v3`, isGitHubDotCom: false };
+  const ghes = {
+    apiURL: `${GHES}/api/v3`,
+    isGitHubDotCom: false,
+    webURL: GHES,
+  };
 
-  test('sends GHES avatars to the REST enterprise route, preserving ?s=', () => {
+  test('uses the GHES email avatar API with a generated no-reply address', () => {
     // GHES serves /avatars/ to session cookies only; a PAT gets a 302 to
-    // /login. The same bytes are Bearer-accessible under the API.
+    // /login. Its API accepts the user's generated no-reply address instead.
     const asset = matchGitHubWebAsset(`${GHES}/avatars/u/123?s=64`, GHES);
-    expect(resolveGitHubWebAssetUpstreamURL(asset!, ghes)).toBe(
-      `${GHES}/api/v3/enterprise/avatars/u/123?s=64`
+    expect(resolveGitHubWebAssetUpstreamURL(asset!, ghes, 'octocat')).toBe(
+      `${GHES}/api/v3/enterprise/avatars/u/e?email=123%2Boctocat%40users.noreply.ghe.company.com&s=64`
     );
   });
 
   test('keeps the enterprise prefix under subdomain isolation', () => {
     const asset = matchGitHubWebAsset(`${GHES}/avatars/u/123`, GHES);
     expect(
-      resolveGitHubWebAssetUpstreamURL(asset!, {
-        apiURL: 'https://api.ghe.company.com',
-        isGitHubDotCom: false,
-      })
-    ).toBe('https://api.ghe.company.com/enterprise/avatars/u/123');
+      resolveGitHubWebAssetUpstreamURL(
+        asset!,
+        {
+          apiURL: 'https://api.ghe.company.com',
+          isGitHubDotCom: false,
+          webURL: GHES,
+        },
+        'octocat'
+      )
+    ).toBe(
+      'https://api.ghe.company.com/enterprise/avatars/u/e?email=123%2Boctocat%40users.noreply.ghe.company.com'
+    );
+  });
+
+  test('leaves an avatar unchanged without the author identity', () => {
+    const asset = matchGitHubWebAsset(`${GHES}/avatars/u/123`, GHES);
+    expect(resolveGitHubWebAssetUpstreamURL(asset!, ghes)).toBe(
+      `${GHES}/avatars/u/123`
+    );
   });
 
   test('leaves user attachments at their original URL', () => {
@@ -97,6 +119,7 @@ describe('resolveGitHubWebAssetUpstreamURL', () => {
       resolveGitHubWebAssetUpstreamURL(asset!, {
         apiURL: 'https://api.github.com',
         isGitHubDotCom: true,
+        webURL: dotcom,
       })
     ).toBe(`${dotcom}/user-attachments/assets/x`);
   });

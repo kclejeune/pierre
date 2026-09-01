@@ -29,6 +29,7 @@ export async function GET(request: NextRequest) {
 
   const environment = getGitHubEnvironment();
   const url = request.nextUrl.searchParams.get('url');
+  const avatarLogin = request.nextUrl.searchParams.get('login') ?? undefined;
   const assetURL =
     url == null ? null : matchGitHubWebAsset(url, environment.webURL);
   if (assetURL == null) {
@@ -41,7 +42,7 @@ export async function GET(request: NextRequest) {
   let upstream: Response;
   try {
     upstream = await fetchAssetFollowingRedirects(
-      resolveGitHubWebAssetUpstreamURL(assetURL, environment),
+      resolveGitHubWebAssetUpstreamURL(assetURL, environment, avatarLogin),
       createGitHubRawHeaders(await resolveBearerToken(request))
     );
   } catch (error) {

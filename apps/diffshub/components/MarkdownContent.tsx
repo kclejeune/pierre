@@ -2,7 +2,7 @@
 
 import { IconImage } from '@pierre/icons';
 import type { Element as HastElement } from 'hast';
-import { memo, useDeferredValue, useState } from 'react';
+import { memo, useDeferredValue, useState, useSyncExternalStore } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
@@ -11,6 +11,11 @@ import remarkGfm from 'remark-gfm';
 
 import { GitHubAssetImage } from './GitHubAssetImage';
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
+import {
+  getGitHubTokenSnapshot,
+  getServerGitHubTokenSnapshot,
+  subscribeToGitHubToken,
+} from './githubSession';
 import { MermaidDiagram } from './MermaidDiagram';
 import { cn } from '@/lib/cn';
 import { createGitHubWebAssetProxyURL } from '@/lib/githubWebAssets';
@@ -69,7 +74,16 @@ export function MarkdownImage({
   ...rest
 }: React.ImgHTMLAttributes<HTMLImageElement>) {
   const { webURL } = useGitHubEnvironment();
-  const [failed, setFailed] = useState(false);
+  // A load failure is remembered per credential, not forever: an asset that
+  // 401'd while signed out or mid token rotation is retried inline once the
+  // credential changes, instead of degrading to the external link for good.
+  const { version } = useSyncExternalStore(
+    subscribeToGitHubToken,
+    getGitHubTokenSnapshot,
+    getServerGitHubTokenSnapshot
+  );
+  const [failedVersion, setFailedVersion] = useState<number>();
+  const failed = failedVersion === version;
   const sourceURL = typeof src === 'string' ? src : null;
   const proxied =
     sourceURL != null ? createGitHubWebAssetProxyURL(sourceURL, webURL) : null;
@@ -94,7 +108,7 @@ export function MarkdownImage({
       {...rest}
       alt={alt ?? ''}
       src={proxied}
-      onError={() => setFailed(true)}
+      onError={() => setFailedVersion(version)}
     />
   );
 }

@@ -1,9 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 
 import { GitHubAssetImage } from './GitHubAssetImage';
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
+import {
+  getGitHubTokenSnapshot,
+  getServerGitHubTokenSnapshot,
+  subscribeToGitHubToken,
+} from './githubSession';
 import { useGitHubUserProfile } from './useGitHubUserProfile';
 import { cn } from '@/lib/cn';
 import { createGitHubWebAssetProxyURL } from '@/lib/githubWebAssets';
@@ -16,8 +21,20 @@ interface CommentAuthorAvatarProps {
 
 // Avatar URLs that already failed to load, kept module-level so a dead URL
 // (404, expired signed URL) is not re-requested every time another card for
-// the same author mounts under scroll virtualization.
-const failedAvatarSrcs = new Set<string>();
+// the same author mounts under scroll virtualization. Scoped to the
+// credential that saw the failure: a URL that 401'd while signed out or mid
+// token rotation becomes loadable once a token arrives, so a credential
+// change starts a fresh set instead of pinning the fallback forever.
+let credentialFailedSrcs = new Set<string>();
+let failedTokenVersion = 0;
+
+function failedSrcsForCredential(tokenVersion: number): Set<string> {
+  if (tokenVersion !== failedTokenVersion) {
+    failedTokenVersion = tokenVersion;
+    credentialFailedSrcs = new Set();
+  }
+  return credentialFailedSrcs;
+}
 
 // "Kennan LeJeune" → "KL"; a single-word name gives one letter. Comment
 // payloads only carry the login, so without a profile name the login's first
@@ -49,6 +66,12 @@ export function CommentAuthorAvatar({
   className,
 }: CommentAuthorAvatarProps) {
   const { webURL } = useGitHubEnvironment();
+  const { version } = useSyncExternalStore(
+    subscribeToGitHubToken,
+    getGitHubTokenSnapshot,
+    getServerGitHubTokenSnapshot
+  );
+  const failedAvatarSrcs = failedSrcsForCredential(version);
   // Bumped when a source fails so the component re-renders against the
   // module-level failure set.
   const [, setFailCount] = useState(0);

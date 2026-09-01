@@ -11,6 +11,7 @@ import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
 import {
   getGitHubTokenSnapshot,
   getServerGitHubTokenSnapshot,
+  readStoredGitHubToken,
   subscribeToGitHubToken,
 } from './githubSession';
 
@@ -110,7 +111,13 @@ export function GitHubAssetImage({
 
   useEffect(() => {
     let cancelled = false;
-    void resolveAssetSrc(src, requireLogin, token).then((resolved) => {
+    // The subscribed token re-runs this effect on credential changes, but it
+    // can lag in one direction: during hydration React reports the server
+    // snapshot (always tokenless) even when storage holds a token, and a
+    // tokenless resolve fires onError on consumers that permanently record
+    // the failure. When the store reports no token, trust the live read.
+    const liveToken = token === '' ? readStoredGitHubToken() : token;
+    void resolveAssetSrc(src, requireLogin, liveToken).then((resolved) => {
       if (!cancelled) {
         setResolvedSrc(resolved);
       }

@@ -1,6 +1,14 @@
 /** @jsxImportSource react */
 
-import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  mock,
+  setSystemTime,
+  test,
+} from 'bun:test';
 import { JSDOM } from 'jsdom';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -77,6 +85,51 @@ describe('CommentAuthorAvatar', () => {
       act(() => root.unmount());
       container.remove();
       saveGitHubTokenToStorage('');
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('retries a failed avatar URL after the failure record expires', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response('missing', { status: 404 }))
+    ) as unknown as typeof fetch;
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const author = {
+      avatarUrl: 'https://example.com/avatars/hubot.png',
+      login: 'hubot',
+    };
+
+    try {
+      setSystemTime(new Date('2026-08-31T12:00:00Z'));
+      await act(async () => {
+        root.render(<CommentAuthorAvatar author={author} />);
+        await Promise.resolve();
+      });
+      await act(async () => {
+        container
+          .querySelector('img')
+          ?.dispatchEvent(new dom.window.Event('error'));
+        await Promise.resolve();
+      });
+      expect(container.querySelector('img')).toBeNull();
+
+      // A transient failure (CDN 429, network blip) is remembered briefly;
+      // a render after the TTL retries the URL instead of pinning initials
+      // for the rest of the session.
+      setSystemTime(new Date('2026-08-31T12:00:31Z'));
+      await act(async () => {
+        root.render(<CommentAuthorAvatar author={author} />);
+        await Promise.resolve();
+      });
+      expect(container.querySelector('img')?.src).toBe(author.avatarUrl);
+    } finally {
+      setSystemTime();
+      act(() => root.unmount());
+      container.remove();
       globalThis.fetch = originalFetch;
     }
   });

@@ -19,21 +19,37 @@ interface CommentAuthorAvatarProps {
   className?: string;
 }
 
-// Avatar URLs that already failed to load, kept module-level so a dead URL
+// Avatar URLs that recently failed to load, kept module-level so a dead URL
 // (404, expired signed URL) is not re-requested every time another card for
-// the same author mounts under scroll virtualization. Scoped to the
-// credential that saw the failure: a URL that 401'd while signed out or mid
-// token rotation becomes loadable once a token arrives, so a credential
-// change starts a fresh set instead of pinning the fallback forever.
-let credentialFailedSrcs = new Set<string>();
+// the same author mounts under scroll virtualization. Failures are remembered
+// briefly, not forever: transient errors — a CDN 429 on a comment-heavy PR, a
+// request racing a token rotation, a network blip after wake — must not pin
+// the initials fallback for the rest of the session. Entries expire after
+// FAILED_SRC_TTL_MS so a later render retries, and a credential change clears
+// them immediately since a URL that 401'd tokenless may load once signed in.
+const FAILED_SRC_TTL_MS = 30_000;
+let failedSrcExpiries = new Map<string, number>();
 let failedTokenVersion = 0;
 
-function failedSrcsForCredential(tokenVersion: number): Set<string> {
+function isRecentlyFailedSrc(src: string, tokenVersion: number): boolean {
   if (tokenVersion !== failedTokenVersion) {
     failedTokenVersion = tokenVersion;
-    credentialFailedSrcs = new Set();
+    failedSrcExpiries = new Map();
+    return false;
   }
-  return credentialFailedSrcs;
+  const expiresAt = failedSrcExpiries.get(src);
+  if (expiresAt == null) {
+    return false;
+  }
+  if (expiresAt <= Date.now()) {
+    failedSrcExpiries.delete(src);
+    return false;
+  }
+  return true;
+}
+
+function recordFailedSrc(src: string): void {
+  failedSrcExpiries.set(src, Date.now() + FAILED_SRC_TTL_MS);
 }
 
 // "Kennan LeJeune" → "KL"; a single-word name gives one letter. Comment
@@ -71,13 +87,13 @@ export function CommentAuthorAvatar({
     getGitHubTokenSnapshot,
     getServerGitHubTokenSnapshot
   );
-  const failedAvatarSrcs = failedSrcsForCredential(version);
   // Bumped when a source fails so the component re-renders against the
-  // module-level failure set.
+  // module-level failure records.
   const [, setFailCount] = useState(0);
 
   const payloadSrc = author.avatarUrl === '' ? null : author.avatarUrl;
-  const payloadUsable = payloadSrc != null && !failedAvatarSrcs.has(payloadSrc);
+  const payloadUsable =
+    payloadSrc != null && !isRecentlyFailedSrc(payloadSrc, version);
   // The profile also supplies the display name behind initials, so one
   // request serves both fallback stages.
   const profile = useGitHubUserProfile(payloadUsable ? null : author.login);
@@ -89,7 +105,7 @@ export function CommentAuthorAvatar({
       : null;
   const src = payloadUsable
     ? payloadSrc
-    : profileSrc != null && !failedAvatarSrcs.has(profileSrc)
+    : profileSrc != null && !isRecentlyFailedSrc(profileSrc, version)
       ? profileSrc
       : null;
 
@@ -114,7 +130,7 @@ export function CommentAuthorAvatar({
     alt: author.login,
     className: 'block size-full rounded-full object-cover',
     onError: () => {
-      failedAvatarSrcs.add(src);
+      recordFailedSrc(src);
       setFailCount((count) => count + 1);
     },
   };

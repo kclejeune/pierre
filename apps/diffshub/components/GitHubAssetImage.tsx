@@ -1,17 +1,33 @@
 'use client';
 
-import { type ImgHTMLAttributes, useEffect, useState } from 'react';
+import {
+  type ImgHTMLAttributes,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
-import { readStoredGitHubToken } from './githubSession';
+import {
+  getGitHubTokenSnapshot,
+  getServerGitHubTokenSnapshot,
+  subscribeToGitHubToken,
+} from './githubSession';
 
-// Object URLs keyed by proxy src so repeated renders of the same asset (the
-// same author's avatar on every comment, re-mounts under virtualization)
-// share one authorized fetch and one blob. Entries live for the page's
-// lifetime — the set of distinct assets on a diff is small, so the object
-// URLs are intentionally never revoked. A failed fetch removes its entry and
-// resolves to the plain proxy URL so a public asset still renders anonymously.
-const objectURLBySrc = new Map<string, Promise<string>>();
+// Object URLs keyed by proxy src and scoped to the credential that fetched
+// them, so repeated renders of the same asset (the same author's avatar on
+// every comment, re-mounts under virtualization) share one authorized fetch
+// and one blob without carrying that result across sign-in or token rotation.
+// Superseded object URLs are revoked when auth changes; a failed fetch removes
+// its entry and resolves to the plain proxy URL so a public asset still renders
+// anonymously.
+interface CachedAsset {
+  credential: string;
+  objectURL?: string;
+  pending: Promise<string>;
+}
+
+const objectURLBySrc = new Map<string, CachedAsset>();
 
 // A data: URI that is not a decodable image: assigning it to <img src> fires
 // the element's native error event without issuing a network request. Stands
@@ -20,27 +36,53 @@ const objectURLBySrc = new Map<string, Promise<string>>();
 // the console before reaching the same onError.
 const UNLOADABLE_ASSET_SRC = 'data:,';
 
-function resolveAssetSrc(src: string, requireLogin: boolean): Promise<string> {
-  const token = readStoredGitHubToken();
+function resolveAssetSrc(
+  src: string,
+  requireLogin: boolean,
+  token: string
+): Promise<string> {
+  let cached = objectURLBySrc.get(src);
   if (token === '') {
+    if (cached?.objectURL != null) {
+      URL.revokeObjectURL(cached.objectURL);
+    }
+    objectURLBySrc.delete(src);
     return Promise.resolve(requireLogin ? UNLOADABLE_ASSET_SRC : src);
   }
-  let pending = objectURLBySrc.get(src);
-  if (pending == null) {
-    pending = fetch(src, { headers: { Authorization: `Bearer ${token}` } })
+  if (cached == null || cached.credential !== token) {
+    if (cached?.objectURL != null) {
+      URL.revokeObjectURL(cached.objectURL);
+    }
+    const pending = fetch(src, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(`Asset request failed: ${response.status}`);
         }
-        return URL.createObjectURL(await response.blob());
+        const objectURL = URL.createObjectURL(await response.blob());
+        const current = objectURLBySrc.get(src);
+        if (current?.pending !== pending) {
+          // Auth changed while the request was in flight; nobody can consume
+          // this result, and it must not survive under the old credential.
+          URL.revokeObjectURL(objectURL);
+        } else {
+          current.objectURL = objectURL;
+        }
+        return objectURL;
       })
       .catch(() => {
-        objectURLBySrc.delete(src);
+        // A credential can rotate while this request is in flight. Do not let
+        // its late failure evict the newer credential's cached request.
+        if (objectURLBySrc.get(src)?.pending === pending) {
+          objectURLBySrc.delete(src);
+        }
         return requireLogin ? UNLOADABLE_ASSET_SRC : src;
       });
-    objectURLBySrc.set(src, pending);
+    cached = { credential: token, pending };
+    objectURLBySrc.set(src, cached);
   }
-  return pending;
+  return cached.pending;
 }
 
 // An image served through one of the same-origin GitHub asset proxies
@@ -59,11 +101,16 @@ export function GitHubAssetImage({
   ...rest
 }: ImgHTMLAttributes<HTMLImageElement> & { src: string }) {
   const { requireLogin } = useGitHubEnvironment();
+  const { token } = useSyncExternalStore(
+    subscribeToGitHubToken,
+    getGitHubTokenSnapshot,
+    getServerGitHubTokenSnapshot
+  );
   const [resolvedSrc, setResolvedSrc] = useState<string>();
 
   useEffect(() => {
     let cancelled = false;
-    void resolveAssetSrc(src, requireLogin).then((resolved) => {
+    void resolveAssetSrc(src, requireLogin, token).then((resolved) => {
       if (!cancelled) {
         setResolvedSrc(resolved);
       }
@@ -71,7 +118,7 @@ export function GitHubAssetImage({
     return () => {
       cancelled = true;
     };
-  }, [src, requireLogin]);
+  }, [src, requireLogin, token]);
 
   return <img {...rest} alt={alt ?? ''} loading="lazy" src={resolvedSrc} />;
 }

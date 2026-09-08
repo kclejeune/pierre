@@ -294,12 +294,24 @@ export class VirtualizedFileDiff<
     resetRenderRange = true,
   }: ResetLayoutCacheOptions = {}): void {
     this.layoutDirty = true;
-    this.cache.fileAnnotationHeight = 0;
     if (this.cache.heightDeltas.size > 0) {
       this.cache.heightDeltas.clear();
     }
-    if (this.cache.measuredHeightDeltaTotal !== 0) {
-      this.cache.measuredHeightDeltaTotal = 0;
+    // Per-line deltas are re-measured as soon as their line renders again, but
+    // the file annotation is only re-measured on frames whose render range
+    // covers its row — never while the viewport sits inside a tall one. Zeroing
+    // it there would leave the item height and every position derived from it
+    // short by the whole annotation, so keep the last measurement while a
+    // file-level annotation exists. Its full height is a zero-baseline delta,
+    // so it is also all that remains of the aggregate.
+    const nextFileAnnotationHeight = includesFileAnnotations(
+      this.getLatestAnnotations()
+    )
+      ? this.cache.fileAnnotationHeight
+      : 0;
+    this.cache.fileAnnotationHeight = nextFileAnnotationHeight;
+    if (this.cache.measuredHeightDeltaTotal !== nextFileAnnotationHeight) {
+      this.cache.measuredHeightDeltaTotal = nextFileAnnotationHeight;
     }
     this.invalidateDerivedLayoutCache(
       includeEstimatedHeights,

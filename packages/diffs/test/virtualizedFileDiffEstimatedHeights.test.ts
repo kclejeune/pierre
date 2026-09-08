@@ -829,6 +829,44 @@ describe('VirtualizedFileDiff estimated height cache', () => {
     }
   });
 
+  test('keeps measured file-level annotation height when other annotations change', () => {
+    const { cleanup } = installFakeHTMLElement();
+    try {
+      const instance = new VirtualizedFileDiff({}, virtualizer, metrics);
+      const fileDiff = createTwoHunkDiff();
+
+      instance.updateCodeViewLayout(fileDiff, 0, undefined, [
+        { side: 'additions', lineNumber: 0 },
+      ]);
+      setRenderedDiff(instance, fileDiff);
+      inspect(instance).renderRange = createRenderRange();
+      inspect(instance).fileContainer =
+        new FakeHTMLElement() as unknown as HTMLElement;
+      inspect(instance).codeAdditions =
+        createMeasuredCodeGroupWithFileLevelAnnotation(
+          '0,0',
+          () => 25,
+          () => metrics.lineHeight
+        );
+
+      expect(instance.reconcileHeights()).toBe(true);
+      expect(inspect(instance).cache.fileAnnotationHeight).toBe(25);
+      expect(instance.getVirtualizedHeight()).toBe(351);
+
+      // Resets the layout cache while the file-level annotation stays.
+      instance.updateCodeViewLayout(fileDiff, 0, undefined, [
+        { side: 'additions', lineNumber: 0 },
+        { side: 'additions', lineNumber: 1 },
+      ]);
+
+      expect(inspect(instance).cache.fileAnnotationHeight).toBe(25);
+      expect(inspect(instance).cache.measuredHeightDeltaTotal).toBe(25);
+      expect(instance.getVirtualizedHeight()).toBe(351);
+    } finally {
+      cleanup();
+    }
+  });
+
   test('clears measured file-level annotation height when recycled without annotations', () => {
     const { cleanup } = installFakeHTMLElement();
     try {

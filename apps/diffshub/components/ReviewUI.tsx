@@ -343,7 +343,19 @@ function ReviewUIInner({
     const controller = new AbortController();
     fetchPullConflicts(pullRequest, getGitHubToken(), controller.signal)
       .then(setConflicts)
-      .catch(() => undefined);
+      .catch((error: unknown) => {
+        // Navigating away aborts this best-effort check and should stay
+        // silent. Real failures carry the API route's actionable explanation,
+        // such as the 300-file merge limit, so surface those to the viewer.
+        if (!controller.signal.aborted) {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : 'Checking for merge conflicts failed.',
+            { id: 'pull-conflicts-error' }
+          );
+        }
+      });
     return () => controller.abort();
   }, [
     getGitHubToken,

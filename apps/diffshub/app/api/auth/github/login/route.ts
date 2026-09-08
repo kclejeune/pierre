@@ -13,11 +13,12 @@ import {
   sanitizeReturnTo,
   serializeOAuthState,
 } from '@/lib/githubOAuth';
+import { withRequestLog } from '@/lib/requestLog';
 
 // Starts the "Sign in with GitHub" flow: pins a random state (plus the
 // sanitized return path) in an httpOnly cookie and redirects the browser to
 // the configured GitHub instance's authorize page.
-export function GET(request: NextRequest) {
+function handleGET(request: NextRequest) {
   const oauthConfig = getGitHubOAuthConfig();
   if (oauthConfig == null) {
     return NextResponse.json(
@@ -54,3 +55,5 @@ export function GET(request: NextRequest) {
   );
   return response;
 }
+
+export const GET = withRequestLog(handleGET);

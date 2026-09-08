@@ -9,8 +9,10 @@ import {
 import {
   createGitHubFailureResponse,
   createUnreachableResponse,
+  readGitHubJSON,
 } from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Autocomplete data for the diff URL bar: repository name search while the
@@ -18,7 +20,7 @@ import { resolveBearerToken } from '@/lib/resolveBearerToken';
 // selected. Both proxy the GitHub API with the viewer's token so the browser
 // never talks to the instance cross-origin.
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
@@ -117,5 +119,10 @@ async function fetchSuggestPayload(
   if (!response.ok) {
     return { error: await createGitHubFailureResponse(response) };
   }
-  return { payload: await response.json() };
+  const parsed = await readGitHubJSON(response);
+  return parsed.failure != null
+    ? { error: parsed.failure }
+    : { payload: parsed.data };
 }
+
+export const GET = withRequestLog(handleGET);

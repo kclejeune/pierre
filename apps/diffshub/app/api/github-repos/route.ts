@@ -9,6 +9,7 @@ import {
 import {
   createGitHubFailureResponse,
   createUnreachableResponse,
+  readGitHubJSON,
 } from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import {
@@ -18,6 +19,7 @@ import {
   type RepoDirectoryPayload,
   type RepoDirectoryRepo,
 } from '@/lib/repoDirectory';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Load a useful first directory in two waves. Accounts beyond this initial
@@ -45,7 +47,7 @@ function fetchRepoPage(
 // organizations they belong to and every repository they own, collaborate
 // on, or can reach through an org, most recently pushed first. Requires a
 // token — GitHub has no anonymous notion of "your repositories".
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
@@ -72,7 +74,11 @@ export async function GET(request: NextRequest) {
       if (!response.ok) {
         return await createGitHubFailureResponse(response);
       }
-      const pagePayload: unknown = await response.json();
+      const parsed = await readGitHubJSON(response);
+      if (parsed.failure != null) {
+        return parsed.failure;
+      }
+      const pagePayload = parsed.data;
       const { owners, repos } = parseRepoPages([pagePayload]);
       const payload: RepoDirectoryPayload = {
         orgs: [],
@@ -107,12 +113,18 @@ export async function GET(request: NextRequest) {
     if (!viewerResponse.ok) {
       return await createGitHubFailureResponse(viewerResponse);
     }
-    const viewer = parseRepoDirectoryOwner(await viewerResponse.json(), 'user');
+    const parsedViewer = await readGitHubJSON(viewerResponse);
+    if (parsedViewer.failure != null) {
+      return parsedViewer.failure;
+    }
+    const viewer = parseRepoDirectoryOwner(parsedViewer.data, 'user');
     // Org membership can be hidden from some tokens; the directory still
     // works grouped by the owners present in the repo listing.
     const orgs: RepoDirectoryOwner[] = [];
     if (orgsResponse.ok) {
-      const orgsPayload: unknown = await orgsResponse.json();
+      // Best-effort, so a body that will not parse is treated the same as a
+      // hidden org list rather than failing the whole directory.
+      const orgsPayload = (await readGitHubJSON(orgsResponse)).data;
       if (Array.isArray(orgsPayload)) {
         for (const org of orgsPayload) {
           const owner = parseRepoDirectoryOwner(org, 'org');
@@ -126,7 +138,11 @@ export async function GET(request: NextRequest) {
     if (!firstRepoPage.ok) {
       return await createGitHubFailureResponse(firstRepoPage);
     }
-    const firstPagePayload: unknown = await firstRepoPage.json();
+    const parsedFirstPage = await readGitHubJSON(firstRepoPage);
+    if (parsedFirstPage.failure != null) {
+      return parsedFirstPage.failure;
+    }
+    const firstPagePayload = parsedFirstPage.data;
     const repoPages: unknown[] = [firstPagePayload];
     if (
       Array.isArray(firstPagePayload) &&
@@ -141,7 +157,11 @@ export async function GET(request: NextRequest) {
         if (!response.ok) {
           return await createGitHubFailureResponse(response);
         }
-        const pagePayload: unknown = await response.json();
+        const parsedPage = await readGitHubJSON(response);
+        if (parsedPage.failure != null) {
+          return parsedPage.failure;
+        }
+        const pagePayload = parsedPage.data;
         repoPages.push(pagePayload);
         if (
           !Array.isArray(pagePayload) ||
@@ -194,3 +214,5 @@ function parseRepoPages(pagePayloads: readonly unknown[]) {
   }
   return { owners, repos };
 }
+
+export const GET = withRequestLog(handleGET);

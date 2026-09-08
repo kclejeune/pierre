@@ -12,12 +12,13 @@ import {
 } from '@/lib/githubPullDetailsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import type { PullInfo } from '@/lib/pullInfoClient';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // The pull request's refs plus metadata carried by pulls/{n}. Keep this first
 // chrome request to one GitHub round trip; reviews, checks, and viewer merge
 // capabilities arrive via the separate /api/pull-details supplement.
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
@@ -46,3 +47,5 @@ export async function GET(request: NextRequest) {
     return commitErrorResponse(error);
   }
 }
+
+export const GET = withRequestLog(handleGET);

@@ -7,11 +7,12 @@ import {
 } from '@/lib/githubRepoBrowserServer';
 import { loadRepoRefs } from '@/lib/githubRepoRefsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Lists a repository's default branch, branches, and tags for the /browse
 // dashboard's ref picker.
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
@@ -32,3 +33,5 @@ export async function GET(request: NextRequest) {
     return repoBrowserErrorResponse(error);
   }
 }
+
+export const GET = withRequestLog(handleGET);

@@ -10,6 +10,7 @@ import {
 import {
   createGitHubFailureResponse,
   createUnreachableResponse,
+  readGitHubJSON,
 } from '@/lib/githubProxyResponse';
 import {
   buildBucketSearchQuery,
@@ -19,13 +20,14 @@ import {
 } from '@/lib/githubPullSummaries';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { isValidRepoName, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Pull request lists for the /pulls dashboard: cross-repo buckets built on
 // @me search qualifiers (optionally scoped to one repo, for pinned-repo cards
 // following the active bucket tab), and per-repo open pull lists.
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
@@ -142,5 +144,10 @@ async function fetchPullsPayload(
   if (!response.ok) {
     return { error: await createGitHubFailureResponse(response) };
   }
-  return { payload: await response.json() };
+  const parsed = await readGitHubJSON(response);
+  return parsed.failure != null
+    ? { error: parsed.failure }
+    : { payload: parsed.data };
 }
+
+export const GET = withRequestLog(handleGET);

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import { captureConsole } from './helpers/captureConsole';
 import {
   createBlob,
   createCommit,
@@ -271,5 +272,30 @@ describe('waitForPullHead', () => {
       failing.fetcher
     );
     expect(failing.requests).toHaveLength(1);
+  });
+});
+
+// A private-mode GHES answers 200 with an HTML login page. Parsing that
+// unguarded yields a SyntaxError the write routes report as "could not reach
+// GitHub"; the guard names what was actually served instead.
+describe('non-JSON success body', () => {
+  test('throws GitHubCommitError naming the content type', async () => {
+    const { fetcher } = createFetchStub(
+      () =>
+        new Response('<html>login</html>', {
+          headers: { 'content-type': 'text/html' },
+        })
+    );
+
+    let failure: unknown;
+    await captureConsole(async () => {
+      failure = await fetchBranchTipSha(REPO, 'main', 'tok', fetcher).catch(
+        (error: unknown) => error
+      );
+    });
+
+    expect(failure).toBeInstanceOf(GitHubCommitError);
+    expect((failure as GitHubCommitError).message).toContain('text/html');
+    expect((failure as GitHubCommitError).status).toBe(502);
   });
 });

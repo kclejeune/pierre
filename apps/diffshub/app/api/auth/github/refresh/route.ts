@@ -11,6 +11,7 @@ import {
 import { serializeGrantRecord } from '@/lib/githubOAuthGrant';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseJSONBody } from '@/lib/parseJSONBody';
+import { withRequestLog } from '@/lib/requestLog';
 
 // Mints the next user access token from a refresh token, for GitHub App
 // sign-ins with token expiration enabled. The browser owns the session (the
@@ -29,7 +30,7 @@ import { parseJSONBody } from '@/lib/parseJSONBody';
 //         viewer signs in again.
 //   502 — GitHub was unreachable or answered unexpectedly. The session is
 //         still valid and the client should simply try again later.
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const oauthConfig = getGitHubOAuthConfig();
   if (oauthConfig == null) {
     return createJSONResponse(
@@ -65,3 +66,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withRequestLog(handlePOST);

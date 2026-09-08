@@ -10,6 +10,7 @@ import {
 } from '@/lib/githubPullDetailsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import type { PullDetailsSupplement } from '@/lib/pullInfoClient';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
@@ -17,7 +18,7 @@ const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
 // Optional, slower metadata for the pull-details dropdown. Each companion
 // request is independent so an unavailable Checks API does not discard legacy
 // statuses, reviewer state, or merge capabilities.
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
@@ -61,3 +62,5 @@ export async function GET(request: NextRequest) {
     return commitErrorResponse(error);
   }
 }
+
+export const GET = withRequestLog(handleGET);

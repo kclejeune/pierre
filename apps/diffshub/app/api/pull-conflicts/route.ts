@@ -32,6 +32,7 @@ import {
   planMerge,
   renderConflictMarkers,
 } from '@/lib/pullMerge';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Merge-conflict resolution for pull requests.
@@ -55,7 +56,7 @@ type PullMergeContext = PullRefs & {
   plans: ReturnType<typeof planMerge>;
 };
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
@@ -143,7 +144,7 @@ export interface PullMergeCommitRequestBody {
   resolvedFiles: { contents: string; path: string }[];
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
@@ -530,3 +531,6 @@ function readCompareFiles(compare: unknown): CompareFile[] {
     return [entry];
   });
 }
+
+export const GET = withRequestLog(handleGET);
+export const POST = withRequestLog(handlePOST);

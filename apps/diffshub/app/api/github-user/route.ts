@@ -9,8 +9,10 @@ import {
 import {
   createGitHubFailureResponse,
   createUnreachableResponse,
+  readGitHubJSON,
 } from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Proxies user lookups on the configured GitHub instance so the browser never
@@ -19,7 +21,7 @@ import { resolveBearerToken } from '@/lib/resolveBearerToken';
 // comment authorship); with one it resolves that user's public profile
 // (GET /users/{login}), which supplies the display name behind avatar
 // initials.
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
@@ -66,7 +68,11 @@ export async function GET(request: NextRequest) {
     return await createGitHubFailureResponse(response);
   }
 
-  const user = (await response.json()) as {
+  const parsed = await readGitHubJSON(response);
+  if (parsed.failure != null) {
+    return parsed.failure;
+  }
+  const user = parsed.data as {
     avatar_url?: unknown;
     login?: unknown;
     name?: unknown;
@@ -84,3 +90,5 @@ export async function GET(request: NextRequest) {
     name: typeof user.name === 'string' ? user.name : null,
   });
 }
+
+export const GET = withRequestLog(handleGET);

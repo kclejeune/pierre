@@ -18,6 +18,7 @@ import {
 } from '@/lib/githubCommitServer';
 import { encodeURLSegment, isSameGitHubRepo } from '@/lib/githubDiffSource';
 import { createJSONResponse } from '@/lib/jsonResponse';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Committing edited files back to a pull request's head branch.
@@ -46,7 +47,7 @@ export interface PullCommitRequestBody {
   repo: string;
 }
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const owner = params.get('owner');
   const repo = params.get('repo');
@@ -97,7 +98,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
@@ -232,3 +233,6 @@ async function fetchViewerCanPush(
     (data as { permissions?: { push?: unknown } }).permissions?.push === true
   );
 }
+
+export const GET = withRequestLog(handleGET);
+export const POST = withRequestLog(handlePOST);

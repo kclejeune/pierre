@@ -6,11 +6,12 @@ import {
   repoBrowserErrorResponse,
 } from '@/lib/githubRepoBrowserServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Fetches one file's contents for the browse view, at the commit sha the
 // tree listing resolved (so contents always match the listing).
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
@@ -50,3 +51,5 @@ export async function GET(request: NextRequest) {
     return repoBrowserErrorResponse(error);
   }
 }
+
+export const GET = withRequestLog(handleGET);

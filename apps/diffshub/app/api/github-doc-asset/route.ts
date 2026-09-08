@@ -4,6 +4,7 @@ import { loadGitHubDiffAssetResponse } from '@/lib/githubDiffFileServer';
 import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
 import { createInertAssetResponse } from '@/lib/inertAssetResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Same-origin proxy for images referenced by rendered markdown documents.
@@ -22,7 +23,7 @@ import { resolveBearerToken } from '@/lib/resolveBearerToken';
 const ANONYMOUS_IMAGE_FILE_PATTERN =
   /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i;
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
@@ -71,3 +72,5 @@ function isSafeRepoPath(file: string): boolean {
       .every((segment) => segment !== '' && segment !== '.' && segment !== '..')
   );
 }
+
+export const GET = withRequestLog(handleGET);

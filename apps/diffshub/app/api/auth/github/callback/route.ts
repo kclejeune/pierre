@@ -13,13 +13,14 @@ import {
   parseOAuthState,
 } from '@/lib/githubOAuth';
 import { type OAuthTokenGrant } from '@/lib/githubOAuthGrant';
+import { withRequestLog } from '@/lib/requestLog';
 
 // Completes the OAuth flow: validates the state cookie, exchanges the code
 // for a user access token, and forwards the browser to the completion page
 // with the grant (token, plus refresh token and lifetimes when GitHub issues
 // expiring tokens) in the URL fragment — never in a query string or log line.
 // All failure branches land on the same completion page with a readable error.
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const oauthConfig = getGitHubOAuthConfig();
   if (oauthConfig == null) {
     return redirectToCompletion(request, {
@@ -96,3 +97,5 @@ function redirectToCompletion(
   });
   return response;
 }
+
+export const GET = withRequestLog(handleGET);

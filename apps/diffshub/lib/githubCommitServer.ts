@@ -4,6 +4,7 @@ import {
   createGitHubJSONHeaders,
   getGitHubEnvironment,
 } from './githubEnvironment';
+import { parseGitHubJSONBody } from './githubProxyResponse';
 import { createJSONResponse } from './jsonResponse';
 import { type PlainFetch } from './plainFetch';
 
@@ -104,7 +105,11 @@ async function gitDataRequest(
       response.status
     );
   }
-  return response.json();
+  const body = await parseGitHubJSONBody(response);
+  if (body.problem != null) {
+    throw new GitHubCommitError(body.problem, 'github', 502);
+  }
+  return body.data;
 }
 
 // GitHub errors are normally JSON objects with a user-facing `message`. Keep

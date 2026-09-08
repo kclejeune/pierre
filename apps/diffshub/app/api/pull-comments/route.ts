@@ -10,9 +10,11 @@ import {
 import {
   createGitHubFailureResponse,
   createUnreachableResponse,
+  readGitHubJSON,
 } from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseJSONBody } from '@/lib/parseJSONBody';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 import type {
   GitHubDiffSide,
@@ -47,7 +49,7 @@ import type {
 const MAX_COMMENT_PAGES = 10;
 const PER_PAGE = 100;
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
@@ -151,7 +153,11 @@ async function fetchAllPages(
   if (!firstResponse.ok) {
     return { failure: await createGitHubFailureResponse(firstResponse) };
   }
-  const records = [...((await firstResponse.json()) as unknown[])];
+  const parsedFirst = await readGitHubJSON(firstResponse);
+  if (parsedFirst.failure != null) {
+    return { failure: parsedFirst.failure };
+  }
+  const records = [...(parsedFirst.data as unknown[])];
   const lastPage = Math.min(
     parseLastPage(firstResponse.headers.get('link')),
     MAX_COMMENT_PAGES
@@ -164,13 +170,17 @@ async function fetchAllPages(
       if (!response.ok) {
         return { failure: await createGitHubFailureResponse(response) };
       }
-      records.push(...((await response.json()) as unknown[]));
+      const parsedPage = await readGitHubJSON(response);
+      if (parsedPage.failure != null) {
+        return { failure: parsedPage.failure };
+      }
+      records.push(...(parsedPage.data as unknown[]));
     }
   }
   return { records };
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
@@ -282,7 +292,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function PATCH(request: NextRequest) {
+async function handlePATCH(request: NextRequest) {
   const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
@@ -332,7 +342,7 @@ export async function PATCH(request: NextRequest) {
   }
 }
 
-export async function DELETE(request: NextRequest) {
+async function handleDELETE(request: NextRequest) {
   const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
@@ -441,10 +451,14 @@ async function submitReview(
     if (!response.ok) {
       return createGitHubFailureResponse(response);
     }
+    const parsed = await readGitHubJSON(response);
+    if (parsed.failure != null) {
+      return parsed.failure;
+    }
     // May be null for a bodiless COMMENTED review (dropped from the
     // discussion feed by design); the client refetches comments regardless.
     return createJSONResponse({
-      review: normalizeReviewSummary(await response.json()),
+      review: normalizeReviewSummary(parsed.data),
     });
   } catch {
     return createUnreachableResponse(environment);
@@ -524,7 +538,11 @@ async function resolvePullHeadCommit(
   if (!pullResponse.ok) {
     return createGitHubFailureResponse(pullResponse);
   }
-  const pullData = (await pullResponse.json()) as {
+  const parsedPull = await readGitHubJSON(pullResponse);
+  if (parsedPull.failure != null) {
+    return parsedPull.failure;
+  }
+  const pullData = parsedPull.data as {
     head?: { sha?: unknown };
   };
   const commitId = pullData.head?.sha;
@@ -655,7 +673,11 @@ async function forwardNormalizedResponse(
   if (!response.ok) {
     return createGitHubFailureResponse(response);
   }
-  const comment = normalize(await response.json());
+  const parsed = await readGitHubJSON(response);
+  if (parsed.failure != null) {
+    return parsed.failure;
+  }
+  const comment = normalize(parsed.data);
   if (comment == null) {
     return createJSONResponse(
       { error: 'GitHub returned an unexpected comment payload.' },
@@ -690,3 +712,8 @@ function isValidSegment(value: unknown): value is string {
 function isValidNumber(value: unknown): value is string {
   return typeof value === 'string' && /^\d+$/.test(value);
 }
+
+export const GET = withRequestLog(handleGET);
+export const POST = withRequestLog(handlePOST);
+export const PATCH = withRequestLog(handlePATCH);
+export const DELETE = withRequestLog(handleDELETE);

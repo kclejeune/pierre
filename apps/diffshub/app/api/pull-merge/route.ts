@@ -9,6 +9,7 @@ import {
 import { encodeURLSegment } from '@/lib/githubDiffSource';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseJSONBody } from '@/lib/parseJSONBody';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 import { asRecord } from '@/lib/untypedJson';
 
@@ -20,7 +21,7 @@ const MERGE_METHODS = new Set(['merge', 'rebase', 'squash']);
 // permissions server-side. `expectedHeadSha` makes the merge
 // compare-and-swap: GitHub answers 409 when the branch moved since the
 // viewer looked at the diff, which commitErrorResponse forwards.
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const token = await resolveBearerToken(request);
   if (token == null) {
     return createJSONResponse(
@@ -78,3 +79,5 @@ export async function POST(request: NextRequest) {
     return commitErrorResponse(error);
   }
 }
+
+export const POST = withRequestLog(handlePOST);

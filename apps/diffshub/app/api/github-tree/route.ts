@@ -7,12 +7,13 @@ import {
   repoBrowserErrorResponse,
 } from '@/lib/githubRepoBrowserServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Lists a repository's file tree for the browse view: resolves the `ref`
 // remainder (branch, tag, sha, or refs/pull/… plus an optional sub-path)
 // against the repo and returns every blob path at the resolved commit.
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
@@ -34,3 +35,5 @@ export async function GET(request: NextRequest) {
     return repoBrowserErrorResponse(error);
   }
 }
+
+export const GET = withRequestLog(handleGET);

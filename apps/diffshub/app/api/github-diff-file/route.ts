@@ -3,6 +3,7 @@ import { type NextRequest } from 'next/server';
 
 import { loadGitHubDiffFiles } from '@/lib/githubDiffFileServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 const CHANGE_TYPES = new Set<ChangeTypes>([
@@ -13,7 +14,7 @@ const CHANGE_TYPES = new Set<ChangeTypes>([
   'rename-pure',
 ]);
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const path = params.get('path');
   const name = params.get('name');
@@ -58,3 +59,5 @@ function parseChangeType(value: string | null): ChangeTypes | undefined {
     ? (value as ChangeTypes)
     : undefined;
 }
+
+export const GET = withRequestLog(handleGET);

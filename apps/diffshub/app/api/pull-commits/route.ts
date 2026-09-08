@@ -7,12 +7,13 @@ import {
   readPullRouteParams,
 } from '@/lib/githubPullDetailsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // The pull request's commit listing (oldest first), for the viewer's
 // commit-range picker. Read-only; on github.com anonymous visitors can list
 // public-repo pulls without a login.
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
     return rejection;
@@ -34,3 +35,5 @@ export async function GET(request: NextRequest) {
     return commitErrorResponse(error);
   }
 }
+
+export const GET = withRequestLog(handleGET);

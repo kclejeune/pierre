@@ -16,7 +16,9 @@ import {
   isTokenlessRequestBlocked,
   LOGIN_REQUIRED_MESSAGE,
 } from '@/lib/githubEnvironment';
+import { parseGitHubJSONBody } from '@/lib/githubProxyResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
+import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 const CACHE_CONTROL = 'no-store';
@@ -97,7 +99,7 @@ interface PatchFetchResult {
 // Validates the accepted path or URL, normalizes it to a raw diff URL, and
 // returns a streaming proxy response so the client can render files as they
 // arrive instead of waiting for the full patch text.
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   // This route answers in plain text, so it checks the predicate directly
   // instead of using the shared JSON rejection.
   if (isTokenlessRequestBlocked(request)) {
@@ -696,7 +698,16 @@ async function fetchGitHubPullPatchTarget(
     return { response: pullResponse, target: pullTarget };
   }
 
-  const pullData = await pullResponse.json();
+  const pullBody = await parseGitHubJSONBody(pullResponse);
+  if (pullBody.problem != null) {
+    return {
+      response: new Response(pullBody.problem, {
+        status: 502,
+      }),
+      target: pullTarget,
+    };
+  }
+  const pullData = pullBody.data;
   const baseSha = readStringPath(pullData, ['base', 'sha']);
   const headSha = readStringPath(pullData, ['head', 'sha']);
   const baseRepo = readRepoFullName(pullData, ['base', 'repo', 'full_name']);
@@ -948,3 +959,5 @@ function createTextResponse(
     headers,
   });
 }
+
+export const GET = withRequestLog(handleGET);

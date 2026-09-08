@@ -15,6 +15,7 @@ import {
   GITHUB_API_VERSION,
   GITHUB_USER_AGENT,
 } from './githubEnvironment';
+import { parseGitHubJSONBody } from './githubProxyResponse';
 import { type PlainFetch } from './plainFetch';
 
 const GITHUB_RAW_MEDIA_TYPE = 'application/vnd.github.raw';
@@ -502,7 +503,11 @@ async function fetchGitHubJSON(
     headers: createGitHubJSONHeaders(options.token),
   });
   await assertGitHubResponseOK(response, `GitHub API ${url}`);
-  return response.json();
+  const body = await parseGitHubJSONBody(response);
+  if (body.problem != null) {
+    throw new Error(`GitHub API ${url}: ${body.problem}`);
+  }
+  return body.data;
 }
 
 export function createGitHubRawHeaders(token: string | undefined): HeadersInit {

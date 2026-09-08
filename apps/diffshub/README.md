@@ -47,6 +47,65 @@ serve avatars to a GitHub App token at all. A profile image is not
 viewer-specific, so a shared credential discloses nothing the viewer could not
 already see. No other request ever uses it.
 
+### Logs
+
+At startup the process logs how it is configured, so a container's first log
+line answers "what did it actually read?" without shelling in. Non-secret
+variables print their value, configured secrets print `*****`, and anything
+unset prints `null`. An `effective` object carries the resolved instance URLs
+and credential policies, since most `DIFFSHUB_*` defaults are derived rather
+than literal. This record is indented and carries none of the `event`/`time`/
+`level` fields the request logs use, so it reads as a startup banner rather than
+another entry; a malformed configuration prints the same record with
+`effectiveError` on stderr:
+
+```json
+{
+  "env": {
+    "DIFFSHUB_GITHUB_URL": "https://ghe.corp.dev",
+    "DIFFSHUB_GITHUB_API_URL": null,
+    "DIFFSHUB_GITHUB_CLIENT_SECRET": "*****",
+    "DIFFSHUB_AVATAR_TOKEN": "*****"
+  },
+  "effective": {
+    "apiURL": "https://ghe.corp.dev/api/v3",
+    "requireLogin": true,
+    "patInputEnabled": false
+  }
+}
+```
+
+Every API request is logged to stdout as one JSON object per line, and failures
+go to stderr, so `docker logs`, `kubectl logs`, and `wrangler tail` stream them
+with no extra configuration:
+
+```bash
+docker compose logs -f diffshub | grep api_request
+```
+
+```text
+{"time":"...","event":"api_request","method":"GET","path":"/api/github-web-asset","durationMs":26,"level":"info","status":200}
+```
+
+`level` is `info` below 400, `warn` for a 4xx, and `error` for a 5xx. A request
+whose handler throws also carries `error` and `stack`. `/api/health` is the one
+route not logged — it is polled continuously and always answers 200.
+
+`github_upstream_failure` lines include the sanitized upstream URL, the
+credential kind when known (`viewer`, `deployment-avatar`, or `none`), and
+response headers that explain a refusal. These include `x-github-request-id`,
+which can be quoted in a GHES support ticket, and the scope and permission
+headers that distinguish a missing scope from an endpoint unavailable to that
+credential type.
+
+```bash
+docker compose logs -f diffshub | grep github_upstream_failure
+```
+
+Query-string values are redacted, since avatar lookups carry an email address
+and redirected asset URLs carry signed download tokens. Credentials are never
+logged.
+
 ### Health check
 
 `GET /api/health` returns `200 {"status":"ok"}` without touching GitHub or the

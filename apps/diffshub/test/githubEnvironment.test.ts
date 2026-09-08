@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import {
   createGitHubAPIURL,
+  getAvatarLookupToken,
   getGitHubClientEnvironment,
   getRefreshTokenMaxTTLSeconds,
   isConfiguredGitHubInstanceURL,
@@ -196,6 +197,37 @@ describe('token encryption policy', () => {
 
     expect(isPATInputEnabled()).toBe(false);
     expect(getGitHubClientEnvironment().tokenEncryptionRequired).toBe(true);
+  });
+});
+
+describe('getAvatarLookupToken', () => {
+  afterEach(() => {
+    delete process.env.DIFFSHUB_AVATAR_TOKEN;
+  });
+
+  test('reads the token, treating blank as unset', () => {
+    expect(getAvatarLookupToken()).toBeUndefined();
+
+    process.env.DIFFSHUB_AVATAR_TOKEN = '   ';
+    expect(getAvatarLookupToken()).toBeUndefined();
+
+    process.env.DIFFSHUB_AVATAR_TOKEN = '  ghp_avatar  ';
+    expect(getAvatarLookupToken()).toBe('ghp_avatar');
+  });
+
+  // Unlike the encryption key, which memoizes its base64 decode.
+  test('is not cached across changes', () => {
+    process.env.DIFFSHUB_AVATAR_TOKEN = 'first';
+    expect(getAvatarLookupToken()).toBe('first');
+    process.env.DIFFSHUB_AVATAR_TOKEN = 'second';
+    expect(getAvatarLookupToken()).toBe('second');
+  });
+
+  test('stays out of the client environment', () => {
+    process.env.DIFFSHUB_AVATAR_TOKEN = 'ghp_avatar';
+    expect(JSON.stringify(getGitHubClientEnvironment())).not.toContain(
+      'ghp_avatar'
+    );
   });
 });
 

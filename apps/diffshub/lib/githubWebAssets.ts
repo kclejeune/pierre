@@ -10,21 +10,24 @@ import type { GitHubEnvironment } from './githubEnvironment';
 const AVATAR_PATH_PREFIX = '/avatars/';
 const PROXIED_PATH_PREFIXES = [AVATAR_PATH_PREFIX, '/user-attachments/'];
 
-// webURL is a per-deployment constant but this matcher runs for every image
-// and avatar on every render; cache its parsed origin instead of re-parsing.
-const originByWebURL = new Map<string, string | null>();
+const AVATAR_EMAIL_WEB_PATH = '/avatars/u/e';
+const AVATAR_EMAIL_API_PATH = '/enterprise/avatars/u/e';
 
-function getWebOrigin(webURL: string): string | null {
-  let origin = originByWebURL.get(webURL);
-  if (origin === undefined) {
+// webURL is a per-deployment constant but these run for every image and avatar
+// on every render; parse it once.
+const parsedWebURLs = new Map<string, URL | null>();
+
+function getParsedWebURL(webURL: string): URL | null {
+  let parsed = parsedWebURLs.get(webURL);
+  if (parsed === undefined) {
     try {
-      origin = new URL(webURL).origin;
+      parsed = new URL(webURL);
     } catch {
-      origin = null;
+      parsed = null;
     }
-    originByWebURL.set(webURL, origin);
+    parsedWebURLs.set(webURL, parsed);
   }
-  return origin;
+  return parsed;
 }
 
 // The parsed URL when `src` is a same-instance asset the proxy may serve;
@@ -37,7 +40,7 @@ export function matchGitHubWebAsset(src: string, webURL: string): URL | null {
   } catch {
     return null;
   }
-  if (url.origin !== getWebOrigin(webURL)) {
+  if (url.origin !== getParsedWebURL(webURL)?.origin) {
     return null;
   }
   return PROXIED_PATH_PREFIXES.some((prefix) => url.pathname.startsWith(prefix))
@@ -45,44 +48,72 @@ export function matchGitHubWebAsset(src: string, webURL: string): URL | null {
     : null;
 }
 
+export interface GitHubWebAssetUpstream {
+  // True only when `url` is the instance's avatar lookup API, which GHES gates
+  // on the classic `repo` OAuth scope and exposes to no GitHub App permission.
+  // A viewer signed in through a GitHub App therefore cannot fetch it at all,
+  // making it the one request lib/avatarCredential may pay for instead.
+  isAvatarLookup: boolean;
+  url: string;
+}
+
 // The URL the proxy should actually fetch for a matched asset.
 //
-// GHES serves /avatars/ to browser session cookies only: a PAT gets a 302 to
-// /login regardless of how it is presented (Bearer, token, Basic, query
-// param). Its private-mode-safe avatar API is the email lookup endpoint at
-// <apiURL>/enterprise/avatars/u/e, not a path-preserving
-// /enterprise/avatars/u/<id> route. GitHub recognizes its generated no-reply
-// address, so the numeric id from /avatars/u/<id> plus the author's login is
-// enough to use that endpoint without exposing the user's real email.
+// GHES serves /avatars/ to browser session cookies only — a PAT gets a 302 to
+// /login however it is presented — so avatars must go through the email lookup
+// API at <apiURL>/enterprise/avatars/u/e. There is no path-preserving
+// /enterprise/avatars/u/<id> route.
 //
-// Everything else — user-attachment images — is fetched at its original URL.
+// Everything else — user attachments, and avatar paths with no email to look up
+// (org and bot avatars) — is fetched at its original URL.
 export function resolveGitHubWebAssetUpstreamURL(
   assetURL: URL,
   environment: Pick<GitHubEnvironment, 'apiURL' | 'isGitHubDotCom' | 'webURL'>,
   avatarLogin?: string
-): string {
+): GitHubWebAssetUpstream {
   if (
     environment.isGitHubDotCom ||
     !assetURL.pathname.startsWith(AVATAR_PATH_PREFIX)
   ) {
-    return assetURL.toString();
+    return { isAvatarLookup: false, url: assetURL.toString() };
   }
 
-  const userID = /^\/avatars\/u\/(\d+)$/.exec(assetURL.pathname)?.[1];
-  if (userID == null || avatarLogin == null || avatarLogin === '') {
-    return assetURL.toString();
+  const email = resolveAvatarLookupEmail(assetURL, environment, avatarLogin);
+  if (email == null) {
+    return { isAvatarLookup: false, url: assetURL.toString() };
   }
 
-  const upstream = new URL(`${environment.apiURL}/enterprise/avatars/u/e`);
-  upstream.searchParams.set(
-    'email',
-    `${userID}+${avatarLogin}@users.noreply.${new URL(environment.webURL).hostname}`
-  );
+  const upstream = new URL(`${environment.apiURL}${AVATAR_EMAIL_API_PATH}`);
+  upstream.searchParams.set('email', email);
   const size = assetURL.searchParams.get('s');
   if (size != null) {
     upstream.searchParams.set('s', size);
   }
-  return upstream.toString();
+  return { isAvatarLookup: true, url: upstream.toString() };
+}
+
+// The address to look the avatar up by, or null when this URL carries neither
+// one nor enough identity to synthesize one. /avatars/u/e already has an
+// `email` parameter (SAML / enterprise managed users); /avatars/u/<id> yields
+// the user's generated no-reply address, which GitHub accepts in place of their
+// real email.
+function resolveAvatarLookupEmail(
+  assetURL: URL,
+  environment: Pick<GitHubEnvironment, 'webURL'>,
+  avatarLogin: string | undefined
+): string | null {
+  if (assetURL.pathname === AVATAR_EMAIL_WEB_PATH) {
+    const email = assetURL.searchParams.get('email');
+    return email == null || email === '' ? null : email;
+  }
+  const userID = /^\/avatars\/u\/(\d+)$/.exec(assetURL.pathname)?.[1];
+  if (userID == null || avatarLogin == null || avatarLogin === '') {
+    return null;
+  }
+  const hostname = getParsedWebURL(environment.webURL)?.hostname;
+  return hostname == null
+    ? null
+    : `${userID}+${avatarLogin}@users.noreply.${hostname}`;
 }
 
 export function createGitHubWebAssetProxyURL(

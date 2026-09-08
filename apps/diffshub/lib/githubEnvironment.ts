@@ -22,7 +22,10 @@
 //   DIFFSHUB_TOKEN_ENCRYPTION_KEY
 //                              Opt-in at-rest encryption of browser-held
 //                              credentials; see getTokenEncryptionKey.
+//   DIFFSHUB_AVATAR_TOKEN      Server-held token for GHES avatar lookups only;
+//                              see getAvatarLookupToken.
 
+import { readNonEmptyString } from './githubOAuthGrant';
 import { createJSONResponse } from './jsonResponse';
 import { parseBearerToken } from './parseBearerToken';
 import { isSealedToken } from './tokenEnvelope';
@@ -194,6 +197,13 @@ function parseEncryptionKey(
     );
   }
   return key;
+}
+
+// The one credential the server may hold of its own: a classic GitHub token
+// used for nothing but GHES avatar lookups — see lib/avatarCredential. Blank
+// counts as unset. Unmemoized because there is no parse cost to cache.
+export function getAvatarLookupToken(): string | undefined {
+  return readNonEmptyString(process.env.DIFFSHUB_AVATAR_TOKEN);
 }
 
 export const LOGIN_REQUIRED_MESSAGE =

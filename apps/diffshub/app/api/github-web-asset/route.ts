@@ -1,6 +1,10 @@
 import { type NextRequest } from 'next/server';
 
 import { fetchAssetFollowingRedirects } from '@/lib/assetRedirects';
+import {
+  noteAvatarCredentialRefused,
+  resolveAvatarCredential,
+} from '@/lib/avatarCredential';
 import { createGitHubRawHeaders } from '@/lib/githubDiffFileServer';
 import {
   getGitHubEnvironment,
@@ -20,6 +24,9 @@ import { resolveBearerToken } from '@/lib/resolveBearerToken';
 // requests cannot carry, so the browser fetches them through here with the
 // viewer's Bearer token. Only allow-listed paths on the configured instance
 // are fetched — this must not become an open proxy.
+//
+// Avatar lookups are the one exception to "always the viewer's token" — see
+// lib/avatarCredential.
 
 export async function GET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
@@ -41,10 +48,25 @@ export async function GET(request: NextRequest) {
 
   let upstream: Response;
   try {
-    upstream = await fetchAssetFollowingRedirects(
-      resolveGitHubWebAssetUpstreamURL(assetURL, environment, avatarLogin),
-      createGitHubRawHeaders(await resolveBearerToken(request))
+    const asset = resolveGitHubWebAssetUpstreamURL(
+      assetURL,
+      environment,
+      avatarLogin
     );
+    const viewerToken = await resolveBearerToken(request);
+    const avatarToken = asset.isAvatarLookup
+      ? resolveAvatarCredential(viewerToken)
+      : undefined;
+    upstream = await fetchAsset(asset.url, avatarToken ?? viewerToken);
+    // A refused deployment credential (mistyped, expired, revoked) must not
+    // take avatars down where the viewer's own token would have served them.
+    if (!upstream.ok && avatarToken != null) {
+      noteAvatarCredentialRefused();
+      // Not awaited: cancelling an upstream body does not settle until its
+      // connection drains, as in fetchAssetFollowingRedirects.
+      void upstream.body?.cancel();
+      upstream = await fetchAsset(asset.url, viewerToken);
+    }
   } catch (error) {
     return createJSONResponse(
       { error: error instanceof Error ? error.message : 'Unknown error' },
@@ -72,4 +94,8 @@ export async function GET(request: NextRequest) {
   }
 
   return createInertAssetResponse(upstream);
+}
+
+function fetchAsset(url: string, token: string | undefined): Promise<Response> {
+  return fetchAssetFollowingRedirects(url, createGitHubRawHeaders(token));
 }

@@ -89,6 +89,7 @@ interface DiffLayoutCache {
 interface ResetLayoutCacheOptions {
   forceSimpleRecompute?: boolean;
   includeEstimatedHeights?: boolean;
+  resetFileAnnotationHeight?: boolean;
   resetRenderRange?: boolean;
 }
 
@@ -291,6 +292,7 @@ export class VirtualizedFileDiff<
   private resetLayoutCache({
     forceSimpleRecompute = false,
     includeEstimatedHeights = false,
+    resetFileAnnotationHeight = false,
     resetRenderRange = true,
   }: ResetLayoutCacheOptions = {}): void {
     this.layoutDirty = true;
@@ -304,11 +306,11 @@ export class VirtualizedFileDiff<
     // short by the whole annotation, so keep the last measurement while a
     // file-level annotation exists. Its full height is a zero-baseline delta,
     // so it is also all that remains of the aggregate.
-    const nextFileAnnotationHeight = includesFileAnnotations(
-      this.getLatestAnnotations()
-    )
-      ? this.cache.fileAnnotationHeight
-      : 0;
+    const nextFileAnnotationHeight =
+      includesFileAnnotations(this.getLatestAnnotations()) &&
+      !resetFileAnnotationHeight
+        ? this.cache.fileAnnotationHeight
+        : 0;
     this.cache.fileAnnotationHeight = nextFileAnnotationHeight;
     if (this.cache.measuredHeightDeltaTotal !== nextFileAnnotationHeight) {
       this.cache.measuredHeightDeltaTotal = nextFileAnnotationHeight;
@@ -549,7 +551,10 @@ export class VirtualizedFileDiff<
       resetLayoutCache = true;
     }
     if (resetLayoutCache) {
-      this.resetLayoutCache({ includeEstimatedHeights: resetEstimatedHeights });
+      this.resetLayoutCache({
+        includeEstimatedHeights: resetEstimatedHeights,
+        resetFileAnnotationHeight: layoutDiffChanged,
+      });
     } else if (resetEstimatedHeights) {
       this.invalidateDerivedLayoutCache(true);
     }
@@ -866,7 +871,10 @@ export class VirtualizedFileDiff<
       this.getSimpleVirtualizer()?.disconnect(this.fileContainer);
     }
     if (!recycle) {
-      this.resetLayoutCache({ includeEstimatedHeights: true });
+      this.resetLayoutCache({
+        includeEstimatedHeights: true,
+        resetFileAnnotationHeight: true,
+      });
       this.pendingExpansions = undefined;
       this.pendingHydratedDiff = undefined;
     }
@@ -1321,6 +1329,7 @@ export class VirtualizedFileDiff<
     if (annotationsChanged || layoutDiffChanged) {
       this.resetLayoutCache({
         includeEstimatedHeights: layoutDiffChanged,
+        resetFileAnnotationHeight: layoutDiffChanged,
       });
     }
 

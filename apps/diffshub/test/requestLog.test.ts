@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { type NextRequest } from 'next/server';
 
-import { withRequestLog } from '../lib/requestLog';
+import { getCurrentRouteLabel, withRequestLog } from '../lib/requestLog';
 import { captureConsole, captureLogRecords } from './helpers/captureConsole';
 
 // Only the surface withRequestLog reads.
@@ -23,7 +23,7 @@ describe('withRequestLog', () => {
       path: '/api/github-web-asset',
       status: 200,
     });
-    expect(typeof record?.durationMs).toBe('number');
+    expect(typeof record?.handlerDurationMs).toBe('number');
   });
 
   // A 4xx is the caller's problem and a 5xx is ours, so they land on different
@@ -72,5 +72,40 @@ describe('withRequestLog', () => {
     expect(String(record?.stack)).toContain('Error: upstream exploded');
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toBe('upstream exploded');
+  });
+});
+
+describe('getCurrentRouteLabel', () => {
+  test('exposes the route being served to helpers called beneath it', async () => {
+    let observed: string | undefined;
+    const handler = withRequestLog(() => {
+      observed = getCurrentRouteLabel('fallback');
+      return new Response('', { status: 200 });
+    });
+
+    await captureConsole(() =>
+      handler(createRequest('GET', '/api/pull-conflicts'))
+    );
+
+    // Shared helpers label upstream failures with the route that actually
+    // reached them, not a literal baked into the helper.
+    expect(observed).toBe('pull-conflicts');
+  });
+
+  test('survives an async boundary inside the handler', async () => {
+    let observed: string | undefined;
+    const handler = withRequestLog(async () => {
+      await Promise.resolve();
+      observed = getCurrentRouteLabel('fallback');
+      return new Response('', { status: 200 });
+    });
+
+    await captureConsole(() => handler(createRequest('GET', '/api/pull-info')));
+
+    expect(observed).toBe('pull-info');
+  });
+
+  test('falls back outside a logged route', () => {
+    expect(getCurrentRouteLabel('startup')).toBe('startup');
   });
 });

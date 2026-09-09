@@ -1,9 +1,18 @@
 import type { GitHubEnvironment } from './githubEnvironment';
 import { createJSONResponse } from './jsonResponse';
+import { getCurrentRouteLabel } from './requestLog';
 import { logUpstreamFailure } from './serverLog';
 
 // Shared failure responses for API routes that proxy the GitHub API, so every
 // route surfaces the same actionable error messages to the browser.
+//
+// The route label on each logged failure comes from the ambient request scope
+// rather than an argument, so a route cannot drift out of sync with the label
+// its own failures are filed under.
+
+// Used when a helper runs outside a logged route: direct helper calls in tests
+// and any startup-time use have no request scope to name.
+const UNKNOWN_ROUTE = 'unknown';
 
 // Relays a failed GitHub response to the caller, forwarding GitHub's own
 // explanation when the body carries one. 401/403/404/422 are actionable for
@@ -11,11 +20,9 @@ import { logUpstreamFailure } from './serverLog';
 export async function createGitHubFailureResponse(
   response: Response
 ): Promise<Response> {
-  // response.url identifies the failing operation better than a route name
-  // would, so callers do not have to thread one through.
   logUpstreamFailure({
     response,
-    route: 'github-api',
+    route: getCurrentRouteLabel(UNKNOWN_ROUTE),
     upstreamURL: response.url,
   });
   let detail = '';
@@ -41,12 +48,13 @@ export async function createGitHubFailureResponse(
 // The upstream fetch itself threw — DNS, TLS, or network failure — so there is
 // no GitHub status to forward.
 export function createUnreachableResponse(
-  environment: GitHubEnvironment
+  environment: GitHubEnvironment,
+  upstreamURL: string = environment.apiURL
 ): Response {
   logUpstreamFailure({
     error: `Could not reach ${environment.host}`,
-    route: 'github-api',
-    upstreamURL: environment.apiURL,
+    route: getCurrentRouteLabel(UNKNOWN_ROUTE),
+    upstreamURL,
   });
   return createJSONResponse(
     { error: `Could not reach ${environment.host}.` },
@@ -73,7 +81,7 @@ export async function parseGitHubJSONBody(
     logUpstreamFailure({
       error,
       response,
-      route: 'github-api',
+      route: getCurrentRouteLabel(UNKNOWN_ROUTE),
       upstreamURL: response.url,
     });
     const contentType = response.headers.get('content-type') ?? '';

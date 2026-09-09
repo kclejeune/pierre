@@ -9,8 +9,8 @@ import { join } from 'node:path';
 // withRequestLog. Add a route to EXEMPT only with a comment saying why.
 const API_DIRECTORY = join(import.meta.dir, '..', 'app', 'api');
 
-// The liveness probe: polled every few seconds, always 200, so a log line per
-// hit would be noise that never diagnoses anything.
+// The readiness probe is polled every few seconds, so a log line per hit would
+// be noise. Configuration failures are emitted by the startup logger.
 const EXEMPT = new Set(['health/route.ts']);
 
 const HTTP_METHODS = ['DELETE', 'GET', 'PATCH', 'POST', 'PUT'];

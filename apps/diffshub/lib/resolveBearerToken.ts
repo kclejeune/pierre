@@ -14,16 +14,35 @@ import { parseBearerToken } from './parseBearerToken';
 import { isSealedToken } from './tokenEnvelope';
 import { openSealedAccessToken } from './tokenSeal';
 
-export async function resolveBearerToken(request: {
+export interface ResolvedBearerCredential {
+  // The GitHub token forwarded upstream.
+  token: string;
+  // True only when the deployment verified the credential's authenticated
+  // envelope. Bare PATs are usable as viewer credentials but cannot authorize
+  // access to a separate server-held credential.
+  verified: boolean;
+}
+
+export async function resolveBearerCredential(request: {
   headers: { get(name: string): string | null };
-}): Promise<string | undefined> {
+}): Promise<ResolvedBearerCredential | undefined> {
   const token = parseBearerToken(request.headers.get('authorization'));
   if (token == null) {
-    return token;
+    return undefined;
   }
   const key = getTokenEncryptionKey();
   if (!isSealedToken(token)) {
-    return key == null ? token : undefined;
+    return key == null ? { token, verified: false } : undefined;
   }
-  return key == null ? undefined : openSealedAccessToken(token, key);
+  if (key == null) {
+    return undefined;
+  }
+  const opened = await openSealedAccessToken(token, key);
+  return opened == null ? undefined : { token: opened, verified: true };
+}
+
+export async function resolveBearerToken(request: {
+  headers: { get(name: string): string | null };
+}): Promise<string | undefined> {
+  return (await resolveBearerCredential(request))?.token;
 }

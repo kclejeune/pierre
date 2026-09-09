@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { resetGitHubEnvironmentCache } from '../lib/githubEnvironment';
-import { resolveBearerToken } from '../lib/resolveBearerToken';
+import {
+  resolveBearerCredential,
+  resolveBearerToken,
+} from '../lib/resolveBearerToken';
 import { isSealedToken } from '../lib/tokenEnvelope';
 import {
   openSealedAccessToken,
@@ -100,6 +103,12 @@ describe('resolveBearerToken', () => {
     ).toBeUndefined();
   });
 
+  test('marks bare credentials unverified', async () => {
+    expect(
+      await resolveBearerCredential(requestWithAuth('Bearer ghp_pat'))
+    ).toEqual({ token: 'ghp_pat', verified: false });
+  });
+
   test('rejects bare tokens when encryption is required', async () => {
     configureKey(KEY);
     expect(
@@ -116,6 +125,9 @@ describe('resolveBearerToken', () => {
     expect(await resolveBearerToken(requestWithAuth(`Bearer ${sealed}`))).toBe(
       'ghu_access'
     );
+    expect(
+      await resolveBearerCredential(requestWithAuth(`Bearer ${sealed}`))
+    ).toEqual({ token: 'ghu_access', verified: true });
   });
 
   test('resolves unopenable envelopes to tokenless', async () => {

@@ -96,7 +96,10 @@ export function CommentAuthorAvatar({
     payloadSrc != null && !isRecentlyFailedSrc(payloadSrc, version);
   // The profile also supplies the display name behind initials, so one
   // request serves both fallback stages.
-  const profile = useGitHubUserProfile(payloadUsable ? null : author.login);
+  const profile = useGitHubUserProfile(
+    payloadUsable ? null : author.login,
+    version
+  );
   const profileSrc =
     profile != null &&
     profile.avatarUrl !== '' &&

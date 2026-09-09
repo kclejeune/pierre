@@ -82,9 +82,13 @@ export function MarkdownImage({
     getGitHubTokenSnapshot,
     getServerGitHubTokenSnapshot
   );
-  const [failedVersion, setFailedVersion] = useState<number>();
-  const failed = failedVersion === version;
   const sourceURL = typeof src === 'string' ? src : null;
+  const [failedAsset, setFailedAsset] = useState<{
+    sourceURL: string;
+    version: number;
+  }>();
+  const failed =
+    failedAsset?.version === version && failedAsset.sourceURL === sourceURL;
   const proxied =
     sourceURL != null ? createGitHubWebAssetProxyURL(sourceURL, webURL) : null;
   if (sourceURL == null || proxied == null) {
@@ -108,7 +112,11 @@ export function MarkdownImage({
       {...rest}
       alt={alt ?? ''}
       src={proxied}
-      onError={() => setFailedVersion(version)}
+      onError={() => {
+        if (sourceURL != null) {
+          setFailedAsset({ sourceURL, version });
+        }
+      }}
     />
   );
 }

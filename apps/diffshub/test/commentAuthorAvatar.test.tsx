@@ -40,6 +40,50 @@ afterAll(() => {
 });
 
 describe('CommentAuthorAvatar', () => {
+  test('retries a failed profile lookup after the credential changes', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = mock(() => {
+      calls += 1;
+      return Promise.resolve(
+        calls === 1
+          ? new Response('missing', { status: 404 })
+          : Response.json({
+              avatarUrl: 'https://cdn.example.com/octocat.png',
+              name: 'Octo Cat',
+            })
+      );
+    }) as unknown as typeof fetch;
+
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const author = { avatarUrl: '', login: 'octocat' };
+
+    try {
+      saveGitHubTokenToStorage('profile-token-1');
+      await act(async () => {
+        root.render(<CommentAuthorAvatar author={author} />);
+        await Promise.resolve();
+      });
+      expect(container.textContent).toBe('O');
+
+      await act(async () => {
+        saveGitHubTokenToStorage('profile-token-2');
+        await Promise.resolve();
+      });
+      expect(calls).toBe(2);
+      expect(container.querySelector('img')?.src).toBe(
+        'https://cdn.example.com/octocat.png'
+      );
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+      saveGitHubTokenToStorage('');
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test('retries a failed avatar URL after the credential changes', async () => {
     const originalFetch = globalThis.fetch;
     // The failure-path profile lookup; resolving to a miss keeps the

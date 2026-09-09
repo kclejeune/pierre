@@ -2,6 +2,7 @@ import { type NextRequest } from 'next/server';
 
 import { fetchAssetFollowingRedirects } from '@/lib/assetRedirects';
 import {
+  isAvatarCredentialRefusal,
   noteAvatarCredentialRefused,
   resolveAvatarCredential,
 } from '@/lib/avatarCredential';
@@ -14,10 +15,13 @@ import {
   matchGitHubWebAsset,
   resolveGitHubWebAssetUpstreamURL,
 } from '@/lib/githubWebAssets';
-import { createInertAssetResponse } from '@/lib/inertAssetResponse';
+import {
+  createInertAssetResponse,
+  isImageResponse,
+} from '@/lib/inertAssetResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { withRequestLog } from '@/lib/requestLog';
-import { resolveBearerToken } from '@/lib/resolveBearerToken';
+import { resolveBearerCredential } from '@/lib/resolveBearerToken';
 import {
   formatError,
   logUpstreamFailure,
@@ -36,6 +40,7 @@ import {
 // lib/avatarCredential.
 
 const ROUTE = 'github-web-asset';
+const AVATAR_MAX_AGE_SECONDS = 3600;
 
 async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
@@ -71,17 +76,23 @@ async function handleGET(request: NextRequest) {
   let upstream: Response;
   let credential: UpstreamCredential = 'none';
   try {
-    const viewerToken = await resolveBearerToken(request);
+    const viewerCredential = await resolveBearerCredential(request);
+    const viewerToken = viewerCredential?.token;
     const avatarToken = asset.isAvatarLookup
-      ? resolveAvatarCredential(viewerToken)
+      ? resolveAvatarCredential(
+          viewerToken,
+          viewerCredential?.verified === true
+        )
       : undefined;
     credential = describeCredential(avatarToken, viewerToken);
     upstream = await fetchAsset(asset.url, avatarToken ?? viewerToken);
     // A refused deployment credential (mistyped, expired, revoked) must not
     // take avatars down where the viewer's own token would have served them.
-    if (!upstream.ok && avatarToken != null) {
+    if (avatarToken != null && !(upstream.ok && isImageResponse(upstream))) {
       logFailure({ credential, response: upstream });
-      noteAvatarCredentialRefused();
+      if (isAvatarCredentialRefusal(upstream)) {
+        noteAvatarCredentialRefused();
+      }
       // Not awaited: cancelling an upstream body does not settle until its
       // connection drains, as in fetchAssetFollowingRedirects.
       void upstream.body?.cancel();
@@ -103,8 +114,8 @@ async function handleGET(request: NextRequest) {
   // A 2xx carrying markup rather than an image means the instance answered
   // with a page (a login or error interstitial) where an asset was expected.
   // Rejecting it here keeps that from reaching the browser as a broken image.
-  const contentType = upstream.headers.get('content-type') ?? '';
-  if (!contentType.startsWith('image/')) {
+  if (!isImageResponse(upstream)) {
+    const contentType = upstream.headers.get('content-type') ?? '';
     logFailure({ credential, response: upstream });
     return createJSONResponse(
       {
@@ -114,11 +125,25 @@ async function handleGET(request: NextRequest) {
     );
   }
 
-  return createInertAssetResponse(upstream);
+  return createInertAssetResponse(upstream, {
+    maxAgeSeconds: assetMaxAgeSeconds(credential),
+  });
 }
 
 function fetchAsset(url: string, token: string | undefined): Promise<Response> {
   return fetchAssetFollowingRedirects(url, createGitHubRawHeaders(token));
+}
+
+// An asset fetched with the deployment-wide avatar credential does not depend on
+// who asked for it, so the browser may hold it for an hour. Anything fetched
+// with a viewer's own token is viewer-specific and stays uncached, since the
+// same URL can legitimately resolve differently for the next viewer.
+function assetMaxAgeSeconds(
+  credential: UpstreamCredential
+): number | undefined {
+  return credential === 'deployment-avatar'
+    ? AVATAR_MAX_AGE_SECONDS
+    : undefined;
 }
 
 function describeCredential(

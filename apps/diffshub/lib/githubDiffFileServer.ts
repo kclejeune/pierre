@@ -1,4 +1,5 @@
 import type { ChangeTypes, FileContents } from '@pierre/diffs';
+import { createHash } from 'node:crypto';
 
 import {
   encodePath,
@@ -16,11 +17,16 @@ import {
   GITHUB_USER_AGENT,
 } from './githubEnvironment';
 import { parseGitHubJSONBody } from './githubProxyResponse';
+import { isGitHubRateLimitResponse } from './githubRateLimit';
 import { type PlainFetch } from './plainFetch';
+import { createAsyncLRU, credentialCacheScope } from './serverLRU';
 
 const GITHUB_RAW_MEDIA_TYPE = 'application/vnd.github.raw';
 const REF_CACHE_TTL_MS = 5 * 60 * 1000;
 const FILE_CACHE_TTL_MS = 30 * 60 * 1000;
+const MAX_REF_CACHE_ENTRIES = 256;
+const MAX_FILE_CACHE_ENTRIES = 128;
+const MAX_FILE_CACHE_BYTES = 32 * 1024 * 1024;
 
 interface GitHubRepoRef extends GitHubRepo {
   ref: string;
@@ -33,36 +39,73 @@ interface GitHubDiffRefs {
 
 export interface GitHubDiffFileRequest {
   name: string;
+  // Blob object IDs the patch's `index` line recorded for each side, when the
+  // client parsed them. They identify the exact content the rendered patch was
+  // built from, which is what lets a stale ref resolution be detected below.
+  newObjectId?: string;
   path: string;
   prevName?: string;
+  prevObjectId?: string;
   type: ChangeTypes;
+}
+
+interface LoadedDiffFiles {
+  oldFile: FileContents | null;
+  newFile: FileContents | null;
+}
+
+export class GitHubDiffChangedError extends Error {
+  constructor() {
+    super(
+      'The diff changed while its file contents were loading. Reload and try again.'
+    );
+    this.name = 'GitHubDiffChangedError';
+  }
 }
 
 interface GitHubDiffFileServerOptions {
   fetch?: PlainFetch;
   token?: string;
-  tokenSource?: 'request';
+  // Set when `token` came from the viewer's own request. Only such a credential
+  // may spend the authenticated Contents API quota, which is what reaches
+  // private repositories; anything else reads the anonymous raw host.
+  tokenFromRequest?: boolean;
 }
 
-interface CacheEntry<T> {
-  expiresAt: number;
-  promise: Promise<T>;
-}
-
-const refsCache = new Map<string, CacheEntry<GitHubDiffRefs>>();
-const fileCache = new Map<string, CacheEntry<FileContents>>();
+const refsCache = createAsyncLRU<string, GitHubDiffRefs>({
+  maxEntries: MAX_REF_CACHE_ENTRIES,
+  ttlMs: REF_CACHE_TTL_MS,
+});
+const fileCache = createAsyncLRU<string, FileContents>({
+  maxEntries: MAX_FILE_CACHE_ENTRIES,
+  maxWeight: MAX_FILE_CACHE_BYTES,
+  ttlMs: FILE_CACHE_TTL_MS,
+  // JavaScript strings use up to two bytes per UTF-16 code unit. This is an
+  // intentionally conservative approximation; object overhead is bounded by
+  // the entry cap.
+  weight: (file) => file.contents.length * 2,
+});
 
 export async function loadGitHubDiffFiles(
   request: GitHubDiffFileRequest,
   options: GitHubDiffFileServerOptions = {}
-): Promise<{ oldFile: FileContents | null; newFile: FileContents | null }> {
+): Promise<LoadedDiffFiles> {
   const source = parseGitHubDiffSource(request.path);
   if (source == null) {
     throw new Error('Unsupported GitHub diff path.');
   }
 
   const fetcher = options.fetch ?? fetch;
-  const useSharedCache = options.tokenSource !== 'request';
+  const cacheScope = credentialCacheScope(options.token);
+  // The fetcher, credential options, and cache scope are the same for every
+  // file this request touches, so bind them once and let each case below name
+  // only what varies: the ref and path to read.
+  const loadFile = (repoRef: GitHubRepoRef, path: string) =>
+    loadCachedGitHubFile(repoRef, path, fetcher, options, cacheScope);
+  const verifyRefsAndLoad = (
+    load: (refs: GitHubDiffRefs) => Promise<LoadedDiffFiles>
+  ) =>
+    loadWithVerifiedRefs(source, fetcher, options, cacheScope, request, load);
   switch (request.type) {
     case 'new':
       return {
@@ -76,61 +119,106 @@ export async function loadGitHubDiffFiles(
       };
     case 'change':
     case 'rename-changed': {
-      const refs = await resolveGitHubDiffRefsForRequest(
-        source,
-        fetcher,
-        options,
-        useSharedCache
-      );
-      const oldRef = requireOldRef(request.name, refs);
       const oldPath = request.prevName ?? request.name;
-      const [oldFile, newFile] = await Promise.all([
-        loadGitHubFileForRequest(
-          oldRef,
-          oldPath,
-          fetcher,
-          options,
-          useSharedCache
-        ),
-        loadGitHubFileForRequest(
-          refs.newRef,
-          request.name,
-          fetcher,
-          options,
-          useSharedCache
-        ),
-      ]);
-      return { oldFile, newFile };
+      return verifyRefsAndLoad(async (refs) => {
+        const [oldFile, newFile] = await Promise.all([
+          loadFile(requireOldRef(request.name, refs), oldPath),
+          loadFile(refs.newRef, request.name),
+        ]);
+        return { oldFile, newFile };
+      });
     }
-    case 'rename-pure': {
-      const refs = await resolveGitHubDiffRefsForRequest(
-        source,
-        fetcher,
-        options,
-        useSharedCache
-      );
-      const newFile = await loadGitHubFileForRequest(
-        refs.newRef,
-        request.name,
-        fetcher,
-        options,
-        useSharedCache
-      );
-      return { oldFile: null, newFile };
-    }
+    case 'rename-pure':
+      return verifyRefsAndLoad(async (refs) => ({
+        oldFile: null,
+        newFile: await loadFile(refs.newRef, request.name),
+      }));
   }
 }
 
-function resolveGitHubDiffRefsForRequest(
+// Hydration must not pair a freshly loaded patch with file contents from an
+// older commit. The refs behind a mutable source (a pull's head, a branch
+// compare) are cached for minutes, so a diff rendered after the head moved can
+// arrive here while the cached resolution still names the previous commit —
+// producing a patch and file bodies that disagree.
+//
+// A git blob ID is a SHA-1 over the content, so the patch's recorded object IDs
+// can be checked against the bytes actually fetched without another API call.
+// A mismatch on a cached resolution may mean the refs moved: drop them and
+// resolve once more. A mismatch on a fresh resolution means the patch and the
+// current ref no longer describe the same contents, so fail rather than
+// hydrating the rendered patch with unrelated lines.
+async function loadWithVerifiedRefs(
   source: GitHubDiffSource,
   fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions,
-  useSharedCache: boolean
-): Promise<GitHubDiffRefs> {
-  if (!useSharedCache) {
-    return resolveGitHubDiffRefs(source, fetcher, options);
+  cacheScope: string,
+  request: GitHubDiffFileRequest,
+  load: (refs: GitHubDiffRefs) => Promise<LoadedDiffFiles>
+): Promise<LoadedDiffFiles> {
+  const cacheKey = refsCacheKey(cacheScope, source);
+  const servedFromCache = refsCache.has(cacheKey);
+  const files = await load(
+    await resolveCachedGitHubDiffRefs(source, fetcher, options, cacheScope)
+  );
+  if (matchesRecordedObjectIds(files, request)) {
+    return files;
   }
-  return resolveCachedGitHubDiffRefs(source, fetcher, options);
+  if (servedFromCache) {
+    refsCache.delete(cacheKey);
+    const refreshed = await load(
+      await resolveCachedGitHubDiffRefs(source, fetcher, options, cacheScope)
+    );
+    if (matchesRecordedObjectIds(refreshed, request)) {
+      return refreshed;
+    }
+  }
+  throw new GitHubDiffChangedError();
+}
+
+// True unless a side the patch recorded an object ID for came back with
+// different content. Sides the client did not describe cannot be checked and so
+// never report a mismatch.
+function matchesRecordedObjectIds(
+  files: LoadedDiffFiles,
+  request: GitHubDiffFileRequest
+): boolean {
+  return (
+    matchesObjectId(files.oldFile, request.prevObjectId) &&
+    matchesObjectId(files.newFile, request.newObjectId)
+  );
+}
+
+// GitHub abbreviates the object IDs in a patch's `index` line, so the recorded
+// value is compared as a prefix. Very short values are ignored: they carry too
+// little information to distinguish a moved ref from a coincidence.
+const MIN_COMPARABLE_OBJECT_ID_LENGTH = 7;
+
+function matchesObjectId(
+  file: FileContents | null,
+  objectId: string | undefined
+): boolean {
+  if (file == null || objectId == null) {
+    return true;
+  }
+  const expected = objectId.trim().toLowerCase();
+  if (
+    expected.length < MIN_COMPARABLE_OBJECT_ID_LENGTH ||
+    !/^[0-9a-f]+$/.test(expected)
+  ) {
+    return true;
+  }
+  return gitBlobId(file.contents).startsWith(expected);
+}
+
+// The git object ID of a blob: SHA-1 over the header `blob <byteLength>\0`
+// followed by the content bytes, exactly as `git hash-object` computes it.
+function gitBlobId(contents: string): string {
+  const bytes = Buffer.from(contents, 'utf8');
+  return createHash('sha1')
+    .update(`blob ${bytes.length}\0`)
+    .update(bytes)
+    .digest('hex');
 }
 
 export function clearGitHubDiffFileServerCache(): void {
@@ -156,17 +244,13 @@ export async function loadGitHubDiffAssetResponse(
   }
   // A rendered doc can reference many images, and each arrives as its own
   // request — cache the ref resolution so they don't each re-run the GitHub
-  // API calls. Refs are keyed by token so one viewer's resolution of a
-  // private diff is never served to a request that couldn't resolve it
-  // itself.
-  const refsCacheKey = `${getSourceCacheKey(source)}\0${
-    options.tokenSource === 'request' ? (options.token ?? '') : ''
-  }`;
-  const refs = await getCachedPromise(
-    refsCache,
-    refsCacheKey,
-    REF_CACHE_TTL_MS,
-    () => resolveGitHubDiffRefs(source, fetch, options)
+  // API calls. Refs are partitioned by a credential digest so one viewer's
+  // resolution of a private diff is never served to another viewer.
+  const refs = await resolveCachedGitHubDiffRefs(
+    source,
+    fetch,
+    options,
+    credentialCacheScope(options.token)
   );
   const ref = request.side === 'old' ? refs.oldRef : refs.newRef;
   if (ref == null) {
@@ -180,13 +264,17 @@ export async function loadGitHubDiffAssetResponse(
   );
 }
 
+function refsCacheKey(cacheScope: string, source: GitHubDiffSource): string {
+  return `${cacheScope}\0${getSourceCacheKey(source)}`;
+}
+
 function resolveCachedGitHubDiffRefs(
   source: GitHubDiffSource,
   fetcher: PlainFetch,
-  options: GitHubDiffFileServerOptions
+  options: GitHubDiffFileServerOptions,
+  cacheScope: string
 ): Promise<GitHubDiffRefs> {
-  const cacheKey = getSourceCacheKey(source);
-  return getCachedPromise(refsCache, cacheKey, REF_CACHE_TTL_MS, () =>
+  return refsCache.getOrCreate(refsCacheKey(cacheScope, source), () =>
     resolveGitHubDiffRefs(source, fetcher, options)
   );
 }
@@ -195,50 +283,14 @@ function loadCachedGitHubFile(
   repoRef: GitHubRepoRef,
   path: string,
   fetcher: PlainFetch,
-  options: GitHubDiffFileServerOptions
+  options: GitHubDiffFileServerOptions,
+  cacheScope: string
 ): Promise<FileContents> {
   const normalizedPath = path.replace(/^\/+/, '');
-  const cacheKey = `${repoRef.owner}/${repoRef.repo}\0${repoRef.ref}\0${normalizedPath}`;
-  return getCachedPromise(fileCache, cacheKey, FILE_CACHE_TTL_MS, () =>
+  const cacheKey = `${cacheScope}\0${repoRef.owner}/${repoRef.repo}\0${repoRef.ref}\0${normalizedPath}`;
+  return fileCache.getOrCreate(cacheKey, () =>
     fetchGitHubFile(repoRef, normalizedPath, fetcher, options)
   );
-}
-
-function loadGitHubFileForRequest(
-  repoRef: GitHubRepoRef,
-  path: string,
-  fetcher: PlainFetch,
-  options: GitHubDiffFileServerOptions,
-  useSharedCache: boolean
-): Promise<FileContents> {
-  const normalizedPath = path.replace(/^\/+/, '');
-  if (!useSharedCache) {
-    return fetchGitHubFile(repoRef, normalizedPath, fetcher, options);
-  }
-  return loadCachedGitHubFile(repoRef, normalizedPath, fetcher, options);
-}
-
-function getCachedPromise<T>(
-  cache: Map<string, CacheEntry<T>>,
-  cacheKey: string,
-  ttlMs: number,
-  create: () => Promise<T>
-): Promise<T> {
-  const now = Date.now();
-  const cached = cache.get(cacheKey);
-  if (cached != null && cached.expiresAt > now) {
-    return cached.promise;
-  }
-
-  const promise = create().catch((error: unknown) => {
-    const current = cache.get(cacheKey);
-    if (current?.promise === promise) {
-      cache.delete(cacheKey);
-    }
-    throw error;
-  });
-  cache.set(cacheKey, { expiresAt: now + ttlMs, promise });
-  return promise;
 }
 
 async function resolveGitHubDiffRefs(
@@ -467,7 +519,7 @@ export async function fetchGitHubFileContents(
   fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions
 ): Promise<Response> {
-  if (options.tokenSource === 'request' && options.token != null) {
+  if (options.tokenFromRequest === true && options.token != null) {
     const url = createEnvironmentAPIURL(
       getGitHubEnvironment(),
       `/repos/${encodeURLSegment(repoRef.owner)}/${encodeURLSegment(repoRef.repo)}/contents/${encodePath(path)}`,
@@ -555,19 +607,6 @@ async function assertGitHubResponseOK(
     detail.length > 0
       ? `${label} failed (${response.status}): ${detail}`
       : `${label} failed (${response.status}).`
-  );
-}
-
-function isGitHubRateLimitResponse(
-  response: Response,
-  detail: string
-): boolean {
-  if (response.status !== 403) {
-    return false;
-  }
-  return (
-    response.headers.get('x-ratelimit-remaining') === '0' ||
-    /rate limit/i.test(detail)
   );
 }
 

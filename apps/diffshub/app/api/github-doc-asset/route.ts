@@ -51,7 +51,7 @@ async function handleGET(request: NextRequest) {
   try {
     upstream = await loadGitHubDiffAssetResponse(
       { file, path, side },
-      token == null ? {} : { token, tokenSource: 'request' }
+      token == null ? {} : { token, tokenFromRequest: true }
     );
   } catch (error) {
     return createJSONResponse(

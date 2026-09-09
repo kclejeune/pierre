@@ -1,7 +1,10 @@
 import type { ChangeTypes } from '@pierre/diffs';
 import { type NextRequest } from 'next/server';
 
-import { loadGitHubDiffFiles } from '@/lib/githubDiffFileServer';
+import {
+  GitHubDiffChangedError,
+  loadGitHubDiffFiles,
+} from '@/lib/githubDiffFileServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
@@ -20,6 +23,8 @@ async function handleGET(request: NextRequest) {
   const name = params.get('name');
   const type = parseChangeType(params.get('type'));
   const prevName = params.get('prevName') ?? undefined;
+  const prevObjectId = params.get('prevObjectId') ?? undefined;
+  const newObjectId = params.get('newObjectId') ?? undefined;
   const token = await resolveBearerToken(request);
 
   if (path == null || name == null || type == null) {
@@ -39,14 +44,14 @@ async function handleGET(request: NextRequest) {
   try {
     return createJSONResponse(
       await loadGitHubDiffFiles(
-        { name, path, prevName, type },
-        { token, tokenSource: 'request' }
+        { name, newObjectId, path, prevName, prevObjectId, type },
+        { token, tokenFromRequest: true }
       )
     );
   } catch (error) {
     return createJSONResponse(
       { error: error instanceof Error ? error.message : 'Unknown error' },
-      { status: 502 }
+      { status: error instanceof GitHubDiffChangedError ? 409 : 502 }
     );
   }
 }

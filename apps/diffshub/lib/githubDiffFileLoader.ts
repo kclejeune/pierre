@@ -22,7 +22,8 @@ interface LoadedDiffFilesResponse {
 
 // Creates a Diffs `loadDiffFiles` callback for GitHub routes supported by
 // DiffsHub. Browser code only talks to DiffsHub's same-origin API route so the
-// server can attach optional GitHub auth and share caches across viewers.
+// server can attach optional GitHub auth and reuse resolved-SHA file data
+// within the viewer's credential scope.
 export function createGitHubDiffFileLoader(
   path: string,
   options: GitHubDiffFileLoaderOptions = {}
@@ -58,9 +59,7 @@ export function createGitHubDiffFileLoader(
         const promise = fetchLoadedDiffFiles(
           endpoint,
           path,
-          fileDiff.type,
-          fileDiff.name,
-          fileDiff.prevName,
+          fileDiff,
           getToken(),
           fetcher
         ).catch((error: unknown) => {
@@ -85,14 +84,12 @@ function getFileDiffVersion(fileDiff: FileDiffMetadata): string {
 async function fetchLoadedDiffFiles(
   endpoint: string,
   sourcePath: string,
-  type: string,
-  name: string,
-  prevName: string | undefined,
+  fileDiff: FileDiffMetadata,
   token: string | undefined,
   fetcher: PlainFetch
 ): Promise<FileDiffLoadedFiles> {
   const response = await fetcher(
-    createEndpointURL(endpoint, sourcePath, type, name, prevName),
+    createEndpointURL(endpoint, sourcePath, fileDiff),
     createEndpointRequestInit(token)
   );
   if (!response.ok) {
@@ -104,19 +101,30 @@ async function fetchLoadedDiffFiles(
     );
   }
 
-  return normalizeLoadedDiffFiles(await response.json(), type);
+  return normalizeLoadedDiffFiles(await response.json(), fileDiff.type);
 }
 
+// The patch's recorded object IDs travel with the request so the server can
+// tell that its cached ref resolution no longer matches the diff being
+// hydrated — see loadWithVerifiedRefs in lib/githubDiffFileServer.
 function createEndpointURL(
   endpoint: string,
   sourcePath: string,
-  type: string,
-  name: string,
-  prevName: string | undefined
+  fileDiff: FileDiffMetadata
 ): string {
-  const searchParams = new URLSearchParams({ path: sourcePath, type, name });
-  if (prevName != null) {
-    searchParams.set('prevName', prevName);
+  const searchParams = new URLSearchParams({
+    path: sourcePath,
+    type: fileDiff.type,
+    name: fileDiff.name,
+  });
+  if (fileDiff.prevName != null) {
+    searchParams.set('prevName', fileDiff.prevName);
+  }
+  if (fileDiff.prevObjectId != null) {
+    searchParams.set('prevObjectId', fileDiff.prevObjectId);
+  }
+  if (fileDiff.newObjectId != null) {
+    searchParams.set('newObjectId', fileDiff.newObjectId);
   }
   return `${endpoint}?${searchParams}`;
 }

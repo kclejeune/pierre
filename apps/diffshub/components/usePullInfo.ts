@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { type PullRequestRef } from '@/lib/pullCommentsClient';
 import { fetchPullInfo, type PullInfo } from '@/lib/pullInfoClient';
@@ -36,6 +36,7 @@ export function usePullInfo({
     forPull: PullRequestRef;
     info: PullInfo;
   } | null>(null);
+  const loadedViewerKey = useRef<number | undefined>(undefined);
   useEffect(() => {
     // Keep the current value while the same pull refetches (a reload or token
     // change) so the header's branch display does not blink; only a different
@@ -53,9 +54,17 @@ export function usePullInfo({
       return;
     }
     const controller = new AbortController();
-    fetchPullInfo(pullRequest, getGitHubToken(), controller.signal)
+    // A new viewer generation represents an explicit diff reload. Bypass the
+    // pull-info response cache in that case so refreshed branch tips and state
+    // cannot be paired with the newly loaded patch.
+    const cache =
+      loadedViewerKey.current == null || loadedViewerKey.current === viewerKey
+        ? 'default'
+        : 'reload';
+    fetchPullInfo(pullRequest, getGitHubToken(), controller.signal, cache)
       .then((info) => {
         if (!controller.signal.aborted) {
+          loadedViewerKey.current = viewerKey;
           setState({ forPull: pullRequest, info });
         }
       })

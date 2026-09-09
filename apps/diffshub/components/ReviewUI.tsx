@@ -330,8 +330,8 @@ function ReviewUIInner({
     viewerRef,
   });
   // Conflict detection: once the pull's diff has loaded, ask the server
-  // whether the branch conflicts with its base. Best-effort — a failed check
-  // just hides the resolve affordance.
+  // whether the branch conflicts with its base. A failed check keeps the
+  // resolve affordance hidden and surfaces GitHub's explanation in a toast.
   const [conflicts, setConflicts] = useState<PullConflictsResult | null>(null);
   const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
   useEffect(() => {

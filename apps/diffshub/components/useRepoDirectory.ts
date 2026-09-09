@@ -21,32 +21,17 @@ export interface RepoDirectoryState {
   refresh(): void;
 }
 
-// Directory pages are shared per token version across the browse and pulls
-// dashboards. Refresh explicitly evicts the current token's pages.
-const directoryCache = new Map<string, Promise<RepoDirectoryPayload>>();
-
 function fetchDirectory(
-  tokenVersion: number,
-  page?: number
+  page?: number,
+  cache: RequestCache = 'default'
 ): Promise<RepoDirectoryPayload> {
-  const key = `${tokenVersion}|${page ?? 'initial'}`;
-  let pending = directoryCache.get(key);
-  if (pending == null) {
-    pending = requestJSON(
-      page == null ? '/api/github-repos' : `/api/github-repos?page=${page}`,
-      {
-        headers: storedGitHubTokenHeaders(),
-      }
-    )
-      .then((payload) => payload as RepoDirectoryPayload)
-      .catch((error: unknown) => {
-        // Failures are not cached so the next mount retries.
-        directoryCache.delete(key);
-        throw error instanceof Error ? error : new Error(String(error));
-      });
-    directoryCache.set(key, pending);
-  }
-  return pending;
+  return requestJSON(
+    page == null ? '/api/github-repos' : `/api/github-repos?page=${page}`,
+    {
+      cache,
+      headers: storedGitHubTokenHeaders(),
+    }
+  ) as Promise<RepoDirectoryPayload>;
 }
 
 // The viewer's org-grouped repository directory for the dashboards. Callers
@@ -59,6 +44,14 @@ export function useRepoDirectory(tokenVersion: number): RepoDirectoryState {
   }>({ error: null, loading: true, payload: null });
   const [loadingMore, setLoadingMore] = useState(false);
   const [reloadVersion, setReloadVersion] = useState(0);
+  const forceReload = useRef(false);
+  // The cache mode every page of the current listing generation is fetched
+  // with. A refresh has to bypass the HTTP cache for the pages loadMore
+  // fetches later too, not just page 1 — the repo route's response is cached
+  // for five minutes, so a cached page 2 would merge the previous
+  // generation's repos, and its nextPage cursor, into a freshly reloaded
+  // page 1. Reset per generation so a token change goes back to the cache.
+  const pageCache = useRef<RequestCache>('default');
   // Bumped when the listing restarts (refresh, token change) so a loadMore
   // begun beforehand discards its page instead of merging stale repos — and a
   // stale nextPage cursor — into the freshly fetched payload.
@@ -68,7 +61,9 @@ export function useRepoDirectory(tokenVersion: number): RepoDirectoryState {
     generation.current += 1;
     let cancelled = false;
     setState((previous) => ({ ...previous, error: null, loading: true }));
-    fetchDirectory(tokenVersion)
+    pageCache.current = forceReload.current ? 'reload' : 'default';
+    forceReload.current = false;
+    fetchDirectory(undefined, pageCache.current)
       .then((payload) => {
         if (!cancelled) {
           setState({ error: null, loading: false, payload });
@@ -85,17 +80,13 @@ export function useRepoDirectory(tokenVersion: number): RepoDirectoryState {
   }, [reloadVersion, tokenVersion]);
 
   const refresh = useCallback(() => {
-    for (const key of directoryCache.keys()) {
-      if (key.startsWith(`${tokenVersion}|`)) {
-        directoryCache.delete(key);
-      }
-    }
+    forceReload.current = true;
     // Bumped here as well as in the effect: a stale loadMore could resolve
     // in the window between this click and the effect running.
     generation.current += 1;
     setLoadingMore(false);
     setReloadVersion((version) => version + 1);
-  }, [tokenVersion]);
+  }, []);
 
   const loadMore = useCallback(() => {
     const page = state.payload?.nextPage;
@@ -105,7 +96,7 @@ export function useRepoDirectory(tokenVersion: number): RepoDirectoryState {
     const startedGeneration = generation.current;
     setLoadingMore(true);
     setState((previous) => ({ ...previous, error: null }));
-    void fetchDirectory(tokenVersion, page).then(
+    void fetchDirectory(page, pageCache.current).then(
       (payload) => {
         if (generation.current !== startedGeneration) {
           return;
@@ -132,7 +123,7 @@ export function useRepoDirectory(tokenVersion: number): RepoDirectoryState {
         setLoadingMore(false);
       }
     );
-  }, [loadingMore, state.payload, tokenVersion]);
+  }, [loadingMore, state.payload]);
 
   const groups = useMemo(
     () => (state.payload == null ? [] : groupRepoDirectory(state.payload)),

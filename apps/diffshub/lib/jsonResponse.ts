@@ -15,3 +15,19 @@ export function createJSONResponse(
     },
   });
 }
+
+// Successful, token-scoped reads can opt into the browser's HTTP cache while
+// retaining createJSONResponse's Authorization variance. Errors should keep
+// using createJSONResponse directly so they remain no-store.
+export function createPrivateJSONResponse(
+  body: unknown,
+  maxAgeSeconds: number,
+  options: { immutable?: boolean } = {}
+): Response {
+  const immutable = options.immutable === true ? ', immutable' : '';
+  return createJSONResponse(body, {
+    headers: {
+      'Cache-Control': `private, max-age=${maxAgeSeconds}${immutable}`,
+    },
+  });
+}

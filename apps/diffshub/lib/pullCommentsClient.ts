@@ -274,7 +274,9 @@ export async function requestJSON(
 ): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetch(input, { cache: 'no-store', ...init });
+    // Each route's response headers decide whether a GET is reusable. Mutating
+    // requests and freshness-sensitive reads return no-store themselves.
+    response = await fetch(input, init);
   } catch {
     throw new Error('Could not reach the DiffsHub server.');
   }

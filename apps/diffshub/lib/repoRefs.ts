@@ -14,25 +14,12 @@ export interface RepoRefsData {
   truncated: boolean;
 }
 
-// In-flight/completed responses keyed per repo+token, so the dashboard and
-// the tree view's diff menu share one fetch instead of re-running the
-// three-request fan-out on every mount (the route itself is no-store).
-// Failures evict so the next attempt retries.
-const refsCache = new Map<string, Promise<RepoRefsData>>();
-
 export function fetchRepoRefs(
   repo: GitHubRepo,
   token: string | undefined
 ): Promise<RepoRefsData> {
-  const key = `${token ?? ''}:${repo.owner}/${repo.repo}`;
-  let pending = refsCache.get(key);
-  if (pending == null) {
-    const params = new URLSearchParams({ owner: repo.owner, repo: repo.repo });
-    pending = requestJSON(`/api/github-refs?${params}`, {
-      headers: buildHeaders(token),
-    }) as Promise<RepoRefsData>;
-    refsCache.set(key, pending);
-    pending.catch(() => refsCache.delete(key));
-  }
-  return pending;
+  const params = new URLSearchParams({ owner: repo.owner, repo: repo.repo });
+  return requestJSON(`/api/github-refs?${params}`, {
+    headers: buildHeaders(token),
+  }) as Promise<RepoRefsData>;
 }

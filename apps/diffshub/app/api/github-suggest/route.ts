@@ -11,7 +11,10 @@ import {
   createUnreachableResponse,
   readGitHubJSON,
 } from '@/lib/githubProxyResponse';
-import { createJSONResponse } from '@/lib/jsonResponse';
+import {
+  createJSONResponse,
+  createPrivateJSONResponse,
+} from '@/lib/jsonResponse';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
@@ -35,7 +38,7 @@ async function handleGET(request: NextRequest) {
     const query = params.get('q')?.trim() ?? '';
     const owner = params.get('owner')?.trim() ?? '';
     if (query === '' && owner === '') {
-      return createJSONResponse({ repos: [] });
+      return createPrivateJSONResponse({ repos: [] }, 60);
     }
     // Scope to the owner once one is typed; plain-name search otherwise. An
     // owner with no name query lists their recently-updated repos.
@@ -56,11 +59,14 @@ async function handleGET(request: NextRequest) {
     }
     const items =
       (result.payload as { items?: { full_name?: unknown }[] }).items ?? [];
-    return createJSONResponse({
-      repos: items
-        .map((item) => item.full_name)
-        .filter((name): name is string => typeof name === 'string'),
-    });
+    return createPrivateJSONResponse(
+      {
+        repos: items
+          .map((item) => item.full_name)
+          .filter((name): name is string => typeof name === 'string'),
+      },
+      60
+    );
   }
 
   if (kind === 'pulls') {
@@ -84,17 +90,20 @@ async function handleGET(request: NextRequest) {
       return result.error;
     }
     const pulls = Array.isArray(result.payload) ? result.payload : [];
-    return createJSONResponse({
-      pulls: pulls
-        .map((pull: { number?: unknown; title?: unknown }) => ({
-          number: pull.number,
-          title: pull.title,
-        }))
-        .filter(
-          (pull): pull is { number: number; title: string } =>
-            typeof pull.number === 'number' && typeof pull.title === 'string'
-        ),
-    });
+    return createPrivateJSONResponse(
+      {
+        pulls: pulls
+          .map((pull: { number?: unknown; title?: unknown }) => ({
+            number: pull.number,
+            title: pull.title,
+          }))
+          .filter(
+            (pull): pull is { number: number; title: string } =>
+              typeof pull.number === 'number' && typeof pull.title === 'string'
+          ),
+      },
+      60
+    );
   }
 
   return createJSONResponse(
@@ -114,10 +123,14 @@ async function fetchSuggestPayload(
       cache: 'no-store',
     });
   } catch {
-    return { error: createUnreachableResponse(getGitHubEnvironment()) };
+    return {
+      error: createUnreachableResponse(getGitHubEnvironment(), url),
+    };
   }
   if (!response.ok) {
-    return { error: await createGitHubFailureResponse(response) };
+    return {
+      error: await createGitHubFailureResponse(response),
+    };
   }
   const parsed = await readGitHubJSON(response);
   return parsed.failure != null

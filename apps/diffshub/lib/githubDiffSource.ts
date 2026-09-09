@@ -67,3 +67,11 @@ export function encodeURLSegment(value: string): string {
 export function encodePath(path: string): string {
   return path.split('/').map(encodeURLSegment).join('/');
 }
+
+const FULL_COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
+
+// Whether a ref is already a full commit sha, so callers can distinguish
+// immutable content from a branch or tag that may move.
+export function isFullCommitSha(ref: string): boolean {
+  return FULL_COMMIT_SHA_PATTERN.test(ref);
+}

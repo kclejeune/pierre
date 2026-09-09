@@ -10,7 +10,7 @@ import {
   parsePullDetails,
   readPullRouteParams,
 } from '@/lib/githubPullDetailsServer';
-import { createJSONResponse } from '@/lib/jsonResponse';
+import { createPrivateJSONResponse } from '@/lib/jsonResponse';
 import type { PullInfo } from '@/lib/pullInfoClient';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
@@ -42,7 +42,7 @@ async function handleGET(request: NextRequest) {
       details: parsePullDetails(data),
       number: pull,
     };
-    return createJSONResponse(payload);
+    return createPrivateJSONResponse(payload, 15);
   } catch (error) {
     return commitErrorResponse(error);
   }

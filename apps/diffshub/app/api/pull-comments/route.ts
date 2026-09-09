@@ -151,7 +151,9 @@ async function fetchAllPages(
 
   const firstResponse = await fetchPage(1);
   if (!firstResponse.ok) {
-    return { failure: await createGitHubFailureResponse(firstResponse) };
+    return {
+      failure: await createGitHubFailureResponse(firstResponse),
+    };
   }
   const parsedFirst = await readGitHubJSON(firstResponse);
   if (parsedFirst.failure != null) {
@@ -168,7 +170,9 @@ async function fetchAllPages(
     );
     for (const response of restResponses) {
       if (!response.ok) {
-        return { failure: await createGitHubFailureResponse(response) };
+        return {
+          failure: await createGitHubFailureResponse(response),
+        };
       }
       const parsedPage = await readGitHubJSON(response);
       if (parsedPage.failure != null) {

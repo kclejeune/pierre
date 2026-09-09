@@ -6,7 +6,7 @@ import {
   fetchPullCommitsListing,
   readPullRouteParams,
 } from '@/lib/githubPullDetailsServer';
-import { createJSONResponse } from '@/lib/jsonResponse';
+import { createPrivateJSONResponse } from '@/lib/jsonResponse';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
@@ -30,7 +30,7 @@ async function handleGET(request: NextRequest) {
       params.pull,
       await resolveBearerToken(request)
     );
-    return createJSONResponse({ commits });
+    return createPrivateJSONResponse({ commits }, 15);
   } catch (error) {
     return commitErrorResponse(error);
   }

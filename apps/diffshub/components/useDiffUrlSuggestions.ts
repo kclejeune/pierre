@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 
 import { storedGitHubTokenHeaders } from './githubSession';
+import { useGitHubToken } from './useGitHubToken';
 import {
   deriveSuggestQuery,
   filterPullSuggestions,
@@ -17,29 +18,19 @@ export interface DiffUrlSuggestion {
   fill: string;
 }
 
-// Suggestion payloads keyed by query so repeated keystrokes reuse in-flight
-// or completed lookups; a failed load caches as null until the page reloads.
-const suggestCache = new Map<string, Promise<unknown>>();
-
-// Fetches /api/github-suggest with the given params, deduped through
-// suggestCache. Resolves the parsed JSON payload, or null on any failure.
+// Fetches /api/github-suggest with the given params. Successful responses are
+// cached privately by the browser according to the route's response headers.
 function fetchSuggestPayload(params: Record<string, string>): Promise<unknown> {
   const search = new URLSearchParams(params);
-  const cacheKey = search.toString();
-  let pending = suggestCache.get(cacheKey);
-  if (pending == null) {
-    pending = fetch(`/api/github-suggest?${search}`, {
-      headers: storedGitHubTokenHeaders(),
-    })
-      .then((response) => (response.ok ? response.json() : null))
-      .catch(() => null);
-    suggestCache.set(cacheKey, pending);
-  }
-  return pending;
+  return fetch(`/api/github-suggest?${search}`, {
+    headers: storedGitHubTokenHeaders(),
+  })
+    .then((response) => (response.ok ? response.json() : null))
+    .catch(() => null);
 }
 
 // Exported for the command palette, which shares the URL bar's progressive
-// repo → pull-request suggestion flow (and its request cache).
+// repo → pull-request suggestion flow.
 export async function loadSuggestions(
   query: SuggestQuery
 ): Promise<DiffUrlSuggestion[]> {
@@ -74,8 +65,10 @@ export async function loadSuggestions(
 // Suggestions for the diff URL bar's current input: repository names while
 // "owner/rep…" is being typed, open pull requests once a repo is complete.
 // Pass '' to disable (e.g. while the input is unfocused). Repo searches are
-// debounced; PR filtering reuses the cached list per repo.
+// debounced; the suggest route's private cache headers keep repeated keystrokes
+// over the same query off the network.
 export function useDiffUrlSuggestions(input: string): DiffUrlSuggestion[] {
+  const { tokenVersion } = useGitHubToken();
   const [suggestions, setSuggestions] = useState<DiffUrlSuggestion[]>([]);
 
   useEffect(() => {
@@ -99,7 +92,7 @@ export function useDiffUrlSuggestions(input: string): DiffUrlSuggestion[] {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [input]);
+  }, [input, tokenVersion]);
 
   return suggestions;
 }

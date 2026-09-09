@@ -26,36 +26,18 @@ interface PullsPayload {
   error?: string;
 }
 
-// Completed lookups keyed by source + token version so switching bucket tabs
-// back and forth (or unpinning and re-pinning a repo) doesn't refetch; a new
-// token version naturally invalidates everything.
-const pullsCache = new Map<string, Promise<PullsPayload>>();
-
-function fetchPulls(cacheKey: string, search: string): Promise<PullsPayload> {
-  let pending = pullsCache.get(cacheKey);
-  if (pending == null) {
-    pending = fetch(`/api/github-pulls?${search}`, {
-      headers: storedGitHubTokenHeaders(),
-      cache: 'no-store',
-    })
-      .then(async (response) => {
-        const payload = (await response.json()) as PullsPayload;
-        if (!response.ok) {
-          throw new Error(
-            payload.error ?? `GitHub request failed (${response.status}).`
-          );
-        }
-        return payload;
-      })
-      .catch((error: unknown) => {
-        // Failures are not cached: a transient error should retry on the next
-        // mount rather than pinning the section into an error state.
-        pullsCache.delete(cacheKey);
-        throw error instanceof Error ? error : new Error(String(error));
-      });
-    pullsCache.set(cacheKey, pending);
-  }
-  return pending;
+function fetchPulls(search: string): Promise<PullsPayload> {
+  return fetch(`/api/github-pulls?${search}`, {
+    headers: storedGitHubTokenHeaders(),
+  }).then(async (response) => {
+    const payload = (await response.json()) as PullsPayload;
+    if (!response.ok) {
+      throw new Error(
+        payload.error ?? `GitHub request failed (${response.status}).`
+      );
+    }
+    return payload;
+  });
 }
 
 // Pull request rows for one dashboard section. Callers mount only after
@@ -71,7 +53,7 @@ export function useDashboardPulls(
     totalCount: 0,
   });
 
-  // Doubles as the cache key and the query string.
+  // Doubles as the effect's dependency key and the query string.
   const params = new URLSearchParams();
   if (source.bucket != null) {
     params.set('bucket', source.bucket);
@@ -86,7 +68,7 @@ export function useDashboardPulls(
   useEffect(() => {
     let cancelled = false;
     setState((previous) => ({ ...previous, error: null, loading: true }));
-    fetchPulls(`${tokenVersion}|${sourceKey}`, sourceKey)
+    fetchPulls(sourceKey)
       .then((payload) => {
         if (!cancelled) {
           setState({

@@ -8,11 +8,12 @@ import {
   type DiffUrlSuggestion,
   loadSuggestions,
 } from './useDiffUrlSuggestions';
+import { useGitHubToken } from './useGitHubToken';
 import { isValidRepoName } from '@/lib/pinnedRepos';
 
 // Free-text "owner/name" input with live GitHub repo-name suggestions,
-// sharing the URL bar's suggestion loader (and its cache). Used by the
-// /pulls dashboard to pin repositories and by /browse to pick one.
+// sharing the URL bar's suggestion loader. Used by the /pulls dashboard to pin
+// repositories and by /browse to pick one.
 export function RepoNameInput({
   onSubmit,
   placeholder,
@@ -22,6 +23,7 @@ export function RepoNameInput({
   placeholder: string;
   submitLabel: string;
 }) {
+  const { tokenVersion } = useGitHubToken();
   const [value, setValue] = useState('');
   const [suggestions, setSuggestions] = useState<DiffUrlSuggestion[]>([]);
 
@@ -52,7 +54,7 @@ export function RepoNameInput({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [value]);
+  }, [tokenVersion, value]);
 
   const submit = (repo: string) => {
     if (isValidRepoName(repo)) {

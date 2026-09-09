@@ -11,7 +11,10 @@ import {
   createUnreachableResponse,
   readGitHubJSON,
 } from '@/lib/githubProxyResponse';
-import { createJSONResponse } from '@/lib/jsonResponse';
+import {
+  createJSONResponse,
+  createPrivateJSONResponse,
+} from '@/lib/jsonResponse';
 import {
   parseRepoDirectoryOwner,
   parseRepoDirectoryRepo,
@@ -24,6 +27,7 @@ import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Load a useful first directory in two waves. Accounts beyond this initial
 // slice receive a continuation cursor and can fetch further pages on demand.
+
 const MAX_REPO_PAGES = 3;
 const REPO_PAGE_SIZE = 100;
 
@@ -90,7 +94,7 @@ async function handleGET(request: NextRequest) {
         repos,
         viewer: null,
       };
-      return createJSONResponse(payload);
+      return createPrivateJSONResponse(payload, 300);
     } catch {
       return createUnreachableResponse(environment);
     }
@@ -189,7 +193,7 @@ async function handleGET(request: NextRequest) {
       repos,
       viewer,
     };
-    return createJSONResponse(payload);
+    return createPrivateJSONResponse(payload, 300);
   } catch {
     return createUnreachableResponse(environment);
   }

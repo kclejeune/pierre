@@ -18,7 +18,10 @@ import {
   parseRepoPullsPayload,
   parseSearchIssuesPayload,
 } from '@/lib/githubPullSummaries';
-import { createJSONResponse } from '@/lib/jsonResponse';
+import {
+  createJSONResponse,
+  createPrivateJSONResponse,
+} from '@/lib/jsonResponse';
 import { isValidRepoName, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
@@ -90,7 +93,10 @@ async function handleGET(request: NextRequest) {
     if (result.error != null) {
       return result.error;
     }
-    return createJSONResponse(parseSearchIssuesPayload(result.payload));
+    return createPrivateJSONResponse(
+      parseSearchIssuesPayload(result.payload),
+      30
+    );
   }
 
   if (repo != null) {
@@ -117,9 +123,12 @@ async function handleGET(request: NextRequest) {
     if (result.error != null) {
       return result.error;
     }
-    return createJSONResponse({
-      pulls: parseRepoPullsPayload(owner, name, result.payload),
-    });
+    return createPrivateJSONResponse(
+      {
+        pulls: parseRepoPullsPayload(owner, name, result.payload),
+      },
+      30
+    );
   }
 
   return createJSONResponse(
@@ -139,10 +148,14 @@ async function fetchPullsPayload(
       cache: 'no-store',
     });
   } catch {
-    return { error: createUnreachableResponse(getGitHubEnvironment()) };
+    return {
+      error: createUnreachableResponse(getGitHubEnvironment(), url),
+    };
   }
   if (!response.ok) {
-    return { error: await createGitHubFailureResponse(response) };
+    return {
+      error: await createGitHubFailureResponse(response),
+    };
   }
   const parsed = await readGitHubJSON(response);
   return parsed.failure != null

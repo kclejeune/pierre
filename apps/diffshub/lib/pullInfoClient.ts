@@ -75,9 +75,11 @@ export type PullInfo = PullRefs & { details?: PullDetails; number: string };
 export async function fetchPullInfo(
   pull: PullRequestRef,
   token: string | undefined,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  cache: RequestCache = 'default'
 ): Promise<PullInfo> {
   const payload = await requestJSON(`/api/pull-info?${pullParams(pull)}`, {
+    cache,
     headers: buildHeaders(token),
     signal,
   });

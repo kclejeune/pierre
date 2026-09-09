@@ -11,7 +11,10 @@ import {
   createUnreachableResponse,
   readGitHubJSON,
 } from '@/lib/githubProxyResponse';
-import { createJSONResponse } from '@/lib/jsonResponse';
+import {
+  createJSONResponse,
+  createPrivateJSONResponse,
+} from '@/lib/jsonResponse';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
@@ -21,6 +24,7 @@ import { resolveBearerToken } from '@/lib/resolveBearerToken';
 // comment authorship); with one it resolves that user's public profile
 // (GET /users/{login}), which supplies the display name behind avatar
 // initials.
+
 async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
@@ -61,7 +65,7 @@ async function handleGET(request: NextRequest) {
   try {
     response = await fetch(url, init);
   } catch {
-    return createUnreachableResponse(environment);
+    return createUnreachableResponse(environment, url);
   }
 
   if (!response.ok) {
@@ -84,11 +88,14 @@ async function handleGET(request: NextRequest) {
     );
   }
 
-  return createJSONResponse({
-    avatarUrl: user.avatar_url,
-    login: user.login,
-    name: typeof user.name === 'string' ? user.name : null,
-  });
+  return createPrivateJSONResponse(
+    {
+      avatarUrl: user.avatar_url,
+      login: user.login,
+      name: typeof user.name === 'string' ? user.name : null,
+    },
+    login == null ? 60 : 300
+  );
 }
 
 export const GET = withRequestLog(handleGET);

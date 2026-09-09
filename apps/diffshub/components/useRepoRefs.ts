@@ -13,8 +13,8 @@ export type RepoRefsState =
 
 // Loads a repository's ref listing for the /browse dashboard (eager) and the
 // tree view's diff menu (lazy — pass enabled=false until the menu opens).
-// `reloadToken` retries after an error: fetchRepoRefs caches successes, so a
-// bumped token only refetches when the previous attempt failed.
+// `reloadToken` retries after an error; successful responses use the route's
+// short private browser-cache lifetime.
 export function useRepoRefs(
   repo: GitHubRepo,
   token: string | undefined,

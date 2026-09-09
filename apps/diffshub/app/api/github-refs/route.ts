@@ -6,7 +6,7 @@ import {
   repoBrowserErrorResponse,
 } from '@/lib/githubRepoBrowserServer';
 import { loadRepoRefs } from '@/lib/githubRepoRefsServer';
-import { createJSONResponse } from '@/lib/jsonResponse';
+import { createPrivateJSONResponse } from '@/lib/jsonResponse';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
@@ -24,10 +24,11 @@ async function handleGET(request: NextRequest) {
   }
 
   try {
-    return createJSONResponse(
+    return createPrivateJSONResponse(
       await loadRepoRefs(repo, {
         token: await resolveBearerToken(request),
-      })
+      }),
+      60
     );
   } catch (error) {
     return repoBrowserErrorResponse(error);

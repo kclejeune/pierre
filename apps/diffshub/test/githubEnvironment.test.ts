@@ -12,6 +12,7 @@ import {
   rejectTokenlessRequestWhenLoginRequired,
   resetGitHubEnvironmentCache,
   resolveGitHubEnvironment,
+  validateGitHubConfiguration,
 } from '../lib/githubEnvironment';
 
 describe('resolveGitHubEnvironment', () => {
@@ -227,6 +228,65 @@ describe('getAvatarLookupToken', () => {
     process.env.DIFFSHUB_AVATAR_TOKEN = 'ghp_avatar';
     expect(JSON.stringify(getGitHubClientEnvironment())).not.toContain(
       'ghp_avatar'
+    );
+  });
+});
+
+describe('validateGitHubConfiguration', () => {
+  const keys = [
+    'DIFFSHUB_AVATAR_TOKEN',
+    'DIFFSHUB_GITHUB_CLIENT_ID',
+    'DIFFSHUB_GITHUB_CLIENT_SECRET',
+    'DIFFSHUB_PUBLIC_ORIGIN',
+    'DIFFSHUB_TOKEN_ENCRYPTION_KEY',
+  ] as const;
+  const saved = new Map(keys.map((key) => [key, process.env[key]] as const));
+
+  beforeEach(() => {
+    for (const key of keys) {
+      delete process.env[key];
+    }
+    resetGitHubEnvironmentCache();
+  });
+
+  afterEach(() => {
+    for (const key of keys) {
+      const value = saved.get(key);
+      if (value == null) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+    resetGitHubEnvironmentCache();
+  });
+
+  test('requires token encryption for the shared avatar credential', () => {
+    process.env.DIFFSHUB_AVATAR_TOKEN = 'ghp_avatar';
+    expect(() => validateGitHubConfiguration()).toThrow(
+      'DIFFSHUB_TOKEN_ENCRYPTION_KEY'
+    );
+  });
+
+  test('accepts an avatar credential with token encryption', () => {
+    process.env.DIFFSHUB_AVATAR_TOKEN = 'ghp_avatar';
+    process.env.DIFFSHUB_TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString(
+      'base64'
+    );
+    resetGitHubEnvironmentCache();
+    expect(() => validateGitHubConfiguration()).not.toThrow();
+  });
+
+  test('requires both OAuth credentials and a valid public origin', () => {
+    process.env.DIFFSHUB_GITHUB_CLIENT_ID = 'Iv1.example';
+    expect(() => validateGitHubConfiguration()).toThrow(
+      'DIFFSHUB_GITHUB_CLIENT_SECRET'
+    );
+
+    process.env.DIFFSHUB_GITHUB_CLIENT_SECRET = 'secret';
+    process.env.DIFFSHUB_PUBLIC_ORIGIN = 'https://diffs.example.com/path';
+    expect(() => validateGitHubConfiguration()).toThrow(
+      'DIFFSHUB_PUBLIC_ORIGIN'
     );
   });
 });

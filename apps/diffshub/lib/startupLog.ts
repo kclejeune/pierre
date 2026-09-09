@@ -10,6 +10,7 @@ import {
   getGitHubEnvironment,
   isLoginRequired,
   isPATInputEnabled,
+  validateGitHubConfiguration,
 } from './githubEnvironment';
 import { readNonEmptyString } from './githubOAuthGrant';
 import { formatError } from './serverLog';
@@ -54,6 +55,7 @@ function readConfigValue({ name, secret }: ConfigVariable): string | null {
 // raw values alone do not say what the instance will do. This is the resolved
 // answer: which instance it talks to and which credential policies are on.
 function readEffectiveConfig(): Record<string, unknown> {
+  validateGitHubConfiguration();
   const environment = getGitHubEnvironment();
   return {
     apiURL: environment.apiURL,
@@ -80,8 +82,9 @@ export function logStartupConfiguration(): void {
   try {
     record.effective = readEffectiveConfig();
   } catch (error) {
-    // A malformed DIFFSHUB_GITHUB_URL throws here. Report it instead of letting
-    // the startup log be the thing that takes the process down.
+    // Report invalid static configuration without making the logger itself the
+    // thing that terminates the process. The readiness probe returns 503 for
+    // the same validation failure.
     record.effectiveError = formatError(error);
     failed = true;
   }

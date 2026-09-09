@@ -206,6 +206,54 @@ export function getAvatarLookupToken(): string | undefined {
   return readNonEmptyString(process.env.DIFFSHUB_AVATAR_TOKEN);
 }
 
+// Validates process-wide settings that would otherwise fail only when a user
+// reaches the corresponding route. Health checks call this so a broken
+// container does not enter service.
+export function validateGitHubConfiguration(): void {
+  getGitHubEnvironment();
+  getRefreshTokenMaxTTLSeconds();
+  const encryptionKey = getTokenEncryptionKey();
+  const avatarToken = getAvatarLookupToken();
+  const clientId = getOAuthClientId();
+  const clientSecret = readNonEmptyString(
+    process.env.DIFFSHUB_GITHUB_CLIENT_SECRET
+  );
+
+  if ((clientId == null) !== (clientSecret == null)) {
+    throw new Error(
+      'DIFFSHUB_GITHUB_CLIENT_ID and DIFFSHUB_GITHUB_CLIENT_SECRET must be configured together.'
+    );
+  }
+  if (avatarToken != null && encryptionKey == null) {
+    throw new Error(
+      'DIFFSHUB_AVATAR_TOKEN requires DIFFSHUB_TOKEN_ENCRYPTION_KEY so callers can be authenticated before the shared credential is used.'
+    );
+  }
+  const publicOrigin = readNonEmptyString(process.env.DIFFSHUB_PUBLIC_ORIGIN);
+  if (publicOrigin != null) {
+    let parsed: URL;
+    try {
+      parsed = new URL(publicOrigin);
+    } catch {
+      throw new Error(
+        `DIFFSHUB_PUBLIC_ORIGIN is not a valid URL: ${publicOrigin}`
+      );
+    }
+    if (
+      (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
+      parsed.username !== '' ||
+      parsed.password !== '' ||
+      (parsed.pathname !== '' && parsed.pathname !== '/') ||
+      parsed.search !== '' ||
+      parsed.hash !== ''
+    ) {
+      throw new Error(
+        `DIFFSHUB_PUBLIC_ORIGIN must be an http(s) origin without a path: ${publicOrigin}`
+      );
+    }
+  }
+}
+
 export const LOGIN_REQUIRED_MESSAGE =
   'This deployment requires signing in to load GitHub data.';
 

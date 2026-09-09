@@ -70,6 +70,9 @@ describe('logStartupConfiguration', () => {
     process.env.DIFFSHUB_GITHUB_CLIENT_ID = 'Iv1.abc123';
     process.env.DIFFSHUB_GITHUB_CLIENT_SECRET = 'super-secret-value';
     process.env.DIFFSHUB_AVATAR_TOKEN = 'ghp_avatar_secret';
+    process.env.DIFFSHUB_TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString(
+      'base64'
+    );
     resetGitHubEnvironmentCache();
 
     const record = await capture();

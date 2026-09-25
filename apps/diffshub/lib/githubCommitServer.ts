@@ -8,6 +8,8 @@ import {
 import { parseGitHubJSONBody } from './githubProxyResponse';
 import { createJSONResponse } from './jsonResponse';
 import { type PlainFetch } from './plainFetch';
+import { getCurrentRouteLabel } from './requestLog';
+import { logUpstreamFailure } from './serverLog';
 import { asRecord } from './untypedJson';
 
 // Git Data API helpers for writing commits: blob/tree/commit creation and the
@@ -86,24 +88,31 @@ async function gitDataRequest(
   },
   fetcher: PlainFetch
 ): Promise<unknown> {
-  const response = await fetcher(
-    init.url ?? createGitHubAPIURL(getGitHubEnvironment(), path),
-    {
-      method: init.method,
-      headers: {
-        ...createGitHubJSONHeaders(token),
-        ...(init.body == null ? {} : { 'Content-Type': 'application/json' }),
-      },
-      body: init.body == null ? undefined : JSON.stringify(init.body),
-      cache: 'no-store',
-    }
-  );
+  const url = init.url ?? createGitHubAPIURL(getGitHubEnvironment(), path);
+  const response = await fetcher(url, {
+    method: init.method,
+    headers: {
+      ...createGitHubJSONHeaders(token),
+      ...(init.body == null ? {} : { 'Content-Type': 'application/json' }),
+    },
+    body: init.body == null ? undefined : JSON.stringify(init.body),
+    cache: 'no-store',
+  });
   if (!response.ok) {
     // Classify on the raw body: the phrases that disambiguate a 422 (e.g.
     // "protected branch") often live in nested errors[] entries that the
     // top-level `message` extraction drops.
     const body = await response.text();
     const detail = parseGitHubErrorMessage(body);
+    // GitHub's message plus the permission headers tell a missing App
+    // permission apart from a user without access.
+    logUpstreamFailure({
+      credential: token == null || token === '' ? 'none' : 'viewer',
+      error: detail === '' ? undefined : detail,
+      response,
+      route: getCurrentRouteLabel('unknown'),
+      upstreamURL: url,
+    });
     throw new GitHubCommitError(
       detail === ''
         ? `GitHub request ${path} failed (${response.status}).`
@@ -420,6 +429,12 @@ export async function sendGitHubGraphQL(
   const errors = payload?.errors;
   if (Array.isArray(errors) && errors.length > 0) {
     const forbidden = readStringPath(errors[0], ['type']) === 'FORBIDDEN';
+    logUpstreamFailure({
+      credential: 'viewer',
+      error: readStringPath(errors[0], ['message']) ?? 'GraphQL errors[]',
+      route: getCurrentRouteLabel('unknown'),
+      upstreamURL: createGitHubGraphQLURL(getGitHubEnvironment()),
+    });
     throw new GitHubCommitError(
       readStringPath(errors[0], ['message']) ??
         'GitHub rejected the GraphQL request.',

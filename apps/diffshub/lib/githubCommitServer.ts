@@ -1,12 +1,14 @@
 import { encodePath, encodeURLSegment } from './githubDiffSource';
 import {
   createGitHubAPIURL,
+  createGitHubGraphQLURL,
   createGitHubJSONHeaders,
   getGitHubEnvironment,
 } from './githubEnvironment';
 import { parseGitHubJSONBody } from './githubProxyResponse';
 import { createJSONResponse } from './jsonResponse';
 import { type PlainFetch } from './plainFetch';
+import { asRecord } from './untypedJson';
 
 // Git Data API helpers for writing commits: blob/tree/commit creation and the
 // non-force ref update that lands them. Used by the pull-commit and
@@ -76,11 +78,16 @@ export function commitErrorResponse(error: unknown): Response {
 async function gitDataRequest(
   path: string,
   token: string | undefined,
-  init: { method: 'GET' | 'PATCH' | 'POST' | 'PUT'; body?: unknown },
+  init: {
+    method: 'DELETE' | 'GET' | 'PATCH' | 'POST' | 'PUT';
+    body?: unknown;
+    // Overrides the REST URL built from `path` (e.g. the GraphQL endpoint).
+    url?: string;
+  },
   fetcher: PlainFetch
 ): Promise<unknown> {
   const response = await fetcher(
-    createGitHubAPIURL(getGitHubEnvironment(), path),
+    init.url ?? createGitHubAPIURL(getGitHubEnvironment(), path),
     {
       method: init.method,
       headers: {
@@ -383,11 +390,44 @@ export function fetchGitHubJSON(
 export function sendGitHubJSON(
   path: string,
   token: string | undefined,
-  method: 'PATCH' | 'POST' | 'PUT',
+  method: 'DELETE' | 'PATCH' | 'POST' | 'PUT',
   body: unknown,
   fetcher: PlainFetch = fetch
 ): Promise<unknown> {
   return gitDataRequest(path, token, { method, body }, fetcher);
+}
+
+// GraphQL reports most failures as HTTP 200 with errors[]; rethrow those as
+// GitHubCommitError like REST failures.
+export async function sendGitHubGraphQL(
+  query: string,
+  variables: Record<string, unknown>,
+  token: string,
+  fetcher: PlainFetch = fetch
+): Promise<unknown> {
+  const payload = asRecord(
+    await gitDataRequest(
+      '/graphql',
+      token,
+      {
+        method: 'POST',
+        body: { query, variables },
+        url: createGitHubGraphQLURL(getGitHubEnvironment()),
+      },
+      fetcher
+    )
+  );
+  const errors = payload?.errors;
+  if (Array.isArray(errors) && errors.length > 0) {
+    const forbidden = readStringPath(errors[0], ['type']) === 'FORBIDDEN';
+    throw new GitHubCommitError(
+      readStringPath(errors[0], ['message']) ??
+        'GitHub rejected the GraphQL request.',
+      forbidden ? 'forbidden' : 'github',
+      forbidden ? 403 : 422
+    );
+  }
+  return payload?.data;
 }
 
 // Reads a nested string off an untyped GitHub payload, or undefined when any

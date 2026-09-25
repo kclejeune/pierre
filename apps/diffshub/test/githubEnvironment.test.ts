@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import {
   createGitHubAPIURL,
+  createGitHubGraphQLURL,
   getAvatarLookupToken,
   getGitHubClientEnvironment,
   getRefreshTokenMaxTTLSeconds,
@@ -475,5 +476,22 @@ describe('parseDurationSeconds', () => {
     expect(() => parseDurationSeconds('1.5h', 'X')).toThrow('X');
     expect(() => parseDurationSeconds('-1', 'X')).toThrow('X');
     expect(() => parseDurationSeconds('1w', 'X')).toThrow('X');
+  });
+});
+
+describe('createGitHubGraphQLURL', () => {
+  test('uses /graphql on dedicated API hosts', () => {
+    expect(createGitHubGraphQLURL({ apiURL: 'https://api.github.com' })).toBe(
+      'https://api.github.com/graphql'
+    );
+    expect(
+      createGitHubGraphQLURL({ apiURL: 'https://api.github.example.com' })
+    ).toBe('https://api.github.example.com/graphql');
+  });
+
+  test('uses /api/graphql beside a path-prefixed GHES REST root', () => {
+    expect(
+      createGitHubGraphQLURL({ apiURL: 'https://github.example.com/api/v3' })
+    ).toBe('https://github.example.com/api/graphql');
   });
 });

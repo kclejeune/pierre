@@ -42,10 +42,18 @@ export interface PullMergeCapabilities {
   methods: PullMergeMethod[];
 }
 
+// canUpdate gates title/body/state/draft edits (author or push access);
+// canLabel needs triage access or above.
+export interface PullViewerPermissions {
+  canLabel: boolean;
+  canUpdate: boolean;
+}
+
 export interface PullDetailsSupplement {
   checks: PullCheck[] | null;
   mergeCapabilities: PullMergeCapabilities | null;
   reviewers: PullReviewer[] | null;
+  viewerPermissions: PullViewerPermissions | null;
 }
 
 // The pull request metadata the details panel shows beyond refs. CI checks,

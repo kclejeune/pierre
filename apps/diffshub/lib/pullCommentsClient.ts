@@ -307,6 +307,26 @@ export function buildHeaders(
     : { Authorization: `Bearer ${token}` };
 }
 
+// POSTs a JSON body carrying the pull's owner/repo/number (the shape
+// readPullBodyRef validates) plus `fields`.
+export function postPullJSON(
+  path: string,
+  pull: PullRequestRef,
+  token: string,
+  fields: object
+): Promise<unknown> {
+  return requestJSON(path, {
+    body: JSON.stringify({
+      ...fields,
+      owner: pull.owner,
+      pull: pull.number,
+      repo: pull.repo,
+    }),
+    headers: { ...buildHeaders(token), 'Content-Type': 'application/json' },
+    method: 'POST',
+  });
+}
+
 export function pullParams(pull: PullRequestRef): URLSearchParams {
   return new URLSearchParams({
     owner: pull.owner,

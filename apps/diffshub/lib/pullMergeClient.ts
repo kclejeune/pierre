@@ -1,8 +1,4 @@
-import {
-  buildHeaders,
-  type PullRequestRef,
-  requestJSON,
-} from './pullCommentsClient';
+import { postPullJSON, type PullRequestRef } from './pullCommentsClient';
 
 export type PullMergeMethod = 'merge' | 'rebase' | 'squash';
 
@@ -22,16 +18,8 @@ export async function mergePullRequest(
   method: PullMergeMethod,
   expectedHeadSha?: string
 ): Promise<PullMergeResult> {
-  const payload = await requestJSON('/api/pull-merge', {
-    body: JSON.stringify({
-      expectedHeadSha,
-      method,
-      owner: pull.owner,
-      pull: pull.number,
-      repo: pull.repo,
-    }),
-    headers: { ...buildHeaders(token), 'Content-Type': 'application/json' },
-    method: 'POST',
-  });
-  return payload as PullMergeResult;
+  return (await postPullJSON('/api/pull-merge', pull, token, {
+    expectedHeadSha,
+    method,
+  })) as PullMergeResult;
 }

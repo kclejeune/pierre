@@ -7,6 +7,7 @@ import {
   sendGitHubJSON,
 } from '@/lib/githubCommitServer';
 import { encodeURLSegment } from '@/lib/githubDiffSource';
+import { readPullBodyRef } from '@/lib/githubPullDetailsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseJSONBody } from '@/lib/parseJSONBody';
 import { withRequestLog } from '@/lib/requestLog';
@@ -30,16 +31,11 @@ async function handlePOST(request: NextRequest) {
     );
   }
   const body = await parseJSONBody(request);
-  const owner = body?.owner;
-  const repo = body?.repo;
-  const pull = body?.pull;
+  const ref = readPullBodyRef(body);
   const method = body?.method;
   const expectedHeadSha = body?.expectedHeadSha;
   if (
-    typeof owner !== 'string' ||
-    typeof repo !== 'string' ||
-    typeof pull !== 'string' ||
-    !/^\d+$/.test(pull) ||
+    ref == null ||
     typeof method !== 'string' ||
     !MERGE_METHODS.has(method) ||
     (expectedHeadSha != null && typeof expectedHeadSha !== 'string')
@@ -52,7 +48,7 @@ async function handlePOST(request: NextRequest) {
 
   try {
     const payload = await sendGitHubJSON(
-      repoPath({ owner, repo }, `/pulls/${encodeURLSegment(pull)}/merge`),
+      repoPath(ref, `/pulls/${encodeURLSegment(ref.pull)}/merge`),
       token,
       'PUT',
       {

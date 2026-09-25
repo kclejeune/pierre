@@ -306,7 +306,7 @@ function ReviewUIInner({
 
   // What the diff compares, for the header's base/head display. Compare
   // ranges carry both refs in the URL; pulls need their metadata fetched.
-  const pullInfo = usePullInfo({
+  const { pullInfo, mergePullDetails } = usePullInfo({
     getGitHubToken,
     githubTokenVersion,
     pullRequest,
@@ -874,6 +874,8 @@ function ReviewUIInner({
                 <PullDetailsControl
                   canWrite={hasGitHubToken}
                   getGitHubToken={getGitHubToken}
+                  githubTokenVersion={githubTokenVersion}
+                  onDetailsEdited={mergePullDetails}
                   onMerged={retryLoad}
                   pullInfo={pullInfo}
                   pullRequest={pullRequest}

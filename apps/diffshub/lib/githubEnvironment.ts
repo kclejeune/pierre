@@ -435,6 +435,17 @@ export function createGitHubAPIURL(
   return url.href;
 }
 
+// GraphQL endpoint for a REST root: <base>/api/graphql beside GHES's
+// <base>/api/v3, <api-host>/graphql on dedicated API hosts.
+export function createGitHubGraphQLURL(
+  environment: Pick<GitHubEnvironment, 'apiURL'>
+): string {
+  const { apiURL } = environment;
+  return apiURL.endsWith('/api/v3')
+    ? `${apiURL.slice(0, -'/v3'.length)}/graphql`
+    : `${apiURL}/graphql`;
+}
+
 // Accepts a credential-less http(s) URL and strips trailing slashes so
 // derived URLs concatenate cleanly. Path prefixes are kept because API roots
 // like https://ghes.example.com/api/v3 need them.

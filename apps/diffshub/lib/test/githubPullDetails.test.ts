@@ -8,6 +8,9 @@ import {
   normalizeCommitStatus,
   parsePullDetails,
   parsePullMergeCapabilities,
+  parsePullViewerPermissions,
+  readPullEditRequest,
+  readPullLabelChange,
 } from '../githubPullDetailsServer';
 import type { PlainFetch } from '../plainFetch';
 import { mergePullReviewers } from '../pullInfoClient';
@@ -163,6 +166,95 @@ describe('merge capabilities', () => {
       canMerge: false,
       methods: [],
     });
+  });
+});
+
+describe('parsePullViewerPermissions', () => {
+  test('reads viewerCanUpdate and label rights from viewerPermission', () => {
+    expect(
+      parsePullViewerPermissions({
+        repository: {
+          pullRequest: { viewerCanUpdate: true },
+          viewerPermission: 'TRIAGE',
+        },
+      })
+    ).toEqual({ canLabel: true, canUpdate: true });
+    expect(
+      parsePullViewerPermissions({
+        repository: {
+          pullRequest: { viewerCanUpdate: false },
+          viewerPermission: 'READ',
+        },
+      })
+    ).toEqual({ canLabel: false, canUpdate: false });
+    expect(parsePullViewerPermissions(null)).toEqual({
+      canLabel: false,
+      canUpdate: false,
+    });
+  });
+});
+
+describe('readPullEditRequest', () => {
+  const pull = { owner: 'o', pull: '7', repo: 'r' };
+
+  test('keeps only the provided fields, trimming the title', () => {
+    expect(readPullEditRequest({ ...pull, title: '  New title ' })).toEqual({
+      ...pull,
+      title: 'New title',
+    });
+    expect(readPullEditRequest({ ...pull, body: '' })).toEqual({
+      ...pull,
+      body: '',
+    });
+  });
+
+  test('accepts state changes and draft toggles', () => {
+    expect(readPullEditRequest({ ...pull, state: 'closed' })).toEqual({
+      ...pull,
+      state: 'closed',
+    });
+    expect(readPullEditRequest({ ...pull, draft: false })).toEqual({
+      ...pull,
+      draft: false,
+    });
+  });
+
+  test('rejects blank titles, unknown states, and empty edits', () => {
+    expect(readPullEditRequest({ ...pull, title: '   ' })).toBeNull();
+    expect(readPullEditRequest({ ...pull, state: 'merged' })).toBeNull();
+    expect(readPullEditRequest({ ...pull, draft: 'yes' })).toBeNull();
+    expect(readPullEditRequest(pull)).toBeNull();
+    expect(readPullEditRequest({ ...pull, pull: 'x', title: 't' })).toBeNull();
+  });
+});
+
+describe('readPullLabelChange', () => {
+  test('accepts one label add or removal', () => {
+    expect(
+      readPullLabelChange({
+        action: 'remove',
+        label: 'bug',
+        owner: 'o',
+        pull: '7',
+        repo: 'r',
+      })
+    ).toEqual({
+      action: 'remove',
+      label: 'bug',
+      owner: 'o',
+      pull: '7',
+      repo: 'r',
+    });
+  });
+
+  test('rejects unknown actions and empty labels', () => {
+    const pull = { owner: 'o', pull: '7', repo: 'r' };
+    expect(
+      readPullLabelChange({ ...pull, action: 'set', label: 'bug' })
+    ).toBeNull();
+    expect(
+      readPullLabelChange({ ...pull, action: 'add', label: '' })
+    ).toBeNull();
   });
 });
 

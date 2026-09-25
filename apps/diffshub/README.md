@@ -57,11 +57,11 @@ authorized the request.
 
 Successful read-only JSON endpoints use short, private browser-cache lifetimes:
 15 seconds for pull metadata, 30 seconds for pull listings, one minute for the
-viewer identity, refs, suggestions, and branch-addressed trees, and five minutes
-for repository directories and named-user lookups. Responses vary on
-`Authorization`, while errors and mutation responses remain `no-store`.
-Commit-addressed repository trees and files are immutable and may stay in the
-browser cache for one year.
+viewer identity, refs, suggestions, repository labels, and branch-addressed
+trees, and five minutes for repository directories and named-user lookups.
+Responses vary on `Authorization`, while errors and mutation responses remain
+`no-store`. Commit-addressed repository trees and files are immutable and may
+stay in the browser cache for one year.
 
 The server also keeps bounded, process-local LRU caches for work that is costly
 or too large to rely on the browser cache alone. Ref resolution is cached

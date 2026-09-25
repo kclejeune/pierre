@@ -6,6 +6,7 @@ import {
   fetchPullChecks,
   fetchPullMergeCapabilities,
   fetchPullReviewStates,
+  fetchPullViewerPermissions,
   readPullRouteParams,
 } from '@/lib/githubPullDetailsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
@@ -17,7 +18,7 @@ const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
 
 // Optional, slower metadata for the pull-details dropdown. Each companion
 // request is independent so an unavailable Checks API does not discard legacy
-// statuses, reviewer state, or merge capabilities.
+// statuses, reviewer state, merge capabilities, or edit permissions.
 async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
@@ -38,13 +39,19 @@ async function handleGET(request: NextRequest) {
   const repo = { owner: params.owner, repo: params.repo };
   const token = await resolveBearerToken(request);
   try {
-    const [reviewStates, checks, mergeCapabilities] = await Promise.all([
-      fetchPullReviewStates(repo, params.pull, token).catch(() => null),
-      fetchPullChecks(repo, headSha, token).catch(() => null),
-      token == null
-        ? Promise.resolve(null)
-        : fetchPullMergeCapabilities(repo, token).catch(() => null),
-    ]);
+    const [reviewStates, checks, mergeCapabilities, viewerPermissions] =
+      await Promise.all([
+        fetchPullReviewStates(repo, params.pull, token).catch(() => null),
+        fetchPullChecks(repo, headSha, token).catch(() => null),
+        token == null
+          ? Promise.resolve(null)
+          : fetchPullMergeCapabilities(repo, token).catch(() => null),
+        token == null
+          ? Promise.resolve(null)
+          : fetchPullViewerPermissions(repo, params.pull, token).catch(
+              () => null
+            ),
+      ]);
     const payload: PullDetailsSupplement = {
       checks,
       mergeCapabilities,
@@ -56,6 +63,7 @@ async function handleGET(request: NextRequest) {
               login,
               state: reviewer.state,
             })),
+      viewerPermissions,
     };
     return createJSONResponse(payload);
   } catch (error) {

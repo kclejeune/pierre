@@ -9,6 +9,7 @@ import {
   type GitRepoRef,
   readStringPath,
   repoPath,
+  sendGitHubGraphQL,
 } from './githubCommitServer';
 import { encodeURLSegment } from './githubDiffSource';
 import { createJSONResponse } from './jsonResponse';
@@ -22,6 +23,7 @@ import type {
   PullMergeCapabilities,
   PullReviewer,
   PullReviewerState,
+  PullViewerPermissions,
 } from './pullInfoClient';
 import { asRecord } from './untypedJson';
 
@@ -47,15 +49,7 @@ export function readPullRouteParams(
 // overlays submitted review verdicts once the supplement loads.
 export function parsePullDetails(data: unknown): PullDetails {
   const record = asRecord(data) ?? {};
-  const labels: PullLabel[] = [];
-  if (Array.isArray(record.labels)) {
-    for (const label of record.labels) {
-      const name = readStringPath(label, ['name']);
-      if (name != null) {
-        labels.push({ color: readStringPath(label, ['color']) ?? '', name });
-      }
-    }
-  }
+  const labels = parseLabels(record.labels);
   const reviewers: PullReviewer[] = [];
   if (Array.isArray(record.requested_reviewers)) {
     for (const user of record.requested_reviewers) {
@@ -98,6 +92,99 @@ export function parsePullDetails(data: unknown): PullDetails {
           : 'open',
     title: typeof record.title === 'string' ? record.title : '',
   };
+}
+
+// Name and color from any GitHub labels array; unnamed entries are dropped.
+export function parseLabels(data: unknown): PullLabel[] {
+  const labels: PullLabel[] = [];
+  if (Array.isArray(data)) {
+    for (const label of data) {
+      const name = readStringPath(label, ['name']);
+      if (name != null) {
+        labels.push({ color: readStringPath(label, ['color']) ?? '', name });
+      }
+    }
+  }
+  return labels;
+}
+
+export interface PullBodyRef {
+  owner: string;
+  pull: string;
+  repo: string;
+}
+
+// The owner/repo/pull triple of a pull-scoped POST body, or null when any is
+// missing or malformed. The body counterpart of readPullRouteParams.
+export function readPullBodyRef(
+  record: Record<string, unknown> | null
+): PullBodyRef | null {
+  const owner = record?.owner;
+  const repo = record?.repo;
+  const pull = record?.pull;
+  return typeof owner === 'string' &&
+    typeof repo === 'string' &&
+    typeof pull === 'string' &&
+    /^\d+$/.test(pull)
+    ? { owner, pull, repo }
+    : null;
+}
+
+export interface PullEditRequest extends PullBodyRef {
+  body?: string;
+  draft?: boolean;
+  state?: 'closed' | 'open';
+  title?: string;
+}
+
+// Validates a /api/pull-edit body. Blank titles are rejected; an empty body
+// clears the description.
+export function readPullEditRequest(body: unknown): PullEditRequest | null {
+  const record = asRecord(body);
+  const ref = readPullBodyRef(record);
+  const title = record?.title;
+  const description = record?.body;
+  const state = record?.state;
+  const draft = record?.draft;
+  if (
+    ref == null ||
+    (title != null && (typeof title !== 'string' || title.trim() === '')) ||
+    (description != null && typeof description !== 'string') ||
+    (state != null && state !== 'open' && state !== 'closed') ||
+    (draft != null && typeof draft !== 'boolean') ||
+    (title == null && description == null && state == null && draft == null)
+  ) {
+    return null;
+  }
+  return {
+    ...ref,
+    ...(typeof title === 'string' ? { title: title.trim() } : {}),
+    ...(typeof description === 'string' ? { body: description } : {}),
+    ...(state != null ? { state } : {}),
+    ...(typeof draft === 'boolean' ? { draft } : {}),
+  };
+}
+
+export interface PullLabelChange extends PullBodyRef {
+  action: 'add' | 'remove';
+  label: string;
+}
+
+// Validates a /api/pull-labels POST body: one label to add or remove.
+export function readPullLabelChange(body: unknown): PullLabelChange | null {
+  const record = asRecord(body);
+  const ref = readPullBodyRef(record);
+  const action = record?.action;
+  const label = record?.label;
+  if (
+    ref == null ||
+    (action !== 'add' && action !== 'remove') ||
+    typeof label !== 'string' ||
+    label === ''
+  ) {
+    return null;
+  }
+  return { ...ref, action, label };
 }
 
 // Folds a reviews listing (chronological) into the latest standing verdict
@@ -337,6 +424,60 @@ export async function fetchPullMergeCapabilities(
 ): Promise<PullMergeCapabilities> {
   return parsePullMergeCapabilities(
     await fetchGitHubJSON(repoPath(repo, ''), token, fetcher)
+  );
+}
+
+const LABEL_PERMISSIONS = new Set(['ADMIN', 'MAINTAIN', 'TRIAGE', 'WRITE']);
+
+// GitHub's own answer to what the viewer may change on this pull, rather than
+// re-deriving its author-or-push-access rules on the client.
+export function parsePullViewerPermissions(
+  data: unknown
+): PullViewerPermissions {
+  const repository = asRecord(asRecord(data)?.repository);
+  return {
+    canLabel: LABEL_PERMISSIONS.has(
+      readStringPath(repository, ['viewerPermission']) ?? ''
+    ),
+    canUpdate: asRecord(repository?.pullRequest)?.viewerCanUpdate === true,
+  };
+}
+
+const VIEWER_PERMISSIONS_QUERY = `query ($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    viewerPermission
+    pullRequest(number: $number) { viewerCanUpdate }
+  }
+}`;
+
+export async function fetchPullViewerPermissions(
+  repo: GitRepoRef,
+  pull: string,
+  token: string,
+  fetcher: PlainFetch = fetch
+): Promise<PullViewerPermissions> {
+  return parsePullViewerPermissions(
+    await sendGitHubGraphQL(
+      VIEWER_PERMISSIONS_QUERY,
+      { name: repo.repo, number: Number(pull), owner: repo.owner },
+      token,
+      fetcher
+    )
+  );
+}
+
+export async function fetchRepoLabels(
+  repo: GitRepoRef,
+  token: string | undefined,
+  fetcher: PlainFetch = fetch
+): Promise<PullLabel[]> {
+  return parseLabels(
+    await fetchAllGitHubPages(
+      (page) => repoPath(repo, `/labels?per_page=100&page=${page}`),
+      (payload) => (Array.isArray(payload) ? payload : null),
+      token,
+      fetcher
+    )
   );
 }
 

@@ -1,9 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { type PullRequestRef } from '@/lib/pullCommentsClient';
-import { fetchPullInfo, type PullInfo } from '@/lib/pullInfoClient';
+import {
+  fetchPullInfo,
+  type PullDetails,
+  type PullInfo,
+} from '@/lib/pullInfoClient';
 
 interface UsePullInfoOptions {
   getGitHubToken(): string | undefined;
@@ -19,6 +23,12 @@ interface UsePullInfoOptions {
   viewerKey: number;
 }
 
+interface UsePullInfoResult {
+  pullInfo: PullInfo | null;
+  // Merges just-saved fields into the latest details without a refetch.
+  mergePullDetails(pull: PullRequestRef, fields: Partial<PullDetails>): void;
+}
+
 // Loads the pull request's title and base/head branches for the viewer
 // chrome. Best-effort: a failure just leaves the branch display empty, the
 // diff itself is unaffected.
@@ -28,7 +38,7 @@ export function usePullInfo({
   pullRequest,
   tokenHydrated,
   viewerKey,
-}: UsePullInfoOptions): PullInfo | null {
+}: UsePullInfoOptions): UsePullInfoResult {
   // The info is stored with the pull it was fetched for: PullInfo itself
   // carries only the number, and two repos' pulls can share a number, so
   // deciding staleness needs the full owner/repo/number ref.
@@ -77,5 +87,30 @@ export function usePullInfo({
     tokenHydrated,
     viewerKey,
   ]);
-  return state?.info ?? null;
+  const mergePullDetails = useCallback(
+    (pull: PullRequestRef, fields: Partial<PullDetails>) => {
+      // A reload fetch rewrites the browser's cached pre-edit response, so
+      // later default fetches of this pull see the edit too.
+      void fetchPullInfo(pull, getGitHubToken(), undefined, 'reload').catch(
+        () => undefined
+      );
+      setState((current) =>
+        current != null &&
+        current.forPull.owner === pull.owner &&
+        current.forPull.repo === pull.repo &&
+        current.forPull.number === pull.number &&
+        current.info.details != null
+          ? {
+              ...current,
+              info: {
+                ...current.info,
+                details: { ...current.info.details, ...fields },
+              },
+            }
+          : current
+      );
+    },
+    [getGitHubToken]
+  );
+  return { pullInfo: state?.info ?? null, mergePullDetails };
 }

@@ -318,6 +318,16 @@ function ReviewUIInner({
       githubSource == null ? null : describeDiffRefs(githubSource, pullInfo),
     [githubSource, pullInfo]
   );
+  // The Conversation's description, reflecting edits from the header panel.
+  const pullAuthorLogin = pullInfo?.details?.authorLogin;
+  const pullBody = pullInfo?.details?.body;
+  const pullDescription = useMemo(
+    () =>
+      pullBody == null
+        ? null
+        : { authorLogin: pullAuthorLogin, body: pullBody },
+    [pullAuthorLogin, pullBody]
+  );
 
   const editSession = usePullEditSession({
     getGitHubToken,
@@ -894,6 +904,7 @@ function ReviewUIInner({
                   onSelectFile={recordViewTarget}
                 />
                 <ReviewSubmitControl
+                  authorLogin={pullAuthorLogin}
                   canWrite={hasGitHubToken}
                   pendingCount={pendingReviewComments.size}
                   onSubmit={handleSubmitReview}
@@ -926,6 +937,7 @@ function ReviewUIInner({
             <DiffsHubSidebar
               className="[grid-area:viewer] md:[grid-area:tree]"
               commentSections={commentSections}
+              description={pullDescription}
               diffStats={diffStats}
               discussion={discussion}
               discussionActions={discussionActions}

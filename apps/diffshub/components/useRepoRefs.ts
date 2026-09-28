@@ -8,7 +8,7 @@ import { fetchRepoRefs, type RepoRefsData } from '@/lib/repoRefs';
 export type RepoRefsState =
   | { kind: 'idle' }
   | { kind: 'loading' }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; error: Error }
   | { kind: 'ready'; data: RepoRefsData };
 
 // Loads a repository's ref listing for the /browse dashboard (eager) and the
@@ -38,10 +38,10 @@ export function useRepoRefs(
         if (!cancelled) {
           setState({
             kind: 'error',
-            message:
+            error:
               error instanceof Error
-                ? error.message
-                : 'Loading the repository refs failed.',
+                ? error
+                : new Error('Loading the repository refs failed.'),
           });
         }
       }

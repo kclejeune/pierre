@@ -5,6 +5,12 @@ import { useMemo, useState } from 'react';
 
 import { Button } from './Button';
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
+import {
+  DashboardSectionState,
+  SectionError,
+  SectionMessage,
+  SkeletonRows,
+} from './DashboardSectionState';
 import { SECTION_CARD_CLASS } from './DashboardShell';
 import { Input } from './Input';
 import { useRepoDirectory } from './useRepoDirectory';
@@ -52,28 +58,21 @@ export function RepoDirectory({
     [ownerFilter, searched]
   );
 
-  if (loading) {
-    return (
-      <p className="text-muted-foreground animate-pulse p-3 text-sm">
-        Loading your repositories…
-      </p>
-    );
-  }
-  if (error != null && groups.length === 0) {
-    return (
-      <div className="flex items-center justify-between gap-3 p-3">
-        <p className="text-destructive text-sm">{error}</p>
-        <Button variant="outline" size="xs" onClick={refresh}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
   if (groups.length === 0) {
     return (
-      <p className="text-muted-foreground p-3 text-sm">
-        No repositories are visible to this token.
-      </p>
+      <DashboardSectionState
+        emptyLabel="No repositories are visible to your GitHub account. If you expected some, check which repositories your sign-in can access."
+        error={error}
+        isEmpty
+        loading={loading}
+        loadingLabel="Loading your repositories…"
+        skeleton={
+          <div className={SECTION_CARD_CLASS}>
+            <SkeletonRows count={5} variant="list" />
+          </div>
+        }
+        onRetry={refresh}
+      />
     );
   }
 
@@ -82,12 +81,13 @@ export function RepoDirectory({
       <div className="flex items-center gap-2">
         <Input
           inputSize="sm"
+          aria-label="Filter organizations and repositories"
           placeholder="Filter organizations and repositories…"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <Button variant="ghost" size="xs" onClick={refresh}>
-          Refresh
+        <Button variant="ghost" size="xs" disabled={loading} onClick={refresh}>
+          {loading ? 'Refreshing…' : 'Refresh'}
         </Button>
       </div>
       <div className="flex flex-wrap items-center gap-1">
@@ -113,9 +113,11 @@ export function RepoDirectory({
         ))}
       </div>
       {visible.length === 0 ? (
-        <p className="text-muted-foreground p-3 text-sm">
-          No repositories match.
-        </p>
+        <SectionMessage>
+          {query.trim() === ''
+            ? 'No repositories from this owner are loaded yet.'
+            : `No loaded repositories match “${query.trim()}”.`}
+        </SectionMessage>
       ) : (
         visible.map((group) => (
           <RepoGroupCard
@@ -143,9 +145,7 @@ export function RepoDirectory({
           </Button>
         </div>
       )}
-      {error != null && groups.length > 0 && (
-        <p className="text-destructive px-3 text-xs">{error}</p>
-      )}
+      {error != null && <SectionError error={error} onRetry={loadMore} />}
     </div>
   );
 }
@@ -244,8 +244,10 @@ function RepoRow({
   return (
     <button
       type="button"
+      aria-pressed={selected}
       className={cn(
-        'hover:bg-accent/50 flex w-full cursor-pointer items-center gap-2 border-b px-3 py-1.5 text-left last:border-b-0',
+        // The ring is inset because section cards clip overflow.
+        'hover:bg-accent/50 focus-visible:ring-ring flex w-full cursor-pointer items-center gap-2 border-b px-3 py-1.5 text-left outline-none last:border-b-0 focus-visible:ring-2 focus-visible:ring-inset',
         selected && 'bg-accent/60'
       )}
       onClick={onSelect}

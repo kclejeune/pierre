@@ -25,10 +25,10 @@ import {
   useCommentModeration,
 } from './CommentModeration';
 import { MarkdownContent, RawMarkdownFallback } from './MarkdownContent';
+import { RelativeTime } from './RelativeTime';
 import { useGitHubUser } from './useGitHubUser';
 import { cn } from '@/lib/cn';
 import { createCommentSidebarPreview } from '@/lib/commentSidebarPreview';
-import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import type {
   CommentLineType,
   DiffsHubSavedCommentEntry,
@@ -148,7 +148,13 @@ function DeferredMarkdown({
     return observeRow(element, () => setRendered(true));
   }, [observeRow, rendered]);
   if (rendered) {
-    return <MarkdownContent className={className} markdown={markdown} />;
+    return (
+      <MarkdownContent
+        className={className}
+        flavor="comment"
+        markdown={markdown}
+      />
+    );
   }
   return (
     <RawMarkdownFallback ref={ref} className={className} markdown={markdown} />
@@ -166,8 +172,15 @@ export interface DiscussionActions {
   onPost(body: string): Promise<void>;
 }
 
+// The pull request description, shown first in Conversation as on GitHub.
+export interface PullDescription {
+  authorLogin?: string;
+  body: string;
+}
+
 interface DiffsHubCommentsListProps {
   commentSections: readonly DiffsHubSavedCommentItem[];
+  description?: PullDescription | null;
   // PR-level conversation (issue comments, review summaries) shown in its own
   // section above the per-file threads.
   discussion?: readonly PullDiscussionComment[];
@@ -365,7 +378,9 @@ function DiscussionRow({
           <span className={cn(getDiscussionVerbClassName(comment))}>
             {getDiscussionVerb(comment)}
           </span>
-          <span>· {formatRelativeTime(comment.createdAt)}</span>
+          <span>
+            · <RelativeTime iso={comment.createdAt} />
+          </span>
           <span className="ml-auto flex shrink-0 items-center gap-1">
             {canModify && !moderation.isEditing && (
               <span className="flex gap-1 opacity-0 transition-opacity duration-100 group-focus-within/discussion:opacity-100 group-hover/discussion:opacity-100">
@@ -392,6 +407,7 @@ function DiscussionRow({
         {moderation.isEditing && actions != null ? (
           <div className="w-full pt-1">
             <CommentEditComposer
+              draftKey={`discussion-edit:${comment.id}`}
               initialBody={comment.body}
               moderation={moderation}
               onEdit={(body) => actions.onEdit(comment.id, body)}
@@ -419,6 +435,54 @@ function DiscussionRow({
   );
 }
 
+// Conversation's first row: the description, collapsed until clicked. Editing
+// lives in the header's pull request panel.
+function DescriptionRow({ description }: { description: PullDescription }) {
+  const [expanded, setExpanded] = useState(false);
+  const preview = createCommentSidebarPreview(description.body);
+  return (
+    <CommentRow
+      aria-expanded={expanded}
+      onActivate={() => setExpanded((prev) => !prev)}
+    >
+      {description.authorLogin != null && (
+        <CommentAuthorAvatar
+          author={{ avatarUrl: '', login: description.authorLogin }}
+          className="size-5"
+        />
+      )}
+      <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 select-text">
+        <div className="text-muted-foreground flex w-full flex-wrap items-center gap-x-1">
+          {description.authorLogin != null && (
+            <span className="text-foreground font-medium">
+              @{description.authorLogin}
+            </span>
+          )}
+          <span>
+            {description.authorLogin != null
+              ? 'opened this pull request'
+              : 'Description'}
+          </span>
+        </div>
+        {preview === '' ? (
+          <p className="text-muted-foreground m-0 text-[13px]">
+            No description provided.
+          </p>
+        ) : (
+          <DeferredMarkdown
+            className={
+              expanded
+                ? SIDEBAR_MARKDOWN_CLASS
+                : COLLAPSED_SIDEBAR_MARKDOWN_CLASS
+            }
+            markdown={preview}
+          />
+        )}
+      </div>
+    </CommentRow>
+  );
+}
+
 // The Conversation section's trailing row: opens a composer that posts a new
 // PR-level comment. Anonymous sessions get the same sign-in nudge as thread
 // replies instead of a composer they could not submit.
@@ -440,6 +504,7 @@ function DiscussionComposerRow({ actions }: { actions: DiscussionActions }) {
       {isOpen ? (
         <CommentComposer
           autoFocus
+          draftKey="discussion-new"
           submitLabel="Comment"
           onCancel={() => setIsOpen(false)}
           onSubmit={async (body) => {
@@ -462,6 +527,7 @@ function DiscussionComposerRow({ actions }: { actions: DiscussionActions }) {
 
 export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
   commentSections,
+  description,
   discussion = [],
   discussionActions,
   onSelectComment,
@@ -472,7 +538,8 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
   // On pull-request views the Conversation section always renders (its
   // composer is how PR-level comments get written), so the empty state only
   // applies when there is nothing to show AND nothing to write.
-  const showConversation = discussion.length > 0 || discussionActions != null;
+  const showConversation =
+    discussion.length > 0 || discussionActions != null || description != null;
   if (commentSections.length === 0 && !showConversation) {
     return (
       <div className="text-muted-foreground flex h-full min-h-0 flex-col items-center justify-center gap-2 px-7 text-center text-sm">
@@ -506,6 +573,9 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
               Conversation
             </div>
             <div className={cn(CARD_BORDER_CLASS, 'rounded-lg border')}>
+              {description != null && (
+                <DescriptionRow description={description} />
+              )}
               {discussion.map((comment) => (
                 <DiscussionRow
                   key={`${comment.kind}-${comment.id}`}

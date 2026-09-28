@@ -23,10 +23,12 @@ export interface CommentModeration {
   startEditing(): void;
 }
 
+// `initiallyEditing` reopens a stored edit draft after a remount.
 export function useCommentModeration(
-  onDelete: () => Promise<void>
+  onDelete: () => Promise<void>,
+  initiallyEditing = false
 ): CommentModeration {
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(initiallyEditing);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -95,18 +97,25 @@ export function CommentModerationButtons({
 
 // The comment body swapped into a save-mode composer while editing.
 export function CommentEditComposer({
+  autoFocus = true,
+  draftKey,
   initialBody,
   moderation,
   onEdit,
 }: {
+  // Off when restoring a draft so remounts don't steal focus.
+  autoFocus?: boolean;
+  draftKey?: string;
   initialBody: string;
   moderation: CommentModeration;
   onEdit(body: string): Promise<void>;
 }) {
   return (
     <CommentComposer
-      autoFocus
+      autoFocus={autoFocus}
+      draftKey={draftKey}
       initialBody={initialBody}
+      pendingLabel="Saving…"
       submitLabel="Save"
       onCancel={moderation.cancelEditing}
       onSubmit={async (body) => {

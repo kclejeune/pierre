@@ -19,6 +19,7 @@ import {
 import { MermaidDiagram } from './MermaidDiagram';
 import { cn } from '@/lib/cn';
 import { createGitHubWebAssetProxyURL } from '@/lib/githubWebAssets';
+import { remarkMentions } from '@/lib/remarkMentions';
 
 const REMARK_PLUGINS = [remarkGfm];
 
@@ -121,30 +122,88 @@ export function MarkdownImage({
   );
 }
 
-// ```mermaid fences render as diagrams (as GitHub does); every other code
-// block keeps the default <pre> rendering.
+// Absolute http(s) links open in a new tab so following one doesn't unload the
+// review and its drafts. Document views override `a`.
+function MarkdownLink({
+  href,
+  ...rest
+}: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+  if (href == null || !/^https?:\/\//i.test(href)) {
+    return <a {...rest} href={href} />;
+  }
+  return <a {...rest} href={href} rel="noreferrer noopener" target="_blank" />;
+}
+
+// Mermaid fences render as diagrams, suggestion fences as suggested changes.
 const DEFAULT_COMPONENTS: Components = {
+  a: ({ node: _node, ...rest }) => <MarkdownLink {...rest} />,
   img: ({ node: _node, ...rest }) => <MarkdownImage {...rest} />,
   pre: ({ node, ...rest }) => {
-    const mermaidSource = getMermaidSource(node);
-    if (mermaidSource != null) {
-      return <MermaidDiagram code={mermaidSource} />;
+    const fence = getFence(node);
+    if (fence?.language === 'mermaid' && fence.source !== '') {
+      return <MermaidDiagram code={fence.source} />;
+    }
+    if (fence?.language === 'suggestion') {
+      return <SuggestedChange code={fence.source} />;
     }
     return <pre {...rest} />;
   },
 };
 
-function getMermaidSource(node: HastElement | undefined): string | null {
+// A fenced code block's language and text, or null.
+function getFence(
+  node: HastElement | undefined
+): { language: string; source: string } | null {
   const code = node?.children.find(
     (child): child is HastElement =>
       child.type === 'element' && child.tagName === 'code'
   );
   const className = code?.properties?.className;
-  if (!Array.isArray(className) || !className.includes('language-mermaid')) {
+  const languageClass = Array.isArray(className)
+    ? className.find(
+        (name): name is string =>
+          typeof name === 'string' && name.startsWith('language-')
+      )
+    : undefined;
+  if (code == null || languageClass == null) {
     return null;
   }
-  const text = code?.children[0];
-  return text?.type === 'text' ? text.value : null;
+  const text = code.children[0];
+  return {
+    language: languageClass.slice('language-'.length),
+    source: text?.type === 'text' ? text.value : '',
+  };
+}
+
+// A review suggestion shown as added lines; an empty one deletes the lines.
+// div/span, not pre/code, so prose code styles don't apply.
+function SuggestedChange({ code }: { code: string }) {
+  const lines = code.replace(/\n$/, '').split('\n');
+  const isDeletion = code.trim() === '';
+  return (
+    <div className="my-2 overflow-hidden rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))]">
+      <div className="text-muted-foreground border-b border-[var(--diffshub-annotation-border,var(--color-border))] px-3 py-1 text-[12px] font-medium">
+        {isDeletion
+          ? 'Suggested change: remove these lines'
+          : 'Suggested change'}
+      </div>
+      {!isDeletion && (
+        <div className="overflow-x-auto bg-[color-mix(in_srgb,var(--diffshub-comment-add-fg,#047857)_10%,transparent)] py-1 font-mono text-[0.9em]">
+          {lines.map((line, index) => (
+            <div key={index} className="flex px-3">
+              <span
+                aria-hidden
+                className="mr-2 text-[var(--diffshub-comment-add-fg,#047857)] select-none"
+              >
+                +
+              </span>
+              <span className="whitespace-pre">{line}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Element styling for rendered markdown, scoped through arbitrary variants so
@@ -176,6 +235,9 @@ export const MARKDOWN_PROSE_CLASS = cn(
 interface MarkdownContentProps {
   className?: string;
   components?: Components;
+  // 'comment' links @mentions, as GitHub does in comments and descriptions but
+  // not in rendered files.
+  flavor?: 'comment' | 'document';
   markdown: string;
   // Appended after the GFM base; document views pass DOC_REMARK_PLUGINS.
   extraRemarkPlugins?: React.ComponentProps<typeof Markdown>['remarkPlugins'];
@@ -190,14 +252,24 @@ interface MarkdownContentProps {
 export const MarkdownContent = memo(function MarkdownContent({
   className,
   components,
+  flavor = 'document',
   markdown,
   extraRemarkPlugins,
   rehypePluginsBeforeRaw,
 }: MarkdownContentProps) {
+  const { webURL } = useGitHubEnvironment();
+  // Skip the mention walk when there's no `@`.
+  const linkMentions = flavor === 'comment' && markdown.includes('@');
   return (
     <div className={cn(MARKDOWN_PROSE_CLASS, className)}>
       <Markdown
-        remarkPlugins={[...REMARK_PLUGINS, ...(extraRemarkPlugins ?? [])]}
+        remarkPlugins={[
+          ...REMARK_PLUGINS,
+          ...(linkMentions
+            ? [[remarkMentions, { webURL }] satisfies [unknown, unknown]]
+            : []),
+          ...(extraRemarkPlugins ?? []),
+        ]}
         rehypePlugins={[
           ...(rehypePluginsBeforeRaw ?? []),
           ...BASE_REHYPE_PLUGINS,

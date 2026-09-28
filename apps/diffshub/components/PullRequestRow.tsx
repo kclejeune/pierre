@@ -4,8 +4,8 @@ import { IconBranch, IconDraft } from '@pierre/icons';
 import Link from 'next/link';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
+import { RelativeTime } from './RelativeTime';
 import { cn } from '@/lib/cn';
-import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import type { PullSummary } from '@/lib/githubPullSummaries';
 import { recordRecentDiff } from '@/lib/recentDiffs';
 
@@ -15,10 +15,8 @@ interface PullRequestRowProps {
   showRepo?: boolean;
 }
 
-// One pull request in a dashboard card stack: state icon, title, repo and
-// number, author avatar, and relative update time. Clicking records the diff
-// (with its title, which the viewer alone cannot recover from the patch
-// stream) into the recents list before navigating into the viewer.
+// One dashboard pull row. Clicking records the diff in recents with its title,
+// which the patch stream lacks.
 export function PullRequestRow({ pull, showRepo = true }: PullRequestRowProps) {
   const StateIcon = pull.state === 'draft' ? IconDraft : IconBranch;
   return (
@@ -27,7 +25,8 @@ export function PullRequestRow({ pull, showRepo = true }: PullRequestRowProps) {
       onClick={() =>
         recordRecentDiff({ path: pull.viewerPath, title: pull.title })
       }
-      className="hover:bg-accent/60 flex items-center gap-3 border-b p-3 transition-colors first:rounded-t-lg last:rounded-b-lg last:border-b-0"
+      // The ring is inset because section cards clip overflow.
+      className="hover:bg-accent/60 focus-visible:ring-ring flex items-center gap-3 border-b p-3 transition-colors outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 focus-visible:ring-2 focus-visible:ring-inset"
     >
       <StateIcon
         className={cn(
@@ -44,20 +43,23 @@ export function PullRequestRow({ pull, showRepo = true }: PullRequestRowProps) {
         </span>
         <span className="text-muted-foreground truncate text-xs">
           {showRepo ? `${pull.owner}/${pull.repo} ` : ''}#{pull.number}
-          {pull.authorLogin != null ? ` · ${pull.authorLogin}` : ''}
         </span>
       </div>
-      <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
-        {formatRelativeTime(pull.updatedAt)}
-      </span>
+      <RelativeTime
+        className="text-muted-foreground shrink-0 text-xs"
+        iso={pull.updatedAt}
+        titlePrefix="Updated "
+      />
       {pull.authorLogin != null && (
-        <CommentAuthorAvatar
-          author={{
-            avatarUrl: pull.authorAvatarUrl ?? '',
-            login: pull.authorLogin,
-          }}
-          className="size-6 self-center"
-        />
+        <span title={`Opened by ${pull.authorLogin}`} className="flex">
+          <CommentAuthorAvatar
+            author={{
+              avatarUrl: pull.authorAvatarUrl ?? '',
+              login: pull.authorLogin,
+            }}
+            className="size-6 self-center"
+          />
+        </span>
       )}
     </Link>
   );

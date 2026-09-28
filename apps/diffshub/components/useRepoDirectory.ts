@@ -12,7 +12,7 @@ import {
 } from '@/lib/repoDirectory';
 
 export interface RepoDirectoryState {
-  error: string | null;
+  error: Error | null;
   groups: RepoDirectoryGroup[];
   hasMore: boolean;
   loadMore(): void;
@@ -38,7 +38,7 @@ function fetchDirectory(
 // mount only when a token exists (the endpoint requires one).
 export function useRepoDirectory(tokenVersion: number): RepoDirectoryState {
   const [state, setState] = useState<{
-    error: string | null;
+    error: Error | null;
     loading: boolean;
     payload: RepoDirectoryPayload | null;
   }>({ error: null, loading: true, payload: null });
@@ -71,7 +71,11 @@ export function useRepoDirectory(tokenVersion: number): RepoDirectoryState {
       })
       .catch((error: Error) => {
         if (!cancelled) {
-          setState({ error: error.message, loading: false, payload: null });
+          setState({
+            error,
+            loading: false,
+            payload: null,
+          });
         }
       });
     return () => {
@@ -117,7 +121,7 @@ export function useRepoDirectory(tokenVersion: number): RepoDirectoryState {
         }
         setState((previous) => ({
           ...previous,
-          error: error.message,
+          error,
           loading: false,
         }));
         setLoadingMore(false);

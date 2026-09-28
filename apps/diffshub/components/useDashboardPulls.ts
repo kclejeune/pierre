@@ -4,11 +4,14 @@ import { useEffect, useState } from 'react';
 
 import { storedGitHubTokenHeaders } from './githubSession';
 import type { PullBucket, PullSummary } from '@/lib/githubPullSummaries';
+import { requestJSON } from '@/lib/pullCommentsClient';
 
 export interface DashboardPullsState {
-  error: string | null;
+  error: Error | null;
+  // True while a request is in flight, whether or not rows are showing.
   loading: boolean;
   pulls: PullSummary[];
+  retry(): void;
   totalCount: number;
 }
 
@@ -23,21 +26,53 @@ export type DashboardPullsSource =
 interface PullsPayload {
   pulls: PullSummary[];
   totalCount?: number;
-  error?: string;
+}
+
+interface CachedPulls {
+  pulls: PullSummary[];
+  totalCount: number;
+}
+
+// Last rows per section, so revisiting a tab or repo card renders instantly
+// while it revalidates. The route is browser-cached for 30s; this only removes
+// the loading flash.
+const MAX_CACHED_SECTIONS = 40;
+const pullsCache = new Map<string, CachedPulls>();
+
+function rememberPulls(key: string, value: CachedPulls): void {
+  pullsCache.delete(key);
+  pullsCache.set(key, value);
+  if (pullsCache.size > MAX_CACHED_SECTIONS) {
+    const oldest = pullsCache.keys().next().value;
+    if (oldest != null) {
+      pullsCache.delete(oldest);
+    }
+  }
 }
 
 function fetchPulls(search: string): Promise<PullsPayload> {
-  return fetch(`/api/github-pulls?${search}`, {
+  return requestJSON(`/api/github-pulls?${search}`, {
     headers: storedGitHubTokenHeaders(),
-  }).then(async (response) => {
-    const payload = (await response.json()) as PullsPayload;
-    if (!response.ok) {
-      throw new Error(
-        payload.error ?? `GitHub request failed (${response.status}).`
-      );
-    }
-    return payload;
-  });
+  }) as Promise<PullsPayload>;
+}
+
+interface SectionState extends CachedPulls {
+  error: Error | null;
+  // The cacheKey this state belongs to; a mismatch re-derives it from the
+  // cache.
+  key: string;
+  loading: boolean;
+}
+
+function initialSectionState(key: string): SectionState {
+  const cached = pullsCache.get(key);
+  return {
+    error: null,
+    key,
+    loading: true,
+    pulls: cached?.pulls ?? [],
+    totalCount: cached?.totalCount ?? 0,
+  };
 }
 
 // Pull request rows for one dashboard section. Callers mount only after
@@ -46,13 +81,6 @@ export function useDashboardPulls(
   source: DashboardPullsSource,
   tokenVersion: number
 ): DashboardPullsState {
-  const [state, setState] = useState<DashboardPullsState>({
-    error: null,
-    loading: true,
-    pulls: [],
-    totalCount: 0,
-  });
-
   // Doubles as the effect's dependency key and the query string.
   const params = new URLSearchParams();
   if (source.bucket != null) {
@@ -64,35 +92,59 @@ export function useDashboardPulls(
     params.set('exclude', (source.excludeRepos ?? []).join(','));
   }
   const sourceKey = params.toString();
+  const cacheKey = `${tokenVersion}:${sourceKey}`;
+
+  const [storedState, setState] = useState(() => initialSectionState(cacheKey));
+  const [reloadVersion, setReloadVersion] = useState(0);
+  // On a source change, render the new source's cached rows this pass.
+  const state =
+    storedState.key === cacheKey ? storedState : initialSectionState(cacheKey);
 
   useEffect(() => {
     let cancelled = false;
-    setState((previous) => ({ ...previous, error: null, loading: true }));
+    setState((previous) =>
+      previous.key === cacheKey
+        ? { ...previous, error: null, loading: true }
+        : initialSectionState(cacheKey)
+    );
     fetchPulls(sourceKey)
       .then((payload) => {
-        if (!cancelled) {
-          setState({
-            error: null,
-            loading: false,
-            pulls: payload.pulls,
-            totalCount: payload.totalCount ?? payload.pulls.length,
-          });
+        if (cancelled) {
+          return;
         }
+        const value = {
+          pulls: payload.pulls,
+          totalCount: payload.totalCount ?? payload.pulls.length,
+        };
+        rememberPulls(cacheKey, value);
+        setState({
+          ...value,
+          error: null,
+          key: cacheKey,
+          loading: false,
+        });
       })
       .catch((error: Error) => {
         if (!cancelled) {
-          setState({
-            error: error.message,
+          // Keep any cached rows on screen; the error renders beneath them.
+          setState((previous) => ({
+            ...previous,
+            error,
+            key: cacheKey,
             loading: false,
-            pulls: [],
-            totalCount: 0,
-          });
+          }));
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [sourceKey, tokenVersion]);
+  }, [cacheKey, reloadVersion, sourceKey]);
 
-  return state;
+  return {
+    error: state.error,
+    loading: state.loading,
+    pulls: state.pulls,
+    retry: () => setReloadVersion((version) => version + 1),
+    totalCount: state.totalCount,
+  };
 }

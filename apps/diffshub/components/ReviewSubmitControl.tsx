@@ -3,7 +3,9 @@
 import { useState } from 'react';
 
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
+import { MarkdownEditor } from './MarkdownEditor';
 import { useDropdownChromeStyle } from './useDropdownChromeStyle';
+import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
 import {
   DropdownMenu,
@@ -36,6 +38,9 @@ const REVIEW_EVENT_OPTIONS: {
 ];
 
 interface ReviewSubmitControlProps {
+  // GitHub rejects approve/request-changes on your own pull request, so those
+  // are disabled.
+  authorLogin?: string;
   // Whether a token is saved, i.e. a review can be submitted at all.
   canWrite: boolean;
   // Comments batched into the in-progress review, shown as a badge and
@@ -51,6 +56,7 @@ interface ReviewSubmitControlProps {
 // verdict (comment / approve / request changes) and an optional summary.
 // Also usable with zero pending comments to just set a review status.
 export function ReviewSubmitControl({
+  authorLogin,
   canWrite,
   pendingCount,
   onSubmit,
@@ -60,12 +66,17 @@ export function ReviewSubmitControl({
   const [event, setEvent] = useState<PullReviewEvent>('COMMENT');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const dropdownThemeStyle = useDropdownChromeStyle();
+  const viewer = useGitHubUser();
+  const isOwnPull =
+    authorLogin != null && viewer != null && viewer.login === authorLogin;
+  // A verdict picked before the author resolved falls back to a comment.
+  const effectiveEvent = isOwnPull ? 'COMMENT' : event;
 
   // GitHub requires substance for a plain comment review; a verdict alone is
   // enough for approve / request changes.
   const canSubmit =
     !isSubmitting &&
-    (event !== 'COMMENT' || body.trim() !== '' || pendingCount > 0);
+    (effectiveEvent !== 'COMMENT' || body.trim() !== '' || pendingCount > 0);
 
   async function submit() {
     if (!canSubmit) {
@@ -73,7 +84,7 @@ export function ReviewSubmitControl({
     }
     setIsSubmitting(true);
     try {
-      await onSubmit(event, body.trim());
+      await onSubmit(effectiveEvent, body.trim());
       setBody('');
       setEvent('COMMENT');
       setOpen(false);
@@ -123,48 +134,50 @@ export function ReviewSubmitControl({
           }}
         >
           <div className="text-sm font-medium">Submit review</div>
-          <textarea
-            value={body}
-            rows={3}
+          <MarkdownEditor
+            aria-label="Review summary"
             disabled={isSubmitting}
             placeholder="Leave a summary… (optional)"
-            className="field-sizing-content max-h-60 w-full resize-none rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))] bg-transparent px-3 py-1.5 text-[14px] text-inherit placeholder:text-[var(--diffshub-popover-muted-fg,var(--color-muted-foreground))] focus:outline-none"
-            onChange={({ currentTarget }) => setBody(currentTarget.value)}
-            // Keep typing inside the textarea instead of triggering Radix
-            // menu typeahead or item activation.
-            onKeyDown={(keyEvent) => {
-              keyEvent.stopPropagation();
-              if (
-                keyEvent.key === 'Enter' &&
-                (keyEvent.metaKey || keyEvent.shiftKey)
-              ) {
-                keyEvent.preventDefault();
-                void submit();
-              }
-            }}
+            rows={3}
+            textareaClassName="max-h-60"
+            value={body}
+            onChange={setBody}
+            // Block Radix typeahead and item activation.
+            onKeyDown={(keyEvent) => keyEvent.stopPropagation()}
+            onSubmit={() => void submit()}
           />
           <div className="flex flex-col gap-1" role="radiogroup">
-            {REVIEW_EVENT_OPTIONS.map((option) => (
-              <label
-                key={option.event}
-                className="flex cursor-pointer items-start gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))]"
-              >
-                <input
-                  type="radio"
-                  name="diffshub-review-event"
-                  className="mt-1 accent-blue-500"
-                  checked={event === option.event}
-                  disabled={isSubmitting}
-                  onChange={() => setEvent(option.event)}
-                />
-                <span className="flex min-w-0 flex-col">
-                  {option.label}
-                  <span className="text-muted-foreground text-xs">
-                    {option.description}
+            {REVIEW_EVENT_OPTIONS.map((option) => {
+              const blocked = isOwnPull && option.event !== 'COMMENT';
+              return (
+                <label
+                  key={option.event}
+                  className={cn(
+                    'flex items-start gap-2 rounded-md px-1.5 py-1 text-sm',
+                    blocked
+                      ? 'cursor-not-allowed opacity-60'
+                      : 'cursor-pointer hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))]'
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="diffshub-review-event"
+                    className="mt-1 accent-blue-500"
+                    checked={effectiveEvent === option.event}
+                    disabled={isSubmitting || blocked}
+                    onChange={() => setEvent(option.event)}
+                  />
+                  <span className="flex min-w-0 flex-col">
+                    {option.label}
+                    <span className="text-muted-foreground text-xs">
+                      {blocked
+                        ? 'Not available on your own pull request.'
+                        : option.description}
+                    </span>
                   </span>
-                </span>
-              </label>
-            ))}
+                </label>
+              );
+            })}
           </div>
           <div className="flex items-center justify-between gap-2">
             <span className="text-muted-foreground text-xs">

@@ -7,8 +7,14 @@ import { memo, useMemo, useState } from 'react';
 
 import { Button } from '@/components/Button';
 import {
+  DashboardSectionState,
+  SectionMessage,
+  SkeletonRows,
+} from '@/components/DashboardSectionState';
+import {
   DashboardShell,
   SECTION_CARD_CLASS,
+  useRevealDashboardSection,
 } from '@/components/DashboardShell';
 import { Input } from '@/components/Input';
 import { RepoDirectory } from '@/components/RepoDirectory';
@@ -51,17 +57,30 @@ export function BrowseDashboard({ initialRepo }: BrowseDashboardProps) {
     );
   };
 
+  // Directory picks scroll to the refs panel above.
+  const refsPanel = useRevealDashboardSection<HTMLElement>();
+
   return (
     <DashboardShell section="browse" tokenState={tokenState}>
       <RepoPicker selected={repo} onSelect={selectRepo} />
       {repo != null && tokenState.hydrated && (
-        <RepoRefsPanel key={repo} repoName={repo} token={token} />
+        <section
+          ref={refsPanel.ref}
+          tabIndex={-1}
+          aria-label={`Branches and tags in ${repo}`}
+          className="scroll-mt-4 outline-none"
+        >
+          <RepoRefsPanel key={repo} repoName={repo} token={token} />
+        </section>
       )}
       {tokenState.hydrated && tokenState.hasToken && (
         <section className="space-y-3">
           <h3 className="text-sm font-medium">Your repositories</h3>
           <RepoDirectory
-            onSelectRepo={selectRepo}
+            onSelectRepo={(next) => {
+              selectRepo(next);
+              refsPanel.requestReveal();
+            }}
             selectedRepo={repo}
             tokenVersion={tokenState.tokenVersion}
           />
@@ -119,40 +138,108 @@ function RepoRefsPanel({
     const [owner, name] = repoName.split('/');
     return { owner, repo: name };
   }, [repoName]);
-  const state = useRepoRefs(repo, token);
+  const [reloadToken, setReloadToken] = useState(0);
+  const state = useRepoRefs(repo, token, true, reloadToken);
 
-  if (state.kind === 'idle' || state.kind === 'loading') {
+  if (state.kind !== 'ready') {
     return (
-      <p className="text-muted-foreground animate-pulse p-3 text-sm">
-        Loading branches and tags…
-      </p>
+      <DashboardSectionState
+        error={state.kind === 'error' ? state.error : null}
+        isEmpty
+        loading={state.kind === 'idle' || state.kind === 'loading'}
+        loadingLabel={`Loading branches and tags for ${repoName}…`}
+        skeleton={
+          <div className={SECTION_CARD_CLASS}>
+            <SkeletonRows count={6} variant="list" />
+          </div>
+        }
+        onRetry={() => setReloadToken((value) => value + 1)}
+      />
     );
   }
-  if (state.kind === 'error') {
-    return <p className="text-destructive p-3 text-sm">{state.message}</p>;
-  }
-  const { data } = state;
+  return <RepoRefsLists data={state.data} repo={repo} />;
+}
+
+// Default branch first; the rest keep listing order.
+function withDefaultBranchFirst(
+  branches: readonly string[],
+  defaultBranch: string
+): string[] {
+  return branches.includes(defaultBranch)
+    ? [defaultBranch, ...branches.filter((ref) => ref !== defaultBranch)]
+    : [...branches];
+}
+
+// The compare form plus branch and tag lists sharing one filter.
+function RepoRefsLists({
+  data,
+  repo,
+}: {
+  data: RepoRefsData;
+  repo: GitHubRepo;
+}) {
+  const [filter, setFilter] = useState('');
+  const query = filter.trim().toLowerCase();
+  const branches = useMemo(
+    () => withDefaultBranchFirst(data.branches, data.defaultBranch),
+    [data.branches, data.defaultBranch]
+  );
+  const matches = (ref: string) =>
+    query === '' || ref.toLowerCase().includes(query);
+  const visibleBranches = branches.filter(matches);
+  const visibleTags = data.tags.filter(matches);
+  const total = branches.length + data.tags.length;
+  const shown = visibleBranches.length + visibleTags.length;
   return (
     <div className="space-y-4">
       <FreeRefForm data={data} repo={repo} />
-      <RefListCard
-        defaultBranch={data.defaultBranch}
-        heading="Branches"
-        refs={data.branches}
-        repo={repo}
-      />
-      {data.tags.length > 0 && (
-        <RefListCard
-          defaultBranch={data.defaultBranch}
-          heading="Tags"
-          refs={data.tags}
-          repo={repo}
+      <div className="flex items-center gap-2">
+        <Input
+          inputSize="sm"
+          aria-label="Filter branches and tags"
+          placeholder="Filter branches and tags"
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
         />
+        {query !== '' && (
+          <span
+            aria-live="polite"
+            className="text-muted-foreground shrink-0 text-xs tabular-nums"
+          >
+            {shown} of {total}
+          </span>
+        )}
+      </div>
+      {shown === 0 ? (
+        <SectionMessage>
+          No branches or tags match “{filter.trim()}”. Type the full ref in the
+          field above to open it anyway.
+        </SectionMessage>
+      ) : (
+        <>
+          {visibleBranches.length > 0 && (
+            <RefListCard
+              defaultBranch={data.defaultBranch}
+              heading="Branches"
+              refs={visibleBranches}
+              repo={repo}
+            />
+          )}
+          {visibleTags.length > 0 && (
+            <RefListCard
+              defaultBranch={data.defaultBranch}
+              heading="Tags"
+              refs={visibleTags}
+              repo={repo}
+            />
+          )}
+        </>
       )}
       {data.truncated && (
         <p className="text-muted-foreground text-xs">
-          Showing the first {data.branches.length} branches and{' '}
-          {data.tags.length} tags — type any other ref above to open it.
+          Only the first {data.branches.length} branches and {data.tags.length}{' '}
+          tags are listed. To open another ref, type its name in the field
+          above.
         </p>
       )}
     </div>
@@ -162,8 +249,8 @@ function RepoRefsPanel({
 // Free-form ref entry for anything the lists don't show (commit shas,
 // refs/pull/… refs, branches past the listing page), doubling as a
 // GitHub-style compare picker: the base defaults to the default branch and
-// both inputs suggest the listed refs. "Files" opens the tree at the head;
-// "Diff" opens the head commit's own diff when the head is sha-like and no
+// both inputs suggest the listed refs. "Browse files" opens the tree at the head;
+// "View diff" opens the head commit's own diff when the head is sha-like and no
 // base was chosen, otherwise the base...head compare.
 function FreeRefForm({ data, repo }: { data: RepoRefsData; repo: GitHubRepo }) {
   const router = useRouter();
@@ -187,6 +274,7 @@ function FreeRefForm({ data, repo }: { data: RepoRefsData; repo: GitHubRepo }) {
         inputSize="sm"
         className="w-44 flex-none font-mono text-[13px]"
         list={refListId}
+        aria-label="Base ref"
         placeholder={`base: ${data.defaultBranch}`}
         value={base}
         onChange={(event) => setBase(event.target.value)}
@@ -196,6 +284,7 @@ function FreeRefForm({ data, repo }: { data: RepoRefsData; repo: GitHubRepo }) {
         inputSize="sm"
         className="min-w-56 flex-1"
         list={refListId}
+        aria-label="Head ref"
         placeholder="Branch, tag, refs/pull/…, or commit sha"
         value={head}
         onChange={(event) => setHead(event.target.value)}
@@ -206,7 +295,7 @@ function FreeRefForm({ data, repo }: { data: RepoRefsData; repo: GitHubRepo }) {
         size="sm"
         disabled={trimmedHead === ''}
       >
-        Files
+        Browse files
       </Button>
       <Button
         type="button"
@@ -221,7 +310,7 @@ function FreeRefForm({ data, repo }: { data: RepoRefsData; repo: GitHubRepo }) {
           );
         }}
       >
-        Diff
+        View diff
       </Button>
       <RefDatalist data={data} id={refListId} />
     </form>
@@ -270,7 +359,8 @@ function RefListCard({
               <Link
                 href={buildBrowseTreePath(repo, ref)}
                 prefetch={false}
-                className="min-w-0 flex-1 truncate font-mono text-[13px] hover:underline"
+                title={`Browse files at ${ref}`}
+                className="focus-visible:ring-ring min-w-0 flex-1 truncate rounded-sm font-mono text-[13px] outline-none hover:underline focus-visible:ring-2"
               >
                 {ref}
               </Link>
@@ -282,7 +372,7 @@ function RefListCard({
                 <Link
                   href={buildRefDiffPath(repo, ref, defaultBranch)}
                   prefetch={false}
-                  className="text-muted-foreground hover:text-foreground text-xs whitespace-nowrap hover:underline"
+                  className="text-muted-foreground hover:text-foreground focus-visible:ring-ring rounded-sm text-xs whitespace-nowrap outline-none hover:underline focus-visible:ring-2"
                 >
                   Diff vs {defaultBranch}
                 </Link>

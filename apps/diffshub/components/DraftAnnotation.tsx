@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { InlineConfirm } from './InlineConfirm';
+import { MarkdownEditor } from './MarkdownEditor';
 import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
 import { annotationCardBase, getRandomPersonaAuthor } from '@/lib/annotation';
@@ -166,31 +167,18 @@ export function DraftAnnotation({
     >
       <div className="flex w-full gap-2.5">
         <CommentAuthorAvatar author={author} />
-        <textarea
-          ref={textareaRef}
-          value={message}
-          onChange={({ currentTarget }) => {
-            annotation.metadata.message = currentTarget.value;
-            setMessage(currentTarget.value);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              event.preventDefault();
-              tryCancel();
-              return;
-            }
-
-            if ((!event.shiftKey && !event.metaKey) || event.key !== 'Enter') {
-              return;
-            }
-
-            event.preventDefault();
-            void handleSave();
-          }}
-          placeholder="Add a comment…"
-          rows={2}
+        <MarkdownEditor
+          appearance="bare"
           disabled={isSaving}
-          className="field-sizing-content w-full resize-none rounded-sm bg-transparent py-1.5 text-[14px] text-inherit placeholder:text-[var(--diffshub-popover-muted-fg,var(--color-muted-foreground))] focus:outline-none"
+          placeholder="Add a comment…"
+          textareaRef={textareaRef}
+          value={message}
+          onCancel={tryCancel}
+          onChange={(next) => {
+            annotation.metadata.message = next;
+            setMessage(next);
+          }}
+          onSubmit={() => void handleSave()}
         />
       </div>
       <div className="flex w-full flex-wrap items-center justify-between gap-3 pl-10.5 md:w-auto md:justify-end md:pl-0">

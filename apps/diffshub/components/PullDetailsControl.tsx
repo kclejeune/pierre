@@ -30,8 +30,10 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from './DropdownMenu';
+import { InlineConfirm } from './InlineConfirm';
 import { Input } from './Input';
 import { MarkdownContent } from './MarkdownContent';
+import { MarkdownEditor } from './MarkdownEditor';
 import { useDropdownChromeStyle } from './useDropdownChromeStyle';
 import { useRepoLabels } from './useRepoLabels';
 import { cn } from '@/lib/cn';
@@ -94,7 +96,10 @@ export function PullDetailsControl({
   const dropdownThemeStyle = useDropdownChromeStyle();
   const [open, setOpen] = useState(false);
   const [merged, setMerged] = useState(false);
-  const [editing, setEditing] = useState(false);
+  // Held here so an edit survives the dropdown closing, which unmounts the
+  // form.
+  const [editDraft, setEditDraft] = useState<PullEditDraft | null>(null);
+  const editing = editDraft != null;
   const supplementRequest = useRef<AbortController | null>(null);
   const [supplement, setSupplement] = useState<
     | { kind: 'idle' | 'loading' }
@@ -108,7 +113,7 @@ export function PullDetailsControl({
 
   useEffect(() => {
     setMerged(false);
-    setEditing(false);
+    setEditDraft(null);
   }, [pullRequest.number, pullRequest.owner, pullRequest.repo]);
 
   useEffect(() => {
@@ -201,11 +206,24 @@ export function PullDetailsControl({
           type="button"
           variant="ghost"
           size="sm"
-          title="Pull request details"
-          className={cn(CHROME_ICON_BUTTON_CLASS, 'w-auto gap-1.5 px-2')}
+          title={`#${pullRequest.number} ${details.title}`}
+          aria-label={`Pull request details: ${details.title}`}
+          className={cn(
+            CHROME_ICON_BUTTON_CLASS,
+            'w-auto max-w-80 min-w-0 gap-1.5 px-2'
+          )}
         >
           <PullStateBadge details={details} iconOnly />
-          Details
+          <span className="hidden min-w-0 truncate xl:inline">
+            {details.title}
+          </span>
+          <span className="xl:hidden">Details</span>
+          {editing && (
+            <IconPencil
+              aria-label="Unsaved edits"
+              className="size-3 shrink-0 text-amber-500"
+            />
+          )}
           {ciState != null && (
             <IconCircleFill
               aria-label={`Checks ${ciState}`}
@@ -216,17 +234,19 @@ export function PullDetailsControl({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="w-[420px] max-w-[90vw] p-3"
+        className="w-[480px] max-w-[90vw] p-3"
         style={dropdownThemeStyle}
       >
         <div className="flex flex-col gap-3">
-          {editing ? (
+          {editDraft != null ? (
             <PullEditForm
               details={details}
+              draft={editDraft}
               getGitHubToken={getGitHubToken}
-              onCancel={() => setEditing(false)}
+              onCancel={() => setEditDraft(null)}
+              onDraftChange={setEditDraft}
               onSaved={(updated) => {
-                setEditing(false);
+                setEditDraft(null);
                 onDetailsEdited(pullRequest, withoutLabels(updated));
               }}
               pullRequest={pullRequest}
@@ -248,7 +268,9 @@ export function PullDetailsControl({
                     size="icon-sm"
                     title="Edit title and description"
                     aria-label="Edit title and description"
-                    onClick={() => setEditing(true)}
+                    onClick={() =>
+                      setEditDraft({ body: details.body, title: details.title })
+                    }
                   >
                     <IconPencil className="size-3.5" />
                   </Button>
@@ -324,8 +346,8 @@ export function PullDetailsControl({
                   No description provided.
                 </p>
               ) : (
-                <div className="max-h-56 overflow-y-auto rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))] px-3 py-2 text-[13px]">
-                  <MarkdownContent markdown={details.body} />
+                <div className="max-h-[min(24rem,50vh)] overflow-y-auto rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))] px-3 py-2 text-[13px]">
+                  <MarkdownContent flavor="comment" markdown={details.body} />
                 </div>
               )}
             </PanelSection>
@@ -405,25 +427,37 @@ function MergeCapabilitySection({
   return <MergeControls {...controls} capabilities={capabilities} />;
 }
 
+interface PullEditDraft {
+  body: string;
+  title: string;
+}
+
 // Sends only changed fields so concurrent edits on GitHub survive. Keys stay
-// in the fields so Radix typeahead and Escape-to-close don't steal them.
+// Sends only changed fields so concurrent edits on GitHub survive. Keydowns
+// stay in the fields (no Radix typeahead); Escape cancels, asking first if
+// dirty.
 function PullEditForm({
   details,
+  draft,
   getGitHubToken,
   onCancel,
+  onDraftChange,
   onSaved,
   pullRequest,
 }: {
   details: PullDetails;
+  draft: PullEditDraft;
   getGitHubToken(): string | undefined;
   onCancel(): void;
+  onDraftChange(draft: PullEditDraft): void;
   onSaved(details: PullDetails): void;
   pullRequest: PullRequestRef;
 }) {
-  const [title, setTitle] = useState(details.title);
-  const [body, setBody] = useState(details.body);
+  const { body, title } = draft;
   const [isSaving, setIsSaving] = useState(false);
+  const [isConfirmingDiscard, setIsConfirmingDiscard] = useState(false);
   const trimmedTitle = title.trim();
+  const isDirty = trimmedTitle !== details.title || body !== details.body;
   const canSave = !isSaving && trimmedTitle !== '';
 
   async function save() {
@@ -450,13 +484,22 @@ function PullEditForm({
     }
   }
 
+  function requestCancel() {
+    if (isSaving) {
+      return;
+    }
+    if (isDirty) {
+      setIsConfirmingDiscard(true);
+    } else {
+      onCancel();
+    }
+  }
+
   function handleKeyDown(keyEvent: KeyboardEvent) {
     keyEvent.stopPropagation();
     if (keyEvent.key === 'Escape') {
       keyEvent.preventDefault();
-      if (!isSaving) {
-        onCancel();
-      }
+      requestCancel();
     } else if (
       keyEvent.key === 'Enter' &&
       (keyEvent.metaKey || keyEvent.ctrlKey)
@@ -482,39 +525,52 @@ function PullEditForm({
         placeholder="Title"
         autoFocus
         aria-invalid={trimmedTitle === ''}
-        onChange={({ currentTarget }) => setTitle(currentTarget.value)}
+        onChange={({ currentTarget }) =>
+          onDraftChange({ ...draft, title: currentTarget.value })
+        }
         onKeyDown={handleKeyDown}
       />
-      <textarea
-        value={body}
-        rows={8}
-        disabled={isSaving}
+      <MarkdownEditor
         aria-label="Pull request description"
-        placeholder="Add a description… (markdown)"
-        className="field-sizing-content max-h-80 min-h-32 w-full resize-none rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))] bg-transparent px-3 py-1.5 font-mono text-[12px] text-inherit placeholder:text-[var(--diffshub-popover-muted-fg,var(--color-muted-foreground))] focus:outline-none"
-        onChange={({ currentTarget }) => setBody(currentTarget.value)}
-        onKeyDown={handleKeyDown}
+        disabled={isSaving}
+        placeholder="Add a description…"
+        rows={8}
+        textareaClassName="max-h-80 min-h-32 font-mono text-[12px]"
+        value={body}
+        onCancel={requestCancel}
+        onChange={(next) => onDraftChange({ ...draft, body: next })}
+        onKeyDown={(keyEvent) => keyEvent.stopPropagation()}
+        onSubmit={() => void save()}
       />
-      <div className="flex items-center justify-end gap-1.5">
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          disabled={isSaving}
-          onClick={onCancel}
-        >
-          Cancel
-        </Button>
-        <Button type="submit" variant="default" size="xs" disabled={!canSave}>
-          {isSaving ? 'Saving…' : 'Save'}
-        </Button>
-      </div>
+      {isConfirmingDiscard ? (
+        <InlineConfirm
+          confirmLabel="Discard"
+          message="Discard your edits?"
+          onCancel={() => setIsConfirmingDiscard(false)}
+          onConfirm={onCancel}
+        />
+      ) : (
+        <div className="flex items-center justify-end gap-1.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            disabled={isSaving}
+            onClick={requestCancel}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" variant="default" size="xs" disabled={!canSave}>
+            {isSaving ? 'Saving…' : 'Save'}
+          </Button>
+        </div>
+      )}
     </form>
   );
 }
 
-// Reversible, so no confirm step. GitHub only allows draft toggles on open
-// pulls.
+// Closing asks first because it notifies participants. Draft toggles only apply
+// to open pulls.
 function PullStateActions({
   details,
   getGitHubToken,
@@ -527,6 +583,7 @@ function PullStateActions({
   pullRequest: PullRequestRef;
 }) {
   const [pending, setPending] = useState<'draft' | 'state' | null>(null);
+  const [confirmingClose, setConfirmingClose] = useState(false);
 
   async function apply(
     kind: 'draft' | 'state',
@@ -549,6 +606,28 @@ function PullStateActions({
   }
 
   const isOpen = details.state === 'open';
+  const toggleState = () =>
+    void apply(
+      'state',
+      { state: isOpen ? 'closed' : 'open' },
+      isOpen ? 'Pull request closed.' : 'Pull request reopened.'
+    );
+  if (confirmingClose) {
+    return (
+      <div className="border-t border-[var(--diffshub-annotation-border,var(--color-border))] pt-3">
+        <InlineConfirm
+          confirmLabel="Close pull request"
+          disabled={pending != null}
+          message={`Close #${pullRequest.number} without merging?`}
+          onCancel={() => setConfirmingClose(false)}
+          onConfirm={() => {
+            setConfirmingClose(false);
+            toggleState();
+          }}
+        />
+      </div>
+    );
+  }
   return (
     <div className="flex flex-wrap items-center justify-end gap-1.5 border-t border-[var(--diffshub-annotation-border,var(--color-border))] pt-3">
       {isOpen && (
@@ -578,13 +657,7 @@ function PullStateActions({
         size="xs"
         disabled={pending != null}
         className={isOpen ? 'text-red-500' : undefined}
-        onClick={() =>
-          void apply(
-            'state',
-            { state: isOpen ? 'closed' : 'open' },
-            isOpen ? 'Pull request closed.' : 'Pull request reopened.'
-          )
-        }
+        onClick={() => (isOpen ? setConfirmingClose(true) : toggleState())}
       >
         {pending === 'state'
           ? 'Updating…'
@@ -637,6 +710,12 @@ function PullLabels({
 
   const applied = new Set(labels.map((label) => label.name));
   const query = filter.trim().toLowerCase();
+  const matches =
+    repoLabels?.kind === 'ready'
+      ? repoLabels.labels.filter((label) =>
+          label.name.toLowerCase().includes(query)
+        )
+      : [];
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-1">
@@ -680,8 +759,16 @@ function PullLabels({
             aria-label="Filter labels"
             autoFocus
             onChange={({ currentTarget }) => setFilter(currentTarget.value)}
-            // Block Radix menu typeahead.
-            onKeyDown={(keyEvent) => keyEvent.stopPropagation()}
+            // Block Radix typeahead. Enter toggles the top match.
+            onKeyDown={(keyEvent) => {
+              keyEvent.stopPropagation();
+              const top = matches[0];
+              if (keyEvent.key === 'Enter' && query !== '' && top != null) {
+                keyEvent.preventDefault();
+                void toggle(top.name, applied.has(top.name) ? 'remove' : 'add');
+                setFilter('');
+              }
+            }}
           />
           {repoLabels == null ? (
             <p className="text-muted-foreground animate-pulse px-1 text-xs">
@@ -691,37 +778,41 @@ function PullLabels({
             <p className="text-destructive px-1 text-xs">
               {repoLabels.message}
             </p>
+          ) : matches.length === 0 ? (
+            <p className="text-muted-foreground px-1 text-xs">
+              {query === ''
+                ? 'This repository has no labels.'
+                : `No labels match “${filter.trim()}”.`}
+            </p>
           ) : (
             <ul className="flex max-h-40 flex-col overflow-y-auto">
-              {repoLabels.labels
-                .filter((label) => label.name.toLowerCase().includes(query))
-                .map((label) => {
-                  const isApplied = applied.has(label.name);
-                  return (
-                    <li key={label.name}>
-                      <button
-                        type="button"
-                        disabled={pendingLabel != null}
-                        className="flex w-full items-center gap-1.5 rounded-sm px-1.5 py-1 text-left text-xs hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] disabled:opacity-50"
-                        onClick={() =>
-                          void toggle(label.name, isApplied ? 'remove' : 'add')
-                        }
-                      >
-                        <IconCheck
-                          aria-hidden
-                          className={cn(
-                            'size-3 shrink-0',
-                            !isApplied && 'invisible'
-                          )}
-                        />
-                        <LabelColorDot color={label.color} />
-                        <span className="min-w-0 flex-1 truncate">
-                          {label.name}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
+              {matches.map((label) => {
+                const isApplied = applied.has(label.name);
+                return (
+                  <li key={label.name}>
+                    <button
+                      type="button"
+                      disabled={pendingLabel != null}
+                      className="flex w-full items-center gap-1.5 rounded-sm px-1.5 py-1 text-left text-xs hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] disabled:opacity-50"
+                      onClick={() =>
+                        void toggle(label.name, isApplied ? 'remove' : 'add')
+                      }
+                    >
+                      <IconCheck
+                        aria-hidden
+                        className={cn(
+                          'size-3 shrink-0',
+                          !isApplied && 'invisible'
+                        )}
+                      />
+                      <LabelColorDot color={label.color} />
+                      <span className="min-w-0 flex-1 truncate">
+                        {label.name}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

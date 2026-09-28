@@ -13,11 +13,12 @@ import {
   useCommentModeration,
 } from './CommentModeration';
 import { DeferredMarkdownContent } from './MarkdownContent';
+import { RelativeTime } from './RelativeTime';
 import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
 import { annotationCardBase } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
-import { formatRelativeTime } from '@/lib/formatRelativeTime';
+import { readCommentDraft } from '@/lib/commentDrafts';
 import type { PullReviewComment, ThreadCommentMetadata } from '@/lib/types';
 
 interface ThreadAnnotationProps {
@@ -60,12 +61,16 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
           key={comment.id}
           comment={comment}
           canModify={canWrite && githubUser?.login === comment.author.login}
+          editDraftKey={`edit:${comment.id}`}
           onDelete={() => onDeleteComment(itemId, key, comment.id)}
           onEdit={(body) => onEditComment(itemId, key, comment.id, body)}
         />
       ))}
       {canWrite ? (
-        <ReplyComposer onReply={(body) => onReply(itemId, key, body)} />
+        <ReplyComposer
+          draftKey={`reply:${itemId}:${key}`}
+          onReply={(body) => onReply(itemId, key, body)}
+        />
       ) : (
         <p className="text-muted-foreground m-0 text-[13px]">
           Sign in with GitHub or save a token to reply.
@@ -78,6 +83,7 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
 interface ThreadCommentProps {
   canModify: boolean;
   comment: PullReviewComment;
+  editDraftKey: string;
   onDelete(): Promise<void>;
   onEdit(body: string): Promise<void>;
 }
@@ -85,10 +91,15 @@ interface ThreadCommentProps {
 function ThreadComment({
   canModify,
   comment,
+  editDraftKey,
   onDelete,
   onEdit,
 }: ThreadCommentProps) {
-  const moderation = useCommentModeration(onDelete);
+  // Reopen an edit that was in progress when the card scrolled away.
+  const [hadEditDraft] = useState(
+    () => canModify && readCommentDraft(editDraftKey) != null
+  );
+  const moderation = useCommentModeration(onDelete, hadEditDraft);
   const showActions =
     comment.htmlUrl != null || (canModify && !moderation.isEditing);
 
@@ -98,9 +109,10 @@ function ThreadComment({
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex items-baseline gap-2">
           <strong className="text-[13px]">{comment.author.login}</strong>
-          <span className="text-muted-foreground text-[12px]">
-            {formatRelativeTime(comment.createdAt)}
-          </span>
+          <RelativeTime
+            className="text-muted-foreground text-[12px]"
+            iso={comment.createdAt}
+          />
           {showActions && (
             <span className="ml-auto flex gap-1 opacity-0 transition-opacity duration-100 group-focus-within/comment:opacity-100 group-hover/comment:opacity-100">
               {comment.htmlUrl != null && (
@@ -128,12 +140,14 @@ function ThreadComment({
         </div>
         {moderation.isEditing ? (
           <CommentEditComposer
+            autoFocus={!hadEditDraft}
+            draftKey={editDraftKey}
             initialBody={comment.body}
             moderation={moderation}
             onEdit={onEdit}
           />
         ) : (
-          <DeferredMarkdownContent markdown={comment.body} />
+          <DeferredMarkdownContent flavor="comment" markdown={comment.body} />
         )}
         {moderation.isConfirmingDelete && (
           <CommentDeleteConfirm moderation={moderation} />
@@ -144,18 +158,27 @@ function ThreadComment({
 }
 
 interface ReplyComposerProps {
+  draftKey: string;
   onReply(body: string): Promise<void>;
 }
 
-function ReplyComposer({ onReply }: ReplyComposerProps) {
-  const [isOpen, setIsOpen] = useState(false);
+// Collapsed to a "Reply…" field; opens directly when a draft is stored.
+function ReplyComposer({ draftKey, onReply }: ReplyComposerProps) {
+  const [isOpen, setIsOpen] = useState(
+    () => readCommentDraft(draftKey) != null
+  );
+  // Autofocus only when user-opened; restored composers must not steal focus.
+  const [openedByUser, setOpenedByUser] = useState(false);
 
   if (!isOpen) {
     return (
       <button
         type="button"
         className="text-muted-foreground hover:border-foreground/30 hover:text-foreground w-full cursor-text rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))] px-3 py-1.5 text-left text-[13px] transition-colors"
-        onClick={() => setIsOpen(true)}
+        onClick={() => {
+          setOpenedByUser(true);
+          setIsOpen(true);
+        }}
       >
         Reply…
       </button>
@@ -164,7 +187,9 @@ function ReplyComposer({ onReply }: ReplyComposerProps) {
 
   return (
     <CommentComposer
-      autoFocus
+      autoFocus={openedByUser}
+      draftKey={draftKey}
+      placeholder="Write a reply…"
       submitLabel="Reply"
       onCancel={() => setIsOpen(false)}
       onSubmit={async (body) => {

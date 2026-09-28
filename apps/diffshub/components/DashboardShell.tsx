@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import type { ReactNode } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 import { AppNavbar } from './AppNavbar';
 import { DiffsHubLogo } from './DiffsHubLogo';
@@ -41,4 +41,33 @@ export function DashboardShell({
       </div>
     </div>
   );
+}
+
+// Call `requestReveal()` with a pick; the section at `ref` scrolls into view
+// once that render commits.
+export function useRevealDashboardSection<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [requests, setRequests] = useState(0);
+  useEffect(() => {
+    if (requests > 0) {
+      revealDashboardSection(ref.current);
+    }
+  }, [requests]);
+  return { ref, requestReveal: () => setRequests((count) => count + 1) };
+}
+
+// Scrolls a just-opened section into view and focuses it (needs tabIndex={-1}).
+// Skips smooth scrolling under reduced motion.
+export function revealDashboardSection(element: HTMLElement | null): void {
+  if (element == null) {
+    return;
+  }
+  const reduceMotion = window.matchMedia(
+    '(prefers-reduced-motion: reduce)'
+  ).matches;
+  element.scrollIntoView({
+    behavior: reduceMotion ? 'auto' : 'smooth',
+    block: 'start',
+  });
+  element.focus({ preventScroll: true });
 }

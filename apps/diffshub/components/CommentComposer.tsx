@@ -1,12 +1,24 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
+import { InlineConfirm } from './InlineConfirm';
+import { MarkdownEditor } from './MarkdownEditor';
 import { Button } from '@/components/Button';
+import {
+  clearCommentDraft,
+  readCommentDraft,
+  writeCommentDraft,
+} from '@/lib/commentDrafts';
 
 interface CommentComposerProps {
   autoFocus?: boolean;
+  // Keeps unsent text across unmounts (virtualized cards). Cleared on submit or
+  // discard.
+  draftKey?: string;
   initialBody?: string;
+  pendingLabel?: string;
+  placeholder?: string;
   submitLabel: string;
   onCancel(): void;
   // May reject to signal a failed submit (already surfaced to the user); the
@@ -14,20 +26,53 @@ interface CommentComposerProps {
   onSubmit(body: string): void | Promise<void>;
 }
 
-// Shared textarea + submit/cancel row used by thread replies and comment
-// editing. Submit on Cmd/Shift+Enter, cancel on Escape.
+// Markdown composer with submit/cancel for replies, edits, and new comments.
+// Escape asks before discarding typed text.
 export function CommentComposer({
   autoFocus = false,
+  draftKey,
   initialBody = '',
+  pendingLabel = 'Posting…',
+  placeholder = 'Leave a comment…',
   submitLabel,
   onCancel,
   onSubmit,
 }: CommentComposerProps) {
-  const [body, setBody] = useState(initialBody);
+  const [body, setBody] = useState(
+    () =>
+      (draftKey != null ? readCommentDraft(draftKey) : undefined) ?? initialBody
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isConfirmingDiscard, setIsConfirmingDiscard] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const trimmedBody = body.trim();
-  const canSubmit =
-    !isSubmitting && trimmedBody !== '' && trimmedBody !== initialBody.trim();
+  const isDirty = trimmedBody !== initialBody.trim();
+  const canSubmit = !isSubmitting && trimmedBody !== '' && isDirty;
+
+  function updateBody(next: string) {
+    setBody(next);
+    if (draftKey != null) {
+      writeCommentDraft(draftKey, next === initialBody ? '' : next);
+    }
+  }
+
+  function discard() {
+    if (draftKey != null) {
+      clearCommentDraft(draftKey);
+    }
+    onCancel();
+  }
+
+  function requestCancel() {
+    if (isSubmitting) {
+      return;
+    }
+    if (isDirty && trimmedBody !== '') {
+      setIsConfirmingDiscard(true);
+      return;
+    }
+    discard();
+  }
 
   async function submit() {
     if (!canSubmit) {
@@ -36,6 +81,9 @@ export function CommentComposer({
     setIsSubmitting(true);
     try {
       await onSubmit(trimmedBody);
+      if (draftKey != null) {
+        clearCommentDraft(draftKey);
+      }
     } catch {
       // The submit handler surfaces its own error; keep the draft editable.
     } finally {
@@ -51,47 +99,49 @@ export function CommentComposer({
         void submit();
       }}
     >
-      <textarea
+      <MarkdownEditor
+        textareaRef={textareaRef}
         autoFocus={autoFocus}
-        value={body}
         disabled={isSubmitting}
-        rows={2}
-        placeholder="Leave a comment…"
-        className="field-sizing-content w-full resize-none rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))] bg-transparent px-3 py-1.5 text-[14px] text-inherit placeholder:text-[var(--diffshub-popover-muted-fg,var(--color-muted-foreground))] focus:outline-none"
-        onChange={({ currentTarget }) => setBody(currentTarget.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') {
-            event.preventDefault();
-            onCancel();
-            return;
-          }
-          if (event.key === 'Enter' && (event.metaKey || event.shiftKey)) {
-            event.preventDefault();
-            void submit();
-          }
-        }}
+        placeholder={placeholder}
+        value={body}
+        onCancel={requestCancel}
+        onChange={updateBody}
+        onSubmit={() => void submit()}
       />
-      <div className="flex justify-end gap-2">
-        <Button
-          type="button"
-          variant="muted"
-          size="sm"
-          disabled={isSubmitting}
-          onClick={onCancel}
-          className="text-muted-foreground hover:text-foreground font-normal hover:no-underline"
-        >
-          Cancel
-        </Button>
-        <Button
-          type="submit"
-          variant="default"
-          size="sm"
-          disabled={!canSubmit}
-          className="bg-blue-500 hover:bg-blue-600"
-        >
-          {submitLabel}
-        </Button>
-      </div>
+      {isConfirmingDiscard ? (
+        <InlineConfirm
+          confirmLabel="Discard"
+          message="Discard what you wrote?"
+          onCancel={() => {
+            setIsConfirmingDiscard(false);
+            textareaRef.current?.focus({ preventScroll: true });
+          }}
+          onConfirm={discard}
+        />
+      ) : (
+        <div className="flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="muted"
+            size="sm"
+            disabled={isSubmitting}
+            onClick={requestCancel}
+            className="text-muted-foreground hover:text-foreground font-normal hover:no-underline"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            variant="default"
+            size="sm"
+            disabled={!canSubmit}
+            className="bg-blue-500 hover:bg-blue-600"
+          >
+            {isSubmitting ? pendingLabel : submitLabel}
+          </Button>
+        </div>
+      )}
     </form>
   );
 }

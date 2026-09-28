@@ -100,6 +100,15 @@ function GitHubPATForm({ onSave }: { onSave(token: string): void }) {
   );
 }
 
+// Starts OAuth sign-in, returning to the current page (read at click time).
+export function startGitHubSignIn(): void {
+  const { hash, pathname, search } = window.location;
+  const returnTo = `${pathname}${search}${hash}`;
+  window.location.assign(
+    `/api/auth/github/login?returnTo=${encodeURIComponent(returnTo)}`
+  );
+}
+
 export const GitHubTokenControl = memo(function GitHubTokenControl({
   active,
   className,
@@ -109,15 +118,6 @@ export const GitHubTokenControl = memo(function GitHubTokenControl({
 }: GitHubTokenControlProps) {
   const { oauthEnabled, patInputEnabled } = useGitHubEnvironment();
   const githubUser = useGitHubUser();
-  // The login route restores the user to the exact diff they were viewing, so
-  // the return path is captured at click time rather than render time.
-  const handleSignIn = () => {
-    const { hash, pathname, search } = window.location;
-    const returnTo = `${pathname}${search}${hash}`;
-    window.location.assign(
-      `/api/auth/github/login?returnTo=${encodeURIComponent(returnTo)}`
-    );
-  };
 
   return (
     <section className={cn('px-2 py-1.5', className)} aria-label={title}>
@@ -162,7 +162,7 @@ export const GitHubTokenControl = memo(function GitHubTokenControl({
         <>
           {oauthEnabled && (
             <div className="mt-2">
-              <Button type="button" size="sm" onClick={handleSignIn}>
+              <Button type="button" size="sm" onClick={startGitHubSignIn}>
                 <IconBrandGithub className="size-4" />
                 Sign in with GitHub
               </Button>

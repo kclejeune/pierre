@@ -1,13 +1,18 @@
 'use client';
 
 import { IconPin, IconX } from '@pierre/icons';
-import { useState } from 'react';
+import { type Ref, useState } from 'react';
 
 import { Button } from '@/components/Button';
 import { ButtonGroup, ButtonGroupItem } from '@/components/ButtonGroup';
 import {
+  DashboardSectionState,
+  SkeletonRows,
+} from '@/components/DashboardSectionState';
+import {
   DashboardShell,
   SECTION_CARD_CLASS,
+  useRevealDashboardSection,
 } from '@/components/DashboardShell';
 import { GitHubTokenControl } from '@/components/GitHubTokenControl';
 import { PullRequestRow } from '@/components/PullRequestRow';
@@ -16,12 +21,33 @@ import { RepoNameInput } from '@/components/RepoNameInput';
 import { useDashboardPulls } from '@/components/useDashboardPulls';
 import { useGitHubToken } from '@/components/useGitHubToken';
 import { usePinnedRepos } from '@/components/usePinnedRepos';
+import { cn } from '@/lib/cn';
 import {
+  isPullBucket,
   PULL_BUCKETS,
   type PullBucket,
   type PullSummary,
 } from '@/lib/githubPullSummaries';
 import { isRepoPinned, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
+
+const DEFAULT_BUCKET: PullBucket = 'created';
+
+// ?bucket= keeps the tab across reloads and shared links. Read on the client so
+// the page stays statically prerenderable.
+function readBucketFromLocation(): PullBucket {
+  const value = new URLSearchParams(window.location.search).get('bucket');
+  return value != null && isPullBucket(value) ? value : DEFAULT_BUCKET;
+}
+
+function writeBucketToLocation(bucket: PullBucket): void {
+  const url = new URL(window.location.href);
+  if (bucket === DEFAULT_BUCKET) {
+    url.searchParams.delete('bucket');
+  } else {
+    url.searchParams.set('bucket', bucket);
+  }
+  window.history.replaceState(window.history.state, '', url);
+}
 
 const BUCKET_COPY: Record<PullBucket, { empty: string; label: string }> = {
   created: { empty: 'you created', label: 'Created' },
@@ -43,8 +69,8 @@ export function PullsDashboard() {
       ) : (
         <div className={SECTION_CARD_CLASS}>
           <p className="text-muted-foreground border-b px-4 py-3 text-sm">
-            Sign in with GitHub or paste a token to browse your pull requests,
-            assigned reviews, and pinned repositories.
+            Sign in with GitHub to see pull requests you opened, were assigned,
+            or were asked to review.
           </p>
           <GitHubTokenControl
             active={hasToken}
@@ -60,10 +86,15 @@ export function PullsDashboard() {
 }
 
 function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
-  const [bucket, setBucket] = useState<PullBucket>('created');
+  const [bucket, setBucket] = useState<PullBucket>(readBucketFromLocation);
+  const selectBucket = (next: PullBucket) => {
+    setBucket(next);
+    writeBucketToLocation(next);
+  };
   // A repo picked from the directory below; its open pulls render in a card
   // above the directory until cleared.
   const [directoryRepo, setDirectoryRepo] = useState<string | null>(null);
+  const directoryCard = useRevealDashboardSection<HTMLElement>();
   const { hydrated, pinned, toggle } = usePinnedRepos();
   // Everything below both filters on the pinned list (cards + bucket
   // exclusions), so wait for the single post-mount localStorage read instead
@@ -76,7 +107,7 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
       <ButtonGroup
         size="sm"
         value={bucket}
-        onValueChange={(value) => setBucket(value as PullBucket)}
+        onValueChange={(value) => selectBucket(value as PullBucket)}
       >
         {PULL_BUCKETS.map((value) => (
           <ButtonGroupItem key={value} value={value}>
@@ -100,6 +131,7 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
         // (regardless of the active bucket — the point is browsing the repo).
         <RepoPullsCard
           key={directoryRepo}
+          ref={directoryCard.ref}
           closeLabel={`Close ${directoryRepo}`}
           emptyLabel="No open pull requests in this repository."
           repo={directoryRepo}
@@ -110,7 +142,10 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
       <section className="space-y-3">
         <h3 className="text-sm font-medium">Your repositories</h3>
         <RepoDirectory
-          onSelectRepo={setDirectoryRepo}
+          onSelectRepo={(repo) => {
+            setDirectoryRepo(repo);
+            directoryCard.requestReveal();
+          }}
           selectedRepo={directoryRepo}
           tokenVersion={tokenVersion}
         />
@@ -126,6 +161,7 @@ function RepoPullsCard({
   closeLabel,
   emptyLabel,
   onClose,
+  ref,
   repo,
   tokenVersion,
 }: {
@@ -133,15 +169,22 @@ function RepoPullsCard({
   closeLabel: string;
   emptyLabel: string;
   onClose: () => void;
+  ref?: Ref<HTMLElement>;
   repo: string;
   tokenVersion: number;
 }) {
-  const { error, loading, pulls } = useDashboardPulls(
+  const { error, loading, pulls, retry } = useDashboardPulls(
     { kind: 'repo', repo, bucket },
     tokenVersion
   );
   return (
-    <div className={SECTION_CARD_CLASS}>
+    <section
+      ref={ref}
+      tabIndex={-1}
+      aria-label={`Open pull requests in ${repo}`}
+      aria-busy={loading}
+      className={cn(SECTION_CARD_CLASS, 'scroll-mt-4 outline-none')}
+    >
       <div className="flex items-center justify-between border-b px-3 py-2">
         <span className="text-sm font-medium">{repo}</span>
         <Button
@@ -159,8 +202,9 @@ function RepoPullsCard({
         loading={loading}
         pulls={pulls}
         showRepo={false}
+        onRetry={retry}
       />
-    </div>
+    </section>
   );
 }
 
@@ -173,7 +217,7 @@ function BucketSection({
   excludeRepos: readonly string[];
   tokenVersion: number;
 }) {
-  const { error, loading, pulls, totalCount } = useDashboardPulls(
+  const { error, loading, pulls, retry, totalCount } = useDashboardPulls(
     { kind: 'bucket', bucket, excludeRepos },
     tokenVersion
   );
@@ -184,17 +228,18 @@ function BucketSection({
       ? `No other open pull requests ${BUCKET_COPY[bucket].empty}.`
       : `No open pull requests ${BUCKET_COPY[bucket].empty}.`;
   return (
-    <div className={SECTION_CARD_CLASS}>
+    <div className={SECTION_CARD_CLASS} aria-busy={loading}>
       <SectionRows
         emptyLabel={emptyLabel}
         error={error}
         loading={loading}
         pulls={pulls}
+        onRetry={retry}
       />
       {totalCount > pulls.length && (
         <p className="text-muted-foreground border-t px-3 py-2 text-xs">
-          Showing {pulls.length} of {totalCount} — refine on GitHub for the
-          rest.
+          Showing the {pulls.length} most recently updated of {totalCount}.
+          Search on GitHub to see the rest.
         </p>
       )}
     </div>
@@ -248,30 +293,27 @@ function SectionRows({
   emptyLabel,
   error,
   loading,
+  onRetry,
   pulls,
   showRepo = true,
 }: {
   emptyLabel: string;
-  error: string | null;
+  error: Error | null;
   loading: boolean;
+  onRetry(): void;
   pulls: PullSummary[];
   showRepo?: boolean;
 }) {
-  if (loading) {
-    return (
-      <p className="text-muted-foreground animate-pulse p-3 text-sm">
-        Loading pull requests…
-      </p>
-    );
-  }
-  if (error != null) {
-    return <p className="text-destructive p-3 text-sm">{error}</p>;
-  }
-  if (pulls.length === 0) {
-    return <p className="text-muted-foreground p-3 text-sm">{emptyLabel}</p>;
-  }
   return (
-    <>
+    <DashboardSectionState
+      emptyLabel={emptyLabel}
+      error={error}
+      isEmpty={pulls.length === 0}
+      loading={loading}
+      loadingLabel="Loading pull requests…"
+      skeleton={<SkeletonRows variant="pull" />}
+      onRetry={onRetry}
+    >
       {pulls.map((pull) => (
         <PullRequestRow
           key={`${pull.owner}/${pull.repo}#${pull.number}`}
@@ -279,6 +321,6 @@ function SectionRows({
           showRepo={showRepo}
         />
       ))}
-    </>
+    </DashboardSectionState>
   );
 }

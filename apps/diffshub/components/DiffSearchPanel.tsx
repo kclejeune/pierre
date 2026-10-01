@@ -101,11 +101,30 @@ export function DiffSearchPanel({
 
   const groups = useMemo(() => groupMatchesByItem(matches), [matches]);
 
-  // Enter walks the results in order, like the find bar.
+  // Any edit to the query replaces a pinned definition list with its results.
+  const changeQuery = (next: DiffSearchQuery) => {
+    onClearPinned();
+    setQuery(next);
+  };
+  const clearQuery = () => changeQuery({ ...query, text: '' });
+
+  // Enter walks the results in order, like the find bar. Escape undoes one
+  // layer per press, most local first: a pinned definition list, then the
+  // query (and with it the viewer highlights), then focus in the field. Each
+  // step marks the key handled so it never also cancels a draft comment.
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
       event.preventDefault();
       step(event.shiftKey ? -1 : 1);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      if (pinned != null) {
+        onClearPinned();
+      } else if (query.text !== '') {
+        clearQuery();
+      } else {
+        event.currentTarget.blur();
+      }
     }
   };
 
@@ -128,10 +147,8 @@ export function DiffSearchPanel({
           invalid={results.error != null}
           placeholder="Search all files"
           query={query}
-          onChange={(next) => {
-            onClearPinned();
-            setQuery(next);
-          }}
+          onChange={changeQuery}
+          onClear={clearQuery}
           onKeyDown={handleKeyDown}
         />
         <SearchSummary

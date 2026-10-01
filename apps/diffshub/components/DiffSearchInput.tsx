@@ -1,7 +1,7 @@
 'use client';
 
 import { useStableCallback } from '@pierre/diffs/react';
-import { IconRegex, IconTypeWord } from '@pierre/icons';
+import { IconRegex, IconTypeWord, IconX } from '@pierre/icons';
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -119,6 +119,8 @@ interface DiffSearchInputProps {
   className?: string;
   inputRef?: Ref<HTMLInputElement>;
   onChange(query: DiffSearchQuery): void;
+  // When set, a clear (×) button appears in the field while it has text.
+  onClear?(): void;
   onKeyDown?(event: KeyboardEvent<HTMLInputElement>): void;
   placeholder: string;
   query: DiffSearchQuery;
@@ -140,6 +142,7 @@ export function DiffSearchInput({
   inputRef,
   invalid = false,
   onChange,
+  onClear,
   onKeyDown,
   placeholder,
   query,
@@ -180,6 +183,11 @@ export function DiffSearchInput({
         onChange={(event) => onChange({ ...query, text: event.target.value })}
         onKeyDown={handleKeyDown}
       />
+      {onClear != null && query.text !== '' && (
+        <SearchIconButton label="Clear" onClick={onClear}>
+          <IconX className="size-3" />
+        </SearchIconButton>
+      )}
       <SearchIconButton
         label="Match case (Alt+C)"
         pressed={query.caseSensitive}

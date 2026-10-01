@@ -14,6 +14,7 @@ import {
 } from 'react';
 import { toast } from 'sonner';
 
+import { DiffFindBar } from './DiffFindBar';
 import type { DiscussionActions } from './DiffsHubCommentsList';
 import { DiffsHubHeader } from './DiffsHubHeader';
 import { DiffsHubSidebar } from './DiffsHubSidebar';
@@ -29,6 +30,8 @@ import {
 import { PullDetailsControl } from './PullDetailsControl';
 import { ReviewSubmitControl } from './ReviewSubmitControl';
 import { ThemeSourceProvider } from './ThemeSourceProvider';
+import { useDiffSearchController } from './useDiffSearchController';
+import { useDiffSearchUI } from './useDiffSearchUI';
 import { useGitHubToken } from './useGitHubToken';
 import { useIsWorkerPoolReadyOrDisabled } from './useIsWorkerPoolReadyOrDisabled';
 import { usePatchLoader } from './usePatchLoader';
@@ -47,6 +50,7 @@ import {
   parseCollapsePatterns,
   saveCollapsePatternsText,
 } from '@/lib/collapsePatterns';
+import { MOBILE_MEDIA_QUERY } from '@/lib/constants';
 import { describeDiffRefs, formatDiffSourceShorthand } from '@/lib/diffRefs';
 import {
   loadDisplaySettings,
@@ -271,6 +275,13 @@ function ReviewUIInner({
   const handlePatchLoadStart = useCallback(() => {
     setFileTreeOverlayOpen(false);
   }, []);
+  // On mobile the sidebar is an overlay, so opening its search tab also has
+  // to show the overlay; on desktop the flag is ignored.
+  const openSearchTabOverlay = useCallback(() => {
+    if (window.matchMedia(MOBILE_MEDIA_QUERY).matches) {
+      setFileTreeOverlayOpen(true);
+    }
+  }, []);
   const {
     applyCollapseModeToLoaded,
     applyCollapsePatternsToLoaded,
@@ -279,6 +290,7 @@ function ReviewUIInner({
     commentSections,
     diffStats,
     errorMessage,
+    getLoadedItemIds,
     initialItems,
     isFileReviewed,
     loadState,
@@ -302,6 +314,23 @@ function ReviewUIInner({
     path,
     tokenHydrated: githubTokenHydrated,
     viewerRef,
+  });
+  const diffSearch = useDiffSearchController({
+    getLoadedItemIds,
+    itemsVersion: treeSource,
+    loadDiffFiles,
+    viewerRef,
+  });
+  const {
+    findBarProps,
+    handleSymbolHover,
+    handleSymbolNavigate,
+    renderSearchPanel,
+    searchTabRequest,
+    symbolPreview,
+  } = useDiffSearchUI({
+    controller: diffSearch,
+    onOpenSearchTab: openSearchTabOverlay,
   });
 
   // What the diff compares, for the header's base/head display. Compare
@@ -393,7 +422,7 @@ function ReviewUIInner({
     const stored = loadDisplaySettings();
     if (stored.diffStyle != null) {
       setDiffStylePreference(stored.diffStyle);
-      if (!window.matchMedia('(max-width: 767px)').matches) {
+      if (!window.matchMedia(MOBILE_MEDIA_QUERY).matches) {
         setDiffStyle(stored.diffStyle);
       }
     }
@@ -449,7 +478,7 @@ function ReviewUIInner({
   // setter already set, and keeps the breakpoint restore reading one source
   // of truth.
   useEffect(() => {
-    const mediaQuery = window.matchMedia('(max-width: 767px)');
+    const mediaQuery = window.matchMedia(MOBILE_MEDIA_QUERY);
     const updateMobileState = (matches: boolean) => {
       setDiffStyle(matches ? 'unified' : (diffStylePreference ?? 'split'));
       if (!matches) setFileTreeOverlayOpen(false);
@@ -570,10 +599,12 @@ function ReviewUIInner({
   // Re-runs thread application when the CodeView handle (re)mounts, which can
   // happen after the patch is already loaded (worker pool warm-up).
   const [viewerReadyTick, setViewerReadyTick] = useState(0);
+  const { attachViewer } = diffSearch;
   const handleViewerReady = useCallback(() => {
     onViewerReady();
+    attachViewer();
     setViewerReadyTick((tick) => tick + 1);
-  }, [onViewerReady]);
+  }, [attachViewer, onViewerReady]);
   const [discussion, setDiscussion] = useState<PullDiscussionComment[]>([]);
   // Bumped after a review submission so the thread hook refetches and injects
   // the newly created GitHub threads (and the review summary in discussion).
@@ -944,6 +975,8 @@ function ReviewUIInner({
               mobileOverlayOpen={fileTreeOverlayOpen}
               onMobileClose={handleCloseFileTreeOverlay}
               onSelectComment={handleSelectComment}
+              renderSearchPanel={renderSearchPanel}
+              searchTabRequest={searchTabRequest}
               scrollRef={scrollRef}
               source={treeSource}
               streaming={loadState === 'streaming'}
@@ -980,8 +1013,18 @@ function ReviewUIInner({
                 handlePendingReviewCommentUpserted
               }
               onSetFileReviewed={setFileReviewed}
+              onRowsRendered={diffSearch.refreshHighlights}
+              onSymbolHover={handleSymbolHover}
+              onSymbolNavigate={handleSymbolNavigate}
               onViewerReady={handleViewerReady}
             />
+            {findBarProps != null && (
+              <DiffFindBar
+                {...findBarProps}
+                className="z-20 mt-12 mr-4 self-start justify-self-end [grid-area:viewer]"
+              />
+            )}
+            {symbolPreview}
           </>
         ) : (
           <DiffsHubStatusPanel

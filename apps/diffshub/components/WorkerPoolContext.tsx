@@ -66,6 +66,11 @@ const HighlighterOptions: WorkerInitializationRenderOptions = {
     'zig',
   ],
   preferredHighlighter: getPreferredHighlighter(),
+  // Emit per-token spans (with their column offsets) so the viewer's token
+  // events fire; Cmd/Ctrl-click go-to-definition depends on them. Pool
+  // render options are global, so per-item token callbacks alone cannot
+  // switch this on when highlighting runs in workers.
+  useTokenTransformer: true,
 };
 
 interface WorkerPoolProps {

@@ -7,12 +7,14 @@ import {
   type CodeViewOptions,
   type DiffIndicators,
   type DiffLineAnnotation,
+  type DiffTokenEventBaseProps,
   type EditorChangeEvent,
   type FileDiffContentsLoader,
   isDiffAnnotation,
   type LineAnnotation,
   type SelectedLineRange,
   type ThemeTypes,
+  type TokenEventBase,
 } from '@pierre/diffs';
 import { type CodeViewHandle, useStableCallback } from '@pierre/diffs/react';
 import { IconBook, IconChevronSm, IconPencil } from '@pierre/icons';
@@ -60,6 +62,7 @@ import {
   createLocalSavedCommentEvent,
   createThreadSavedCommentEvent,
 } from '@/lib/savedCommentEvent';
+import { getSymbolName } from '@/lib/symbolSearch';
 import { diffshubChromeMapping } from '@/lib/theme/diffshubChromeMapping';
 import { toastRequestError } from '@/lib/toastRequestError';
 import type {
@@ -170,7 +173,33 @@ interface DiffsHubViewerProps {
   initialItems: CodeViewItem<CommentMetadata>[];
   loadDiffFiles?: FileDiffContentsLoader;
   onLineLinkChange(selection: CodeViewLineSelection | null): void;
+  // Fired after the viewer re-renders an item's rows, so overlays painted on
+  // mounted rows (find highlights) can refresh.
+  onRowsRendered?(): void;
+  // Cmd/Ctrl-click on an identifier: go to its definition, or (with Shift)
+  // list its usages.
+  onSymbolNavigate?(request: SymbolNavigateRequest): void;
+  // The identifier under the pointer, or null when it leaves one. Reported
+  // with or without modifiers so the parent can react to Cmd/Ctrl being
+  // pressed while already hovering (link styling, definition preview).
+  onSymbolHover?(target: SymbolTarget | null, event: PointerEvent): void;
   onViewerReady(): void;
+}
+
+// An identifier token in the viewer.
+export interface SymbolTarget {
+  // The token's span inside the item's shadow root.
+  element: HTMLElement;
+  itemId: string;
+  lineNumber: number;
+  name: string;
+  side: 'additions' | 'deletions';
+  // Column where the token starts.
+  start: number;
+}
+
+export interface SymbolNavigateRequest extends SymbolTarget {
+  action: 'definition' | 'usages';
 }
 
 export const DiffsHubViewer = memo(function DiffsHubViewer({
@@ -199,6 +228,9 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
   initialItems,
   loadDiffFiles,
   onLineLinkChange,
+  onRowsRendered,
+  onSymbolHover,
+  onSymbolNavigate,
   onViewerReady,
 }: DiffsHubViewerProps) {
   const nextCommentKeyRef = useRef(0);
@@ -1046,6 +1078,46 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
     }
   );
 
+  const handleRowsRendered = useStableCallback(() => {
+    onRowsRendered?.();
+  });
+
+  // Cmd/Ctrl-click resolves the clicked token to a symbol and hands it to
+  // the parent; plain clicks fall through to line selection as before.
+  const hasSymbolNavigation = onSymbolNavigate != null;
+  const handleTokenClick = useStableCallback(
+    (
+      token: DiffTokenEventBaseProps | TokenEventBase,
+      event: MouseEvent,
+      itemId: string
+    ) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) {
+        return;
+      }
+      const target = getSymbolTarget(token, itemId);
+      if (target == null) {
+        return;
+      }
+      event.preventDefault();
+      onSymbolNavigate?.({
+        ...target,
+        action: event.shiftKey ? 'usages' : 'definition',
+      });
+    }
+  );
+  const handleTokenEnter = useStableCallback(
+    (
+      token: DiffTokenEventBaseProps | TokenEventBase,
+      event: PointerEvent,
+      itemId: string
+    ) => {
+      onSymbolHover?.(getSymbolTarget(token, itemId), event);
+    }
+  );
+  const handleTokenLeave = useStableCallback((event: PointerEvent) => {
+    onSymbolHover?.(null, event);
+  });
+
   // Stable so the options memo below doesn't rebuild every time edit-session
   // state changes; it always reads the latest prop.
   const isEditLocked = useStableCallback((itemId: string) =>
@@ -1089,8 +1161,32 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
         onLineSelectionEnd(range, context) {
           handleLineSelectionEnd(range, context.item);
         },
+        onPostRender() {
+          handleRowsRendered();
+        },
+        // Token events need per-token spans. Main-thread renders switch them
+        // on whenever these callbacks exist; worker-pool renders take the
+        // pool-wide `useTokenTransformer` option (see WorkerPoolContext).
+        ...(hasSymbolNavigation
+          ? {
+              onTokenClick(token, event, context) {
+                handleTokenClick(token, event, context.item.id);
+              },
+              onTokenEnter(token, event, context) {
+                handleTokenEnter(token, event, context.item.id);
+              },
+              onTokenLeave(_token, event) {
+                handleTokenLeave(event);
+              },
+            }
+          : undefined),
       }) satisfies CodeViewOptions<CommentMetadata>,
     [
+      handleRowsRendered,
+      handleTokenClick,
+      handleTokenEnter,
+      handleTokenLeave,
+      hasSymbolNavigation,
       diffIndicators,
       diffStyle,
       handleCreateDraftComment,
@@ -1161,4 +1257,25 @@ function CollapseDiffButton({
       />
     </button>
   );
+}
+
+// Resolves a token event to an identifier target, or null for operators,
+// punctuation, strings, and whitespace. File items have no side; their lines
+// count as the new version.
+function getSymbolTarget(
+  token: DiffTokenEventBaseProps | TokenEventBase,
+  itemId: string
+): SymbolTarget | null {
+  const name = getSymbolName(token.tokenText);
+  if (name == null) {
+    return null;
+  }
+  return {
+    element: token.tokenElement,
+    itemId,
+    lineNumber: token.lineNumber,
+    name,
+    side: 'side' in token ? token.side : 'additions',
+    start: token.lineCharStart,
+  };
 }

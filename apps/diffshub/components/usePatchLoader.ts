@@ -98,6 +98,9 @@ interface UsePatchLoaderResult {
   commentSections: DiffsHubSavedCommentItem[];
   diffStats: DiffsHubDiffStats | null;
   errorMessage: string | null;
+  // Ids of every item handed to the viewer so far, in diff order. The viewer
+  // handle has no enumeration API, so content search walks this set.
+  getLoadedItemIds(): ReadonlySet<string>;
   initialItems: CodeViewItem<CommentMetadata>[];
   isFileReviewed(item: CodeViewItem<CommentMetadata>): boolean;
   loadState: ViewerLoadState;
@@ -354,6 +357,10 @@ export function usePatchLoader({
         viewer.scrollTo({ type: 'item', id: itemId, align: 'start' });
       }
     }
+  );
+
+  const getLoadedItemIds = useStableCallback(
+    (): ReadonlySet<string> => loadedItemIdsRef.current
   );
 
   const cancelLineHashSettleRef = useRef<(() => void) | null>(null);
@@ -806,6 +813,7 @@ export function usePatchLoader({
     commentSections,
     diffStats,
     errorMessage,
+    getLoadedItemIds,
     initialItems,
     isFileReviewed,
     loadState,

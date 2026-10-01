@@ -40,6 +40,7 @@ import { iterateOverDiff } from '../utils/iterateOverDiff';
 import { parseDiffFromFile } from '../utils/parseDiffFromFile';
 import {
   getExpandedRegion,
+  getHunkAdditionLineRange,
   getLeadingHunkSeparatorLayout,
   getTrailingExpandedRegion,
   getTrailingHunkSeparatorLayout,
@@ -139,6 +140,9 @@ export class VirtualizedFileDiff<
   private currentCollapsed: boolean | undefined;
   private pendingHydratedDiff: PendingLoadedDiff | undefined;
   private pendingExpansions: PendingExpansion[] | undefined;
+  // A one-based new-file line requestRevealLine could not expand yet because
+  // the diff was still partial. Applied right after hydration lands.
+  private pendingRevealLine: number | undefined;
   // CodeView calculates the next layout before its DOM pass. Keep that
   // selection separate from renderedDiff until render() applies it.
   private pendingRender: PendingRender | undefined;
@@ -475,7 +479,6 @@ export class VirtualizedFileDiff<
     let resetLayoutCache = false;
     let resetEstimatedHeights = false;
     const {
-      pendingExpansions,
       pendingHydratedDiff,
       options: { collapsed = false },
     } = this;
@@ -495,7 +498,17 @@ export class VirtualizedFileDiff<
       }
     }
 
+    // A reveal queued while the diff was partial can expand now that the full
+    // file is present. revealLine stages its expansion in pendingExpansions,
+    // so this runs before those are consumed below.
+    if (this.pendingRevealLine != null && !fileDiff.isPartial) {
+      const lineNumber = this.pendingRevealLine;
+      this.pendingRevealLine = undefined;
+      this.revealLine(lineNumber);
+    }
+
     // Go ahead and apply any queued expansion changes
+    const { pendingExpansions } = this;
     if (pendingExpansions != null) {
       this.pendingExpansions = undefined;
       for (const {
@@ -877,6 +890,7 @@ export class VirtualizedFileDiff<
       });
       this.pendingExpansions = undefined;
       this.pendingHydratedDiff = undefined;
+      this.pendingRevealLine = undefined;
     }
     this.pendingRender = undefined;
     this.isSetup = false;
@@ -914,6 +928,38 @@ export class VirtualizedFileDiff<
     this.forceRenderOverride = true;
     this.virtualizer.instanceChanged(this, true);
   };
+
+  // Make a one-based new-file line renderable for in-app navigation such as
+  // find-in-diff. Returns true when the line already has a row; otherwise the
+  // needed work is started (hydrating a partial diff through loadDiffFiles,
+  // then expanding the collapsed gap) and callers should retry after the next
+  // render. Partial diffs only hold hunk lines, so lines outside every hunk
+  // need the full file before they can be expanded.
+  public requestRevealLine(lineNumber: number): boolean {
+    const fileDiff = this.getLatestDiff();
+    if (fileDiff == null) {
+      return false;
+    }
+    if (fileDiff.isPartial) {
+      for (const hunk of fileDiff.hunks) {
+        const [hunkStart, hunkEnd] = getHunkAdditionLineRange(hunk);
+        if (lineNumber >= hunkStart && lineNumber < hunkEnd) {
+          return true;
+        }
+      }
+      if (this.options.loadDiffFiles == null) {
+        return false;
+      }
+      this.pendingRevealLine = lineNumber;
+      this.loadFilesIfNecessary();
+      return false;
+    }
+    if (this.isLineRenderable(lineNumber)) {
+      return true;
+    }
+    this.revealLine(lineNumber);
+    return false;
+  }
 
   protected override async handleFilesLoaded(
     expectedDiff: FileDiffMetadata,

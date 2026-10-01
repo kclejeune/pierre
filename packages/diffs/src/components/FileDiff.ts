@@ -76,6 +76,7 @@ import { arePrePropertiesEqual } from '../utils/arePrePropertiesEqual';
 import { areRenderRangesEqual } from '../utils/areRenderRangesEqual';
 import { areThemesEqual } from '../utils/areThemesEqual';
 import { awaitWithTimeout } from '../utils/awaitWithTimeout';
+import { canHydrateDiff } from '../utils/canHydrateDiff';
 import {
   cloneFileDiffMetadata,
   cloneHunks,
@@ -142,15 +143,6 @@ type DeferredEditorActiveLineWrite = [
   lineNumber: number | null,
   options: EditorActiveLineOptions | undefined,
 ];
-
-function canHydrateDiff(fileDiff: FileDiffMetadata): boolean {
-  return (
-    fileDiff.isPartial &&
-    (fileDiff.type === 'change' ||
-      fileDiff.type === 'rename-changed' ||
-      fileDiff.type === 'rename-pure')
-  );
-}
 
 // Edit sessions incrementally clone the diff as needed while editing,
 // initially we start with a top level fast clone

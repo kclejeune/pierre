@@ -1953,6 +1953,22 @@ export class CodeView<LAnnotation = undefined> {
     return item.top;
   }
 
+  // Expand collapsed context in a diff item so a one-based new-file line can
+  // render (see VirtualizedFileDiff.requestRevealLine). Returns true when the
+  // line is renderable now; false means work was queued (or the item cannot
+  // reveal it) and the caller should retry after the next render. File items
+  // render every line, so they always report true.
+  public revealLine(id: string, lineNumber: number): boolean {
+    const item = this.idToItem.get(id);
+    if (item == null) {
+      return false;
+    }
+    if (item.type === 'file') {
+      return true;
+    }
+    return item.instance.requestRevealLine(lineNumber);
+  }
+
   public getTopForItem(id: string): number | undefined {
     const item = this.idToItem.get(id);
     if (item == null) {

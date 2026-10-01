@@ -2,6 +2,7 @@
 
 import type { CodeViewHandle } from '@pierre/diffs/react';
 import {
+  IconCodeSearch,
   IconComment,
   IconFileTree,
   IconFilter,
@@ -46,8 +47,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/DropdownMenu';
 import { cn } from '@/lib/cn';
+import { MOBILE_MEDIA_QUERY } from '@/lib/constants';
 import { filterDiffsHubFileTreeSource } from '@/lib/filterDiffsHubFileTreeSource';
 import { getDiffsHubFileTreeAvailableStatuses } from '@/lib/getDiffsHubFileTreeAvailableStatuses';
+import { isMacPlatform } from '@/lib/platform';
 import { diffshubChromeMapping } from '@/lib/theme/diffshubChromeMapping';
 import { getDropdownThemeStyle } from '@/lib/theme/dropdownChromeStyle';
 import type {
@@ -59,10 +62,8 @@ import type {
   PullDiscussionComment,
 } from '@/lib/types';
 
-type SidebarTab = 'files' | 'comments';
+type SidebarTab = 'files' | 'search' | 'comments';
 type SidebarStatusPanel = 'diffStats' | 'systemMonitor';
-
-const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 
 interface DiffsHubSidebarProps {
   className?: string;
@@ -75,6 +76,11 @@ interface DiffsHubSidebarProps {
   onMobileClose(): void;
   onSelectComment(comment: DiffsHubSavedCommentEntry): void;
   onSelectItem(itemId: string): void;
+  // Renders the cross-file search panel; `visible` is whether its tab is the
+  // active one. Omitted when the view has no searchable content.
+  renderSearchPanel?(visible: boolean): ReactNode;
+  // Bumped to switch to the search tab (Ctrl+Shift+F, find usages).
+  searchTabRequest?: number;
   scrollRef: RefObject<HTMLDivElement | null>;
   source: DiffsHubFileTreeSource;
   streaming: boolean;
@@ -93,7 +99,9 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
   onMobileClose,
   onSelectComment,
   onSelectItem,
+  renderSearchPanel,
   scrollRef,
+  searchTabRequest = 0,
   source,
   streaming,
   themeCycle,
@@ -112,7 +120,22 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
     if (tab === 'comments') {
       setCommentsTabVisited(true);
     }
+    if (tab === 'search') {
+      setSearchTabVisited(true);
+    }
   };
+  // The search tab mounts on first use, like the comments list, and stays
+  // mounted so its query and results survive tab switches. A new request
+  // switches to it during render (React's adjust-state-on-prop-change
+  // pattern), so the panel is visible in the same commit that asked for it.
+  const [searchTabVisited, setSearchTabVisited] = useState(false);
+  const [seenSearchTabRequest, setSeenSearchTabRequest] =
+    useState(searchTabRequest);
+  if (searchTabRequest !== seenSearchTabRequest) {
+    setSeenSearchTabRequest(searchTabRequest);
+    setActiveTab('search');
+    setSearchTabVisited(true);
+  }
   let totalCommentCount = discussion.length;
   for (const section of commentSections) {
     totalCommentCount += section.comments.length;
@@ -255,6 +278,17 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
               <IconFileTree className="size-4 md:size-3" />
               <span className="sr-only">Files</span>
             </ButtonGroupItem>
+            {renderSearchPanel != null && (
+              <ButtonGroupItem
+                value="search"
+                size="icon-only"
+                className="shadow-none"
+                title="Search all files"
+              >
+                <IconCodeSearch className="size-4 md:size-3" />
+                <span className="sr-only">Search</span>
+              </ButtonGroupItem>
+            )}
             <ButtonGroupItem
               value="comments"
               size="icon-only"
@@ -320,6 +354,16 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
               onSelectItem={onSelectItem}
             />
           </div>
+          {renderSearchPanel != null && (
+            <div
+              role="region"
+              aria-label="Search"
+              hidden={activeTab !== 'search'}
+              className="h-full min-h-0"
+            >
+              {searchTabVisited && renderSearchPanel(activeTab === 'search')}
+            </div>
+          )}
           <div
             role="region"
             aria-label="Comments"
@@ -444,9 +488,7 @@ function FileTreeFilterButton({
   const visibleItems = DIFF_STATUS_ITEMS.filter(({ status }) =>
     availableStatuses.has(status)
   );
-  const [isMac] = useState(
-    () => typeof navigator !== 'undefined' && /mac/i.test(navigator.platform)
-  );
+  const [isMac] = useState(isMacPlatform);
   // Track whether Alt was held on the most recent pointer-down so the
   // onCheckedChange handler (which receives no event) can branch on it.
   const altKeyRef = useRef(false);

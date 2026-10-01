@@ -60,6 +60,7 @@ export * from './utils/areSelectionsEqual';
 export * from './utils/areThemesEqual';
 export * from './utils/areVirtualWindowSpecsEqual';
 export * from './utils/areWorkerStatsEqual';
+export * from './utils/canHydrateDiff';
 export * from './utils/cleanLastNewline';
 export * from './utils/cloneFileDiffMetadata';
 export * from './utils/createAnnotationElement';

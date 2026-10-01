@@ -57,7 +57,34 @@ export const CODE_VIEW_CUSTOM_CSS = `
   --diffs-column-width: 100% !important;
   --diffs-column-content-width: 100% !important;
 }
+
+/* Find-in-diff matches, painted through the CSS Custom Highlight API by
+   DiffSearchHighlighter. The highlight registry is document-wide, but
+   ::highlight() rules only reach elements in the stylesheet's own tree, so
+   they have to live here in the shadow stylesheet. Each source (find bar,
+   search panel, jumped-to symbol) paints its own layer. */
+::highlight(diffshub-find-match),
+::highlight(diffshub-panel-match) {
+  background-color: light-dark(rgb(250 204 21 / 0.4), rgb(250 204 21 / 0.28));
+}
+
+::highlight(diffshub-find-active),
+::highlight(diffshub-panel-active),
+::highlight(diffshub-symbol-active),
+::highlight(diffshub-symbol-match) {
+  background-color: light-dark(rgb(249 115 22 / 0.55), rgb(249 115 22 / 0.5));
+}
+
+/* Cmd/Ctrl-hovering an identifier marks it as a go-to-definition link. */
+[data-diffshub-symbol-link] {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 `;
+
+// Below this width the sidebar becomes an overlay sheet over the viewer.
+export const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 
 export const CODE_VIEW_FILE_TREE_ITEM_HEIGHT = 24;
 export const CODE_VIEW_BATCH_COUNT = 25;

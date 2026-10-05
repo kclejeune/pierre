@@ -10,11 +10,13 @@ import { asRecord } from './untypedJson';
 
 export type PullBucket = 'created' | 'assigned' | 'review-requested' | 'active';
 
+// Tab order on the dashboard. Assigned sits last: few teams set assignees on
+// pulls, so it's usually the emptiest.
 export const PULL_BUCKETS: readonly PullBucket[] = [
   'created',
-  'assigned',
   'review-requested',
   'active',
+  'assigned',
 ];
 
 // How the viewer is involved in a pull, rendered as chips on "active" rows.

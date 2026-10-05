@@ -60,18 +60,35 @@ function writeSearchParam(name: string, value: string, fallback: string) {
   window.history.replaceState(window.history.state, '', url);
 }
 
-const BUCKET_COPY: Record<PullBucket, { empty: string; label: string }> = {
+// emptyWithTeams replaces empty while the team-requests switch is on, for
+// buckets whose results it widens.
+const BUCKET_COPY: Record<
+  PullBucket,
+  { empty: string; emptyWithTeams?: string; label: string }
+> = {
   created: { empty: 'you created', label: 'Created' },
   assigned: { empty: 'assigned to you', label: 'Assigned' },
   'review-requested': {
     empty: 'waiting on your review',
+    emptyWithTeams: "waiting on your or your teams' review",
     label: 'Review requested',
   },
   active: {
     empty: "waiting on you or that you've commented on",
+    emptyWithTeams: "waiting on you or your teams, or that you've commented on",
     label: 'Active',
   },
 };
+
+function getEmptyCopy(
+  bucket: PullBucket,
+  reviewRequests: ReviewRequestScope | undefined
+): string {
+  const copy = BUCKET_COPY[bucket];
+  return reviewRequests === 'teams' && copy.emptyWithTeams != null
+    ? copy.emptyWithTeams
+    : copy.empty;
+}
 
 export function PullsDashboard() {
   const tokenState = useGitHubToken();
@@ -84,8 +101,8 @@ export function PullsDashboard() {
       ) : (
         <div className={SECTION_CARD_CLASS}>
           <p className="text-muted-foreground border-b px-4 py-3 text-sm">
-            Sign in with GitHub to see pull requests you opened, were assigned,
-            or were asked to review.
+            Sign in with GitHub to see pull requests you opened, were asked to
+            review, commented on, or were assigned.
           </p>
           <GitHubTokenControl
             active={hasToken}
@@ -276,8 +293,8 @@ function BucketSection({
   // the empty state says "other" rather than implying there are none at all.
   const emptyLabel =
     excludeRepos.length > 0
-      ? `No other open pull requests ${BUCKET_COPY[bucket].empty}.`
-      : `No open pull requests ${BUCKET_COPY[bucket].empty}.`;
+      ? `No other open pull requests ${getEmptyCopy(bucket, reviewRequests)}.`
+      : `No open pull requests ${getEmptyCopy(bucket, reviewRequests)}.`;
   return (
     <div className={SECTION_CARD_CLASS} aria-busy={loading}>
       <SectionRows
@@ -332,7 +349,7 @@ function PinnedReposSection({
           key={repo}
           bucket={bucket}
           closeLabel={`Unpin ${repo}`}
-          emptyLabel={`No open pull requests ${BUCKET_COPY[bucket].empty}.`}
+          emptyLabel={`No open pull requests ${getEmptyCopy(bucket, reviewRequests)}.`}
           repo={repo}
           reviewRequests={reviewRequests}
           tokenVersion={tokenVersion}

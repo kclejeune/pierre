@@ -3,7 +3,11 @@
 import { useEffect, useState } from 'react';
 
 import { storedGitHubTokenHeaders } from './githubSession';
-import type { PullBucket, PullSummary } from '@/lib/githubPullSummaries';
+import type {
+  PullBucket,
+  PullSummary,
+  ReviewRequestScope,
+} from '@/lib/githubPullSummaries';
 import { requestJSON } from '@/lib/pullCommentsClient';
 
 export interface DashboardPullsState {
@@ -15,13 +19,25 @@ export interface DashboardPullsState {
   totalCount: number;
 }
 
+// reviewRequests: 'teams' widens the bucket's review-request qualifier; the
+// dashboard only passes it for buckets that have one.
 export type DashboardPullsSource =
   // The main bucket list; excludeRepos drops pulls from repos already shown
   // in the pinned cards above it.
-  | { kind: 'bucket'; bucket: PullBucket; excludeRepos?: readonly string[] }
+  | {
+      kind: 'bucket';
+      bucket: PullBucket;
+      excludeRepos?: readonly string[];
+      reviewRequests?: ReviewRequestScope;
+    }
   // A repo card: scoped to the dashboard's active bucket tab when one is
   // given, every open pull in the repo otherwise.
-  | { kind: 'repo'; repo: string; bucket?: PullBucket };
+  | {
+      kind: 'repo';
+      repo: string;
+      bucket?: PullBucket;
+      reviewRequests?: ReviewRequestScope;
+    };
 
 interface PullsPayload {
   pulls: PullSummary[];
@@ -85,6 +101,9 @@ export function useDashboardPulls(
   const params = new URLSearchParams();
   if (source.bucket != null) {
     params.set('bucket', source.bucket);
+    if (source.reviewRequests === 'teams') {
+      params.set('requests', 'teams');
+    }
   }
   if (source.kind === 'repo') {
     params.set('repo', source.repo);

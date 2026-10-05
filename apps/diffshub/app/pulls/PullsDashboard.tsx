@@ -18,33 +18,44 @@ import { GitHubTokenControl } from '@/components/GitHubTokenControl';
 import { PullRequestRow } from '@/components/PullRequestRow';
 import { RepoDirectory } from '@/components/RepoDirectory';
 import { RepoNameInput } from '@/components/RepoNameInput';
+import { Switch } from '@/components/Switch';
 import { useDashboardPulls } from '@/components/useDashboardPulls';
 import { useGitHubToken } from '@/components/useGitHubToken';
 import { usePinnedRepos } from '@/components/usePinnedRepos';
 import { cn } from '@/lib/cn';
 import {
+  bucketUsesReviewRequests,
   isPullBucket,
+  isReviewRequestScope,
   PULL_BUCKETS,
   type PullBucket,
   type PullSummary,
+  type ReviewRequestScope,
 } from '@/lib/githubPullSummaries';
 import { isRepoPinned, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
 
 const DEFAULT_BUCKET: PullBucket = 'created';
 
-// ?bucket= keeps the tab across reloads and shared links. Read on the client so
-// the page stays statically prerenderable.
-function readBucketFromLocation(): PullBucket {
-  const value = new URLSearchParams(window.location.search).get('bucket');
-  return value != null && isPullBucket(value) ? value : DEFAULT_BUCKET;
+const DEFAULT_REVIEW_REQUESTS: ReviewRequestScope = 'direct';
+
+// ?bucket= and ?requests= keep the tab and team-requests switch across
+// reloads and shared links. Read on the client so the page stays statically
+// prerenderable; defaults are left out of the URL.
+function readSearchParam<T extends string>(
+  name: string,
+  isValid: (value: string) => value is T,
+  fallback: T
+): T {
+  const value = new URLSearchParams(window.location.search).get(name);
+  return value != null && isValid(value) ? value : fallback;
 }
 
-function writeBucketToLocation(bucket: PullBucket): void {
+function writeSearchParam(name: string, value: string, fallback: string) {
   const url = new URL(window.location.href);
-  if (bucket === DEFAULT_BUCKET) {
-    url.searchParams.delete('bucket');
+  if (value === fallback) {
+    url.searchParams.delete(name);
   } else {
-    url.searchParams.set('bucket', bucket);
+    url.searchParams.set(name, value);
   }
   window.history.replaceState(window.history.state, '', url);
 }
@@ -55,6 +66,10 @@ const BUCKET_COPY: Record<PullBucket, { empty: string; label: string }> = {
   'review-requested': {
     empty: 'waiting on your review',
     label: 'Review requested',
+  },
+  active: {
+    empty: "waiting on you or that you've commented on",
+    label: 'Active',
   },
 };
 
@@ -86,11 +101,25 @@ export function PullsDashboard() {
 }
 
 function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
-  const [bucket, setBucket] = useState<PullBucket>(readBucketFromLocation);
+  const [bucket, setBucket] = useState(() =>
+    readSearchParam('bucket', isPullBucket, DEFAULT_BUCKET)
+  );
   const selectBucket = (next: PullBucket) => {
     setBucket(next);
-    writeBucketToLocation(next);
+    writeSearchParam('bucket', next, DEFAULT_BUCKET);
   };
+  const [reviewRequests, setReviewRequests] = useState(() =>
+    readSearchParam('requests', isReviewRequestScope, DEFAULT_REVIEW_REQUESTS)
+  );
+  const selectReviewRequests = (next: ReviewRequestScope) => {
+    setReviewRequests(next);
+    writeSearchParam('requests', next, DEFAULT_REVIEW_REQUESTS);
+  };
+  // Only buckets with a review-request qualifier carry the switch's value, so
+  // flipping it doesn't refetch (or re-key the cache for) the others.
+  const bucketReviewRequests = bucketUsesReviewRequests(bucket)
+    ? reviewRequests
+    : undefined;
   // A repo picked from the directory below; its open pulls render in a card
   // above the directory until cleared.
   const [directoryRepo, setDirectoryRepo] = useState<string | null>(null);
@@ -104,26 +133,44 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   }
   return (
     <div className="space-y-4">
-      <ButtonGroup
-        size="sm"
-        value={bucket}
-        onValueChange={(value) => selectBucket(value as PullBucket)}
-      >
-        {PULL_BUCKETS.map((value) => (
-          <ButtonGroupItem key={value} value={value}>
-            {BUCKET_COPY[value].label}
-          </ButtonGroupItem>
-        ))}
-      </ButtonGroup>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <ButtonGroup
+          size="sm"
+          value={bucket}
+          onValueChange={(value) => selectBucket(value as PullBucket)}
+        >
+          {PULL_BUCKETS.map((value) => (
+            <ButtonGroupItem key={value} value={value}>
+              {BUCKET_COPY[value].label}
+            </ButtonGroupItem>
+          ))}
+        </ButtonGroup>
+        {bucketReviewRequests != null && (
+          <label
+            className="text-muted-foreground flex cursor-pointer items-center gap-2 text-xs"
+            title="Also count review requests sent to teams you're on"
+          >
+            Include team requests
+            <Switch
+              checked={reviewRequests === 'teams'}
+              onCheckedChange={(checked) =>
+                selectReviewRequests(checked ? 'teams' : 'direct')
+              }
+            />
+          </label>
+        )}
+      </div>
       <PinnedReposSection
         bucket={bucket}
         pinned={pinned}
+        reviewRequests={bucketReviewRequests}
         tokenVersion={tokenVersion}
         onToggle={toggle}
       />
       <BucketSection
         bucket={bucket}
         excludeRepos={pinned}
+        reviewRequests={bucketReviewRequests}
         tokenVersion={tokenVersion}
       />
       {directoryRepo != null && (
@@ -163,6 +210,7 @@ function RepoPullsCard({
   onClose,
   ref,
   repo,
+  reviewRequests,
   tokenVersion,
 }: {
   bucket?: PullBucket;
@@ -171,10 +219,11 @@ function RepoPullsCard({
   onClose: () => void;
   ref?: Ref<HTMLElement>;
   repo: string;
+  reviewRequests?: ReviewRequestScope;
   tokenVersion: number;
 }) {
   const { error, loading, pulls, retry } = useDashboardPulls(
-    { kind: 'repo', repo, bucket },
+    { kind: 'repo', repo, bucket, reviewRequests },
     tokenVersion
   );
   return (
@@ -211,14 +260,16 @@ function RepoPullsCard({
 function BucketSection({
   bucket,
   excludeRepos,
+  reviewRequests,
   tokenVersion,
 }: {
   bucket: PullBucket;
   excludeRepos: readonly string[];
+  reviewRequests?: ReviewRequestScope;
   tokenVersion: number;
 }) {
   const { error, loading, pulls, retry, totalCount } = useDashboardPulls(
-    { kind: 'bucket', bucket, excludeRepos },
+    { kind: 'bucket', bucket, excludeRepos, reviewRequests },
     tokenVersion
   );
   // With pinned repos excluded, their pulls appear in the cards above, so
@@ -250,11 +301,13 @@ function PinnedReposSection({
   bucket,
   onToggle,
   pinned,
+  reviewRequests,
   tokenVersion,
 }: {
   bucket: PullBucket;
   onToggle: (repo: string) => void;
   pinned: readonly string[];
+  reviewRequests?: ReviewRequestScope;
   tokenVersion: number;
 }) {
   return (
@@ -281,6 +334,7 @@ function PinnedReposSection({
           closeLabel={`Unpin ${repo}`}
           emptyLabel={`No open pull requests ${BUCKET_COPY[bucket].empty}.`}
           repo={repo}
+          reviewRequests={reviewRequests}
           tokenVersion={tokenVersion}
           onClose={() => onToggle(repo)}
         />

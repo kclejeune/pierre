@@ -1,5 +1,9 @@
 import { type NextRequest } from 'next/server';
 
+import {
+  commitErrorResponse,
+  sendGitHubGraphQL,
+} from '@/lib/githubCommitServer';
 import { encodeURLSegment } from '@/lib/githubDiffSource';
 import {
   createGitHubAPIURL,
@@ -13,10 +17,15 @@ import {
   readGitHubJSON,
 } from '@/lib/githubProxyResponse';
 import {
+  ACTIVE_PULLS_QUERY,
+  buildActivePullsVariables,
   buildBucketSearchQuery,
   isPullBucket,
+  isReviewRequestScope,
+  parseActivePullsPayload,
   parseRepoPullsPayload,
   parseSearchIssuesPayload,
+  PULLS_PAGE_SIZE,
 } from '@/lib/githubPullSummaries';
 import {
   createJSONResponse,
@@ -28,7 +37,8 @@ import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Pull request lists for the /pulls dashboard: cross-repo buckets built on
 // @me search qualifiers (optionally scoped to one repo, for pinned-repo cards
-// following the active bucket tab), and per-repo open pull lists.
+// following the active bucket tab), and per-repo open pull lists. The
+// "active" bucket goes through GraphQL search; the rest use REST search.
 
 async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
@@ -44,7 +54,10 @@ async function handleGET(request: NextRequest) {
   if (bucket != null) {
     if (!isPullBucket(bucket)) {
       return createJSONResponse(
-        { error: 'bucket must be created, assigned, or review-requested.' },
+        {
+          error:
+            'bucket must be created, assigned, review-requested, or active.',
+        },
         { status: 400 }
       );
     }
@@ -66,6 +79,13 @@ async function handleGET(request: NextRequest) {
         { status: 400 }
       );
     }
+    const reviewRequests = params.get('requests') ?? 'direct';
+    if (!isReviewRequestScope(reviewRequests)) {
+      return createJSONResponse(
+        { error: 'requests must be direct or teams.' },
+        { status: 400 }
+      );
+    }
     // The @me qualifiers resolve to whoever the token belongs to, so there
     // is nothing to list without one.
     const token = await resolveBearerToken(request);
@@ -75,17 +95,36 @@ async function handleGET(request: NextRequest) {
         { status: 401 }
       );
     }
+    const scope =
+      repo != null
+        ? { repo, reviewRequests }
+        : { excludeRepos, reviewRequests };
+    if (bucket === 'active') {
+      // GraphQL rather than REST search: one request returns the list along
+      // with the viewer's review state and comment involvement per pull.
+      try {
+        return createPrivateJSONResponse(
+          parseActivePullsPayload(
+            await sendGitHubGraphQL(
+              ACTIVE_PULLS_QUERY,
+              buildActivePullsVariables(scope),
+              token
+            )
+          ),
+          30
+        );
+      } catch (error) {
+        return commitErrorResponse(error);
+      }
+    }
     const result = await fetchPullsPayload(
       createGitHubAPIURL(environment, '/search/issues', {
         // advanced_search opts into the post-migration /search/issues
         // semantics ahead of GitHub's legacy cutover; older GHES ignores it.
         advanced_search: 'true',
         order: 'desc',
-        per_page: '25',
-        q: buildBucketSearchQuery(
-          bucket,
-          repo != null ? { repo } : { excludeRepos }
-        ),
+        per_page: String(PULLS_PAGE_SIZE),
+        q: buildBucketSearchQuery(bucket, scope),
         sort: 'updated',
       }),
       token

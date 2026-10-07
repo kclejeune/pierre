@@ -100,13 +100,15 @@ function GitHubPATForm({ onSave }: { onSave(token: string): void }) {
   );
 }
 
+// The OAuth sign-in route, coming back to `returnTo` (sanitized server-side).
+export function githubSignInURL(returnTo: string): string {
+  return `/api/auth/github/login?returnTo=${encodeURIComponent(returnTo)}`;
+}
+
 // Starts OAuth sign-in, returning to the current page (read at click time).
 export function startGitHubSignIn(): void {
   const { hash, pathname, search } = window.location;
-  const returnTo = `${pathname}${search}${hash}`;
-  window.location.assign(
-    `/api/auth/github/login?returnTo=${encodeURIComponent(returnTo)}`
-  );
+  window.location.assign(githubSignInURL(`${pathname}${search}${hash}`));
 }
 
 export const GitHubTokenControl = memo(function GitHubTokenControl({

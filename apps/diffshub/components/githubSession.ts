@@ -24,6 +24,10 @@ import { syncTokenPresenceCookie } from '@/lib/tokenPresenceCookie';
 
 const GITHUB_TOKEN_STORAGE_KEY = 'diffshub.github.token';
 const GITHUB_SESSION_STORAGE_KEY = 'diffshub.github.session';
+// Set when credentials are cleared because they stopped working (rather than
+// by the viewer signing out), so the login gate can send a viewer who was
+// already signed in straight back through GitHub instead of the /login page.
+const GITHUB_REAUTH_STORAGE_KEY = 'diffshub.github.reauth';
 
 // Fired on window after every storage write. The native `storage` event only
 // reaches *other* tabs; this covers the same one.
@@ -82,7 +86,28 @@ function readEpoch(value: unknown): number | undefined {
 // Saves a manually supplied token (a pasted PAT, or clearing with ''). Any
 // refresh session belonged to the previous credential and is dropped with it.
 export function saveGitHubTokenToStorage(token: string): void {
+  writeStoredJSON(GITHUB_REAUTH_STORAGE_KEY, null);
   writeStorage(token.trim(), undefined);
+}
+
+// Clears credentials that stopped working (expired, revoked, refresh refused,
+// or discarded by the encryption policy) and marks the session as lapsed for
+// consumeGitHubSessionLapse.
+function lapseGitHubSession(): void {
+  // Set before clearing: the change event that write fires synchronously runs
+  // the login gate, which reads the marker.
+  writeStoredJSON(GITHUB_REAUTH_STORAGE_KEY, true);
+  writeStorage('', undefined);
+}
+
+// True once after lapseGitHubSession: the viewer was signed in until their
+// credentials died, so re-authenticating directly is what they want. Consumed
+// on read so a failed or declined OAuth round trip falls back to /login
+// instead of bouncing through GitHub again.
+export function consumeGitHubSessionLapse(): boolean {
+  const lapsed = readStoredJSON(GITHUB_REAUTH_STORAGE_KEY) === true;
+  writeStoredJSON(GITHUB_REAUTH_STORAGE_KEY, null);
+  return lapsed;
 }
 
 // Saves a grant from the OAuth flow or a refresh: the access token always,
@@ -101,6 +126,7 @@ export function saveGitHubGrantToStorage(
         : now + grant.refreshTokenExpiresIn * 1000,
   };
   const hasSession = Object.values(session).some((value) => value != null);
+  writeStoredJSON(GITHUB_REAUTH_STORAGE_KEY, null);
   writeStorage(grant.accessToken.trim(), hasSession ? session : undefined);
 }
 
@@ -115,7 +141,7 @@ export function discardUnsealedGitHubCredentials(
   if (!tokenEncryptionRequired || token === '' || isSealedToken(token)) {
     return false;
   }
-  saveGitHubTokenToStorage('');
+  lapseGitHubSession();
   return true;
 }
 
@@ -226,14 +252,60 @@ export function nextGitHubRefreshDueAt(): number | undefined {
 export function refreshGitHubSessionIfNeeded(
   fetcher: PlainFetch = fetch
 ): Promise<GitHubSessionRefreshOutcome> {
-  inflightRefresh ??= runRefresh(fetcher).finally(() => {
+  return startRefresh(fetcher, false);
+}
+
+function startRefresh(
+  fetcher: PlainFetch,
+  force: boolean
+): Promise<GitHubSessionRefreshOutcome> {
+  inflightRefresh ??= runRefresh(fetcher, force).finally(() => {
     inflightRefresh = undefined;
   });
   return inflightRefresh;
 }
 
+// The access token minted by the most recent rejection-driven refresh. If
+// GitHub rejects that one too, refreshing again would only loop, so the next
+// rejection signs out instead.
+let tokenFromForcedRefresh: string | undefined;
+
+// Recovers from a server 401 to a request that sent `rejectedToken`. The
+// stored expiry said the token was fine, but GitHub (or the server's envelope
+// check) disagrees, so the local clock cannot be trusted here: with a refresh
+// token, mint a new access token regardless of expiry; otherwise, or when the
+// refresh is refused, clear the stored credentials so the login gate
+// redirects and the UI drops to its signed-out state. A rejection of a token
+// that has already been replaced (a refresh or sign-in raced the request) is
+// ignored. Network failures leave the token in place for the next attempt.
+export async function recoverFromRejectedGitHubToken(
+  rejectedToken: string,
+  fetcher: PlainFetch = fetch
+): Promise<GitHubSessionRefreshOutcome> {
+  if (inflightRefresh != null) {
+    await inflightRefresh;
+  }
+  if (rejectedToken !== readStoredGitHubToken()) {
+    return 'none';
+  }
+  const session = readStoredGitHubSession();
+  if (
+    session?.refreshToken == null ||
+    rejectedToken === tokenFromForcedRefresh
+  ) {
+    lapseGitHubSession();
+    return 'signed-out';
+  }
+  const outcome = await startRefresh(fetcher, true);
+  if (outcome === 'refreshed') {
+    tokenFromForcedRefresh = readStoredGitHubToken();
+  }
+  return outcome;
+}
+
 async function runRefresh(
-  fetcher: PlainFetch
+  fetcher: PlainFetch,
+  force: boolean
 ): Promise<GitHubSessionRefreshOutcome> {
   const session = readStoredGitHubSession();
   if (readStoredGitHubToken() === '' || session == null) {
@@ -247,17 +319,21 @@ async function runRefresh(
     if (session.expiresAt == null || session.expiresAt > now) {
       return 'none';
     }
-    saveGitHubTokenToStorage('');
+    lapseGitHubSession();
     return 'signed-out';
   }
-  if (session.expiresAt != null && session.expiresAt - now > REFRESH_LEAD_MS) {
+  if (
+    !force &&
+    session.expiresAt != null &&
+    session.expiresAt - now > REFRESH_LEAD_MS
+  ) {
     return 'fresh';
   }
   if (
     session.refreshTokenExpiresAt != null &&
     session.refreshTokenExpiresAt <= now
   ) {
-    saveGitHubTokenToStorage('');
+    lapseGitHubSession();
     return 'signed-out';
   }
 
@@ -274,7 +350,7 @@ async function runRefresh(
   }
 
   if (response.status === 401) {
-    saveGitHubTokenToStorage('');
+    lapseGitHubSession();
     return 'signed-out';
   }
   if (!response.ok) {

@@ -38,6 +38,7 @@ import {
   formatDiffsHubLineHash,
   parseDiffsHubLineHash,
 } from '@/lib/lineHash';
+import { fetchReportingRejection } from '@/lib/rejectedCredential';
 import {
   getFileDiffFingerprint,
   loadReviewedFiles,
@@ -569,7 +570,7 @@ export function usePatchLoader({
           }
         }
 
-        const response = await fetch(
+        const response = await fetchReportingRejection(
           `/api/diff?${patchSearchParams}`,
           createPatchRequestInit(
             controller.signal,

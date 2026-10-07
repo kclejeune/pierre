@@ -7,6 +7,7 @@ import type {
 
 import { parseGitHubDiffSource } from './githubDiffSource';
 import { type PlainFetch } from './plainFetch';
+import { fetchReportingRejection } from './rejectedCredential';
 
 interface GitHubDiffFileLoaderOptions {
   endpoint?: string;
@@ -33,7 +34,7 @@ export function createGitHubDiffFileLoader(
   }
 
   const endpoint = options.endpoint ?? '/api/github-diff-file';
-  const fetcher = options.fetch ?? fetch;
+  const fetcher = options.fetch ?? fetchReportingRejection;
   const getAuthVersion = options.getAuthVersion ?? (() => 0);
   const getToken = options.getToken ?? (() => undefined);
   const loadedFilesCache = new Map<string, Promise<FileDiffLoadedFiles>>();

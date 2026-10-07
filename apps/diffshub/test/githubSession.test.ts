@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { createFakeWindow } from './helpers/fakeWindow';
 import {
+  consumeGitHubSessionLapse,
   discardUnsealedGitHubCredentials,
   getGitHubTokenSnapshot,
   GITHUB_TOKEN_CHANGE_EVENT,
@@ -9,11 +10,16 @@ import {
   nextGitHubRefreshDueAt,
   readStoredGitHubSession,
   readStoredGitHubToken,
+  recoverFromRejectedGitHubToken,
   refreshGitHubSessionIfNeeded,
   saveGitHubGrantToStorage,
   saveGitHubTokenToStorage,
 } from '@/components/githubSession';
 import { type PlainFetch } from '@/lib/plainFetch';
+import {
+  fetchReportingRejection,
+  GITHUB_TOKEN_REJECTED_EVENT,
+} from '@/lib/rejectedCredential';
 
 let fake: ReturnType<typeof createFakeWindow>;
 const originalWindow = globalThis.window;
@@ -248,5 +254,88 @@ describe('refreshGitHubSessionIfNeeded', () => {
     const thrower: PlainFetch = () => Promise.reject(new Error('offline'));
     expect(await refreshGitHubSessionIfNeeded(thrower)).toBe('failed');
     expect(readStoredGitHubToken()).toBe('ghu_access');
+  });
+});
+
+describe('recoverFromRejectedGitHubToken', () => {
+  test('force-refreshes a session the server rejected before its expiry', async () => {
+    saveGitHubGrantToStorage(
+      { ...EXPIRING_GRANT, accessToken: 'ghu_revoked' },
+      Date.now()
+    );
+    const { calls, fetcher } = refreshFetcher(() =>
+      Response.json({ access_token: 'ghu_minted', refresh_token: 'ghr_next' })
+    );
+    expect(await recoverFromRejectedGitHubToken('ghu_revoked', fetcher)).toBe(
+      'refreshed'
+    );
+    expect(calls).toHaveLength(1);
+    expect(readStoredGitHubToken()).toBe('ghu_minted');
+    expect(consumeGitHubSessionLapse()).toBe(false);
+  });
+
+  test('signs out when the freshly minted token is rejected too', async () => {
+    saveGitHubGrantToStorage(
+      { ...EXPIRING_GRANT, accessToken: 'ghu_loop_a' },
+      Date.now()
+    );
+    const { calls, fetcher } = refreshFetcher(() =>
+      Response.json({ access_token: 'ghu_loop_b', refresh_token: 'ghr_next' })
+    );
+    await recoverFromRejectedGitHubToken('ghu_loop_a', fetcher);
+    expect(await recoverFromRejectedGitHubToken('ghu_loop_b', fetcher)).toBe(
+      'signed-out'
+    );
+    expect(calls).toHaveLength(1);
+    expect(readStoredGitHubToken()).toBe('');
+  });
+
+  test('clears a rejected token that cannot be refreshed and marks the lapse', async () => {
+    saveGitHubTokenToStorage('ghp_revoked');
+    const { calls, fetcher } = refreshFetcher(() => Response.json({}));
+    expect(await recoverFromRejectedGitHubToken('ghp_revoked', fetcher)).toBe(
+      'signed-out'
+    );
+    expect(calls).toHaveLength(0);
+    expect(readStoredGitHubToken()).toBe('');
+    expect(consumeGitHubSessionLapse()).toBe(true);
+    // Consumed on read, so a failed OAuth round trip falls back to /login.
+    expect(consumeGitHubSessionLapse()).toBe(false);
+  });
+
+  test('ignores a rejection of a token that was already replaced', async () => {
+    saveGitHubTokenToStorage('ghp_current');
+    expect(await recoverFromRejectedGitHubToken('ghp_stale')).toBe('none');
+    expect(readStoredGitHubToken()).toBe('ghp_current');
+  });
+
+  test('a viewer sign-out does not count as a lapse', () => {
+    saveGitHubTokenToStorage('ghp_pat');
+    saveGitHubTokenToStorage('');
+    expect(consumeGitHubSessionLapse()).toBe(false);
+  });
+});
+
+describe('fetchReportingRejection', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test('announces only 401s to requests that carried a bearer token', async () => {
+    let status = 401;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(null, { status })
+      )) as unknown as typeof fetch;
+    const tokened = { headers: { Authorization: 'Bearer ghp_x' } };
+    await fetchReportingRejection('/api/x', tokened);
+    await fetchReportingRejection('/api/x', {});
+    status = 403;
+    await fetchReportingRejection('/api/x', tokened);
+    const rejected = fake.events
+      .filter((event) => event.type === GITHUB_TOKEN_REJECTED_EVENT)
+      .map((event) => (event as CustomEvent<string>).detail);
+    expect(rejected).toEqual(['ghp_x']);
   });
 });

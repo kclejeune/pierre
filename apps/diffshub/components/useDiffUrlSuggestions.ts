@@ -10,6 +10,7 @@ import {
   type PullSuggestion,
   type SuggestQuery,
 } from '@/lib/diffUrlSuggestions';
+import { fetchReportingRejection } from '@/lib/rejectedCredential';
 
 export interface DiffUrlSuggestion {
   key: string;
@@ -22,7 +23,7 @@ export interface DiffUrlSuggestion {
 // cached privately by the browser according to the route's response headers.
 function fetchSuggestPayload(params: Record<string, string>): Promise<unknown> {
   const search = new URLSearchParams(params);
-  return fetch(`/api/github-suggest?${search}`, {
+  return fetchReportingRejection(`/api/github-suggest?${search}`, {
     headers: storedGitHubTokenHeaders(),
   })
     .then((response) => (response.ok ? response.json() : null))

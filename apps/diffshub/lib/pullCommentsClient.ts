@@ -1,6 +1,7 @@
 import type { SelectedLineRange } from '@pierre/diffs';
 
 import { toGitHubDiffSide } from './pullReviewThreads';
+import { fetchReportingRejection } from './rejectedCredential';
 import type {
   GitHubDiffSide,
   PullDiscussionComment,
@@ -276,7 +277,7 @@ export async function requestJSON(
   try {
     // Each route's response headers decide whether a GET is reusable. Mutating
     // requests and freshness-sensitive reads return no-store themselves.
-    response = await fetch(input, init);
+    response = await fetchReportingRejection(input, init);
   } catch {
     throw new Error('Could not reach the DiffsHub server.');
   }

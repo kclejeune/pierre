@@ -2,6 +2,7 @@
 
 import { storedGitHubTokenHeaders } from './githubSession';
 import { createCachedLookup } from '@/lib/cachedLookup';
+import { fetchReportingRejection } from '@/lib/rejectedCredential';
 
 // A user's profile as served by /api/github-user?login=: the display name
 // behind avatar initials, plus a freshly issued avatar URL. The avatar URLs
@@ -20,7 +21,7 @@ export interface GitHubUserProfile {
 const profileByLogin = createCachedLookup(
   async (key: string) => {
     const login = key.slice(key.indexOf(':') + 1);
-    const response = await fetch(
+    const response = await fetchReportingRejection(
       `/api/github-user?login=${encodeURIComponent(login)}`,
       { headers: storedGitHubTokenHeaders() }
     );

@@ -4,6 +4,7 @@ import { storedGitHubTokenHeaders } from './githubSession';
 import { useGitHubToken } from './useGitHubToken';
 import { createCachedLookup } from '@/lib/cachedLookup';
 import type { PullLabel } from '@/lib/pullInfoClient';
+import { fetchReportingRejection } from '@/lib/rejectedCredential';
 
 type RepoLabelsResult =
   | { kind: 'error'; message: string }
@@ -16,7 +17,7 @@ const repoLabelsByKey = createCachedLookup(
   async (key: string): Promise<RepoLabelsResult> => {
     const [, owner, repo] = JSON.parse(key) as [number, string, string];
     try {
-      const response = await fetch(
+      const response = await fetchReportingRejection(
         `/api/pull-labels?${new URLSearchParams({ owner, repo })}`,
         { headers: storedGitHubTokenHeaders() }
       );

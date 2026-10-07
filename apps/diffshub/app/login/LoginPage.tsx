@@ -4,7 +4,14 @@ import { useEffect } from 'react';
 
 import { DiffsHubLogo } from '@/components/DiffsHubLogo';
 import { useGitHubEnvironment } from '@/components/GitHubEnvironmentProvider';
-import { GitHubTokenControl } from '@/components/GitHubTokenControl';
+import {
+  consumeGitHubSessionLapse,
+  readStoredGitHubToken,
+} from '@/components/githubSession';
+import {
+  githubSignInURL,
+  GitHubTokenControl,
+} from '@/components/GitHubTokenControl';
 import { useGitHubToken } from '@/components/useGitHubToken';
 import { sanitizeReturnTo } from '@/lib/githubOAuth';
 
@@ -13,9 +20,29 @@ import { sanitizeReturnTo } from '@/lib/githubOAuth';
 // with their original destination in ?returnTo; as soon as a token lands in
 // storage — a pasted PAT, or the OAuth round trip returning through the
 // completion page — the effect below sends them back to it.
+//
+// A viewer whose credentials lapsed (they were signed in and the token died,
+// rather than signing out themselves) skips this page and goes straight into
+// the GitHub OAuth flow when it is configured; GitHub usually completes that
+// without a prompt for an app they already authorized. The lapse marker is
+// consumed here, so a declined or failed round trip lands back on this page
+// instead of bouncing through GitHub again.
 export function LoginPage() {
   const { clearToken, hasToken, setToken } = useGitHubToken();
-  const { patInputEnabled } = useGitHubEnvironment();
+  const { oauthEnabled, patInputEnabled } = useGitHubEnvironment();
+
+  useEffect(() => {
+    if (
+      oauthEnabled &&
+      readStoredGitHubToken() === '' &&
+      consumeGitHubSessionLapse()
+    ) {
+      const url = new URL(window.location.href);
+      window.location.replace(
+        githubSignInURL(sanitizeReturnTo(url.searchParams.get('returnTo')))
+      );
+    }
+  }, [oauthEnabled]);
 
   useEffect(() => {
     if (!hasToken) {

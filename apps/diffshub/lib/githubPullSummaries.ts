@@ -1,33 +1,53 @@
 // Normalizes GitHub pull request payloads into the row shape the /pulls
-// dashboard renders. Three upstream shapes feed it: /search/issues items (the
-// cross-repo "created / assigned / review requested" buckets, which carry the
-// repo only as a repository_url), GraphQL search nodes (the "active" bucket,
-// which also reports the viewer's involvement per pull), and
-// /repos/{o}/{r}/pulls items (pinned-repo sections, where the caller already
-// knows the repo).
+// dashboard renders. Two upstream shapes feed it: GraphQL search nodes (the
+// "active" list, which also reports the viewer's involvement per pull) and
+// /repos/{o}/{r}/pulls items (repo cards, where the caller already knows the
+// repo).
 
 import { asRecord } from './untypedJson';
 
-export type PullBucket = 'created' | 'assigned' | 'review-requested' | 'active';
+// The ways a viewer can be involved in a pull. The /pulls "active" list is
+// the OR of all of them; each doubles as a filter chip that narrows the
+// search to the selected terms.
+export type PullInvolvement =
+  | 'review-requested'
+  | 'authored'
+  | 'reviewed'
+  | 'commented'
+  | 'assigned';
 
-// Tab order on the dashboard. Assigned sits last: few teams set assignees on
-// pulls, so it's usually the emptiest.
-export const PULL_BUCKETS: readonly PullBucket[] = [
-  'created',
+// Filter chip order on the dashboard, and the canonical order for
+// serializing a selection: what's waiting on the viewer first, assigned last
+// since few teams set assignees on pulls.
+export const PULL_INVOLVEMENTS: readonly PullInvolvement[] = [
   'review-requested',
-  'active',
+  'authored',
+  'reviewed',
+  'commented',
   'assigned',
 ];
 
-// How the viewer is involved in a pull, rendered as chips on "active" rows.
-// A pull can carry several (e.g. a re-requested review after an approval).
+// How the viewer is involved in a pull, rendered as chips on each row: the
+// filterable involvements plus finer review detail. A pull can carry several
+// (e.g. a re-requested review after an approval). As a row chip, "reviewed"
+// means a review that neither approved nor requested changes.
 export type PullActivity =
-  | 'review-requested'
+  | PullInvolvement
   | 'team-review-requested'
   | 'approved'
-  | 'changes-requested'
-  | 'reviewed'
-  | 'commented';
+  | 'changes-requested';
+
+// Shared by the row chips and the dashboard's filter chips.
+export const PULL_ACTIVITY_LABELS: Record<PullActivity, string> = {
+  'review-requested': 'Review requested',
+  'team-review-requested': 'Team review requested',
+  authored: 'Authored',
+  assigned: 'Assigned',
+  approved: 'Approved',
+  'changes-requested': 'Changes requested',
+  reviewed: 'Reviewed',
+  commented: 'Commented',
+};
 
 export interface PullSummary {
   number: number;
@@ -39,15 +59,43 @@ export interface PullSummary {
   state: 'open' | 'draft';
   updatedAt: string;
   viewerPath: string;
-  // Only set for the "active" bucket, whose GraphQL search reports it.
+  // Only set on "active" rows, whose GraphQL search reports it.
   activity?: PullActivity[];
 }
 
-// Rows per bucket section, shared by the REST and GraphQL searches.
-export const PULLS_PAGE_SIZE = 25;
+// Rows per active-list section.
+const PULLS_PAGE_SIZE = 25;
 
-export function isPullBucket(value: string): value is PullBucket {
-  return (PULL_BUCKETS as readonly string[]).includes(value);
+// Canonical form of a selection: chip order, no duplicates, and the empty
+// list for "all" — including when every chip is selected, so that selection
+// shares the All chip's URL, cache entry, and copy.
+export function normalizePullInvolvements(
+  entries: readonly string[]
+): PullInvolvement[] {
+  const selected = PULL_INVOLVEMENTS.filter((involvement) =>
+    entries.includes(involvement)
+  );
+  return selected.length === PULL_INVOLVEMENTS.length ? [] : selected;
+}
+
+// Parses a comma-separated involvement list (the ?involves= param). Empty or
+// missing means "all"; returns undefined when any entry is unknown.
+export function parsePullInvolvements(
+  value: string | null
+): PullInvolvement[] | undefined {
+  const entries = value == null || value === '' ? [] : value.split(',');
+  return entries.every((entry) =>
+    (PULL_INVOLVEMENTS as readonly string[]).includes(entry)
+  )
+    ? normalizePullInvolvements(entries)
+    : undefined;
+}
+
+// The involvements a normalized selection searches for.
+function effectivePullInvolvements(
+  involves: readonly PullInvolvement[]
+): readonly PullInvolvement[] {
+  return involves.length === 0 ? PULL_INVOLVEMENTS : involves;
 }
 
 // Which review requests count as "requested from me": 'direct' is requests
@@ -62,102 +110,114 @@ export function isReviewRequestScope(
   return value === 'direct' || value === 'teams';
 }
 
-// Buckets whose query depends on the ReviewRequestScope toggle.
-export function bucketUsesReviewRequests(bucket: PullBucket): boolean {
-  return bucket === 'review-requested' || bucket === 'active';
+// Whether the ReviewRequestScope toggle changes the search for this
+// selection.
+export function involvementsUseReviewRequests(
+  involves: readonly PullInvolvement[]
+): boolean {
+  return effectivePullInvolvements(involves).includes('review-requested');
 }
 
-function bucketQualifier(
-  bucket: PullBucket,
+// Replying on your own pull leaves conversation comments and COMMENTED
+// reviews, which isn't reviewing or commenting in the sense these chips mean,
+// so those terms skip the viewer's own pulls.
+const NOT_OWN = '-author:@me';
+const SKIPS_OWN_PULLS: ReadonlySet<PullInvolvement> = new Set([
+  'reviewed',
+  'commented',
+]);
+
+function involvementQualifier(
+  involvement: PullInvolvement,
   reviewRequests: ReviewRequestScope
 ): string {
-  const requested =
-    reviewRequests === 'teams'
-      ? 'review-requested:@me'
-      : 'user-review-requested:@me';
-  switch (bucket) {
-    case 'created':
+  switch (involvement) {
+    case 'review-requested':
+      return reviewRequests === 'teams'
+        ? 'review-requested:@me'
+        : 'user-review-requested:@me';
+    case 'authored':
       return 'author:@me';
+    // reviewed-by: also covers inline-only review comments, which commenter:
+    // (conversation comments) misses.
+    case 'reviewed':
+      return 'reviewed-by:@me';
+    case 'commented':
+      return 'commenter:@me';
     case 'assigned':
       return 'assignee:@me';
-    case 'review-requested':
-      return requested;
-    // Pulls waiting on the viewer or that they've joined: commenter: matches
-    // conversation comments and reviewed-by: covers inline-only review
-    // comments. Authored pulls already live under "created". The parentheses
-    // keep the OR from swallowing the repo qualifiers appended after it.
-    case 'active':
-      return `(${requested} OR commenter:@me OR reviewed-by:@me) -author:@me`;
   }
+}
+
+// The search term for one involvement, with NOT_OWN appended for the terms
+// that skip the viewer's own pulls.
+function involvementTerm(
+  involvement: PullInvolvement,
+  reviewRequests: ReviewRequestScope
+): string {
+  const qualifier = involvementQualifier(involvement, reviewRequests);
+  return SKIPS_OWN_PULLS.has(involvement)
+    ? `${qualifier} ${NOT_OWN}`
+    : qualifier;
 }
 
 type SearchScope = {
   excludeRepos?: readonly string[];
+  // Normalized; empty means every involvement.
+  involves: readonly PullInvolvement[];
   repo?: string;
   // Defaults to 'direct'.
   reviewRequests?: ReviewRequestScope;
 };
 
-// Optionally scoped to a single "owner/name" repository (pinned-repo cards
-// following the dashboard's active bucket tab) or scoped to exclude a set of
-// repositories (the main bucket list, which drops pulls already shown in the
-// pinned cards above it).
-export function buildBucketSearchQuery(
-  bucket: PullBucket,
-  scope?: SearchScope
-): string {
-  return buildScopedSearchQuery(
-    bucketQualifier(bucket, scope?.reviewRequests ?? 'direct'),
-    scope
-  );
+// The selected involvements as one search qualifier: a single term as-is,
+// several as a parenthesized OR group (terms that skip own pulls grouped
+// with NOT_OWN too), so the group can't swallow the qualifiers appended
+// after it.
+function activeQualifier(scope: SearchScope): string {
+  const involves = effectivePullInvolvements(scope.involves);
+  const reviewRequests = scope.reviewRequests ?? 'direct';
+  const [only] = involves;
+  if (involves.length === 1 && only != null) {
+    return involvementTerm(only, reviewRequests);
+  }
+  const terms = involves.map((involvement) => {
+    const term = involvementTerm(involvement, reviewRequests);
+    return SKIPS_OWN_PULLS.has(involvement) ? `(${term})` : term;
+  });
+  return `(${terms.join(' OR ')})`;
 }
 
-function buildScopedSearchQuery(qualifier: string, scope?: SearchScope) {
-  let query = `is:open is:pr archived:false ${qualifier}`;
-  if (scope?.repo != null) {
+// The active-list search: open pulls matching any selected involvement,
+// optionally scoped to one "owner/name" repository (pinned-repo cards) or
+// excluding a set of them (the main list, which drops pulls already shown in
+// the pinned cards above it). `extra` narrows the involvement match further.
+export function buildActiveSearchQuery(
+  scope: SearchScope,
+  extra?: string
+): string {
+  let query = `is:open is:pr archived:false ${activeQualifier(scope)}`;
+  if (extra != null) {
+    query += ` ${extra}`;
+  }
+  if (scope.repo != null) {
     query += ` repo:${scope.repo}`;
   }
-  for (const repo of scope?.excludeRepos ?? []) {
+  for (const repo of scope.excludeRepos ?? []) {
     query += ` -repo:${repo}`;
   }
   return query;
 }
 
-// repository_url looks like https://api.github.com/repos/{owner}/{repo} on
-// github.com and https://<host>/api/v3/repos/{owner}/{repo} on GHES; the two
-// segments after "repos" identify the repository on both.
-function parseRepositoryURL(
-  value: unknown
-): { owner: string; repo: string } | undefined {
-  if (typeof value !== 'string') {
-    return undefined;
-  }
-  let segments: string[];
-  try {
-    segments = new URL(value).pathname.split('/').filter(Boolean);
-  } catch {
-    return undefined;
-  }
-  const reposIndex = segments.lastIndexOf('repos');
-  const owner = segments[reposIndex + 1];
-  const repo = segments[reposIndex + 2];
-  if (reposIndex === -1 || owner == null || repo == null) {
-    return undefined;
-  }
-  return { owner, repo };
-}
-
 function parsePullItem(
   value: unknown,
-  repoRef?: { owner: string; repo: string }
+  repoRef: { owner: string; repo: string }
 ): PullSummary | undefined {
   if (typeof value !== 'object' || value == null) {
     return undefined;
   }
   const record = value as Record<string, unknown>;
-  const ref = repoRef ?? parseRepositoryURL(record.repository_url);
   if (
-    ref == null ||
     typeof record.number !== 'number' ||
     typeof record.title !== 'string' ||
     typeof record.updated_at !== 'string'
@@ -166,7 +226,7 @@ function parsePullItem(
   }
   const user = asRecord(record.user);
   return buildPullSummary({
-    ...ref,
+    ...repoRef,
     number: record.number,
     title: record.title,
     isDraft: record.draft === true,
@@ -207,23 +267,6 @@ function buildPullSummary(fields: {
   return summary;
 }
 
-export function parseSearchIssuesPayload(payload: unknown): {
-  pulls: PullSummary[];
-  totalCount: number;
-} {
-  if (typeof payload !== 'object' || payload == null) {
-    return { pulls: [], totalCount: 0 };
-  }
-  const record = payload as Record<string, unknown>;
-  const items = Array.isArray(record.items) ? record.items : [];
-  const pulls = items
-    .map((item) => parsePullItem(item))
-    .filter((pull): pull is PullSummary => pull != null);
-  const totalCount =
-    typeof record.total_count === 'number' ? record.total_count : pulls.length;
-  return { pulls, totalCount };
-}
-
 export function parseRepoPullsPayload(
   owner: string,
   repo: string,
@@ -237,11 +280,12 @@ export function parseRepoPullsPayload(
     .filter((pull): pull is PullSummary => pull != null);
 }
 
-// One GraphQL request for the "active" bucket: the pull list itself plus a
+// One GraphQL request for an active-list section: the pull list itself plus a
 // commenter:@me subset (ids only) that marks which rows the viewer commented
-// on, since no per-pull viewer field reports conversation comments. Both
-// searches share the scope and sort by most recently updated, so every
-// commented pull in the main page also lands in the subset's page.
+// on, since no per-pull viewer field reports conversation comments. The
+// subset is the main search narrowed by the "commented" term, sorted the same
+// way, so every commented pull in the main page also lands in the subset's
+// page.
 // ISSUE_ADVANCED opts into the search syntax that understands the OR group.
 export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: String!, $first: Int!) {
   pulls: search(query: $query, type: ISSUE_ADVANCED, first: $first) {
@@ -255,8 +299,10 @@ export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: Stri
         updatedAt
         author { login avatarUrl }
         repository { name owner { login } }
+        viewerDidAuthor
         viewerLatestReview { state }
         viewerLatestReviewRequest { requestedReviewer { __typename } }
+        assignees(first: 10) { nodes { isViewer } }
       }
     }
   }
@@ -273,20 +319,26 @@ export function buildActivePullsVariables(scope: SearchScope): {
   const sorted = (query: string) => `${query} sort:updated-desc`;
   return {
     commentedQuery: sorted(
-      buildScopedSearchQuery('commenter:@me -author:@me', scope)
+      buildActiveSearchQuery(
+        scope,
+        involvementTerm('commented', scope.reviewRequests ?? 'direct')
+      )
     ),
     first: PULLS_PAGE_SIZE,
-    query: sorted(buildBucketSearchQuery('active', scope)),
+    query: sorted(buildActiveSearchQuery(scope)),
   };
 }
 
-// Chips in display order: what's waiting on the viewer first, then where
-// their last review left things, then conversation comments.
+// Chips in display order: authorship, what's waiting on the viewer, then
+// where their last review left things, then conversation comments. Own pulls
+// skip the review and comment chips for the same reason the search terms
+// skip own pulls (NOT_OWN).
 function readViewerActivity(
   record: Record<string, unknown>,
   commentedIds: ReadonlySet<string>
 ): PullActivity[] {
-  const activity: PullActivity[] = [];
+  const own = record.viewerDidAuthor === true;
+  const activity: PullActivity[] = own ? ['authored'] : [];
   const request = asRecord(record.viewerLatestReviewRequest);
   if (request != null) {
     activity.push(
@@ -294,6 +346,16 @@ function readViewerActivity(
         ? 'team-review-requested'
         : 'review-requested'
     );
+  }
+  const assignees = asRecord(record.assignees)?.nodes;
+  if (
+    Array.isArray(assignees) &&
+    assignees.some((node) => asRecord(node)?.isViewer === true)
+  ) {
+    activity.push('assigned');
+  }
+  if (own) {
+    return activity;
   }
   // PENDING is the viewer's own unsubmitted draft review; nobody else can see
   // it yet, so it doesn't count as having reviewed.
@@ -349,8 +411,8 @@ function parseGraphQLPullNode(
   };
 }
 
-// Reads ACTIVE_PULLS_QUERY's `data` into the same { pulls, totalCount } shape
-// the REST search buckets return.
+// Reads ACTIVE_PULLS_QUERY's `data` into the { pulls, totalCount } shape the
+// dashboard sections render.
 export function parseActivePullsPayload(data: unknown): {
   pulls: PullSummary[];
   totalCount: number;

@@ -2,11 +2,11 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   buildActivePullsVariables,
-  buildBucketSearchQuery,
-  isPullBucket,
+  buildActiveSearchQuery,
+  involvementsUseReviewRequests,
   parseActivePullsPayload,
+  parsePullInvolvements,
   parseRepoPullsPayload,
-  parseSearchIssuesPayload,
 } from '@/lib/githubPullSummaries';
 
 function activeNode(overrides: Record<string, unknown> = {}) {
@@ -25,15 +25,20 @@ function activeNode(overrides: Record<string, unknown> = {}) {
 }
 
 describe('buildActivePullsVariables', () => {
+  // The commented subset narrows the main search, so every commented row on
+  // the main page is also in the subset's page.
   test('scopes both searches identically and sorts by update', () => {
     expect(
-      buildActivePullsVariables({ excludeRepos: ['ziglang/zig'] })
+      buildActivePullsVariables({
+        excludeRepos: ['ziglang/zig'],
+        involves: ['assigned'],
+      })
     ).toEqual({
       commentedQuery:
-        'is:open is:pr archived:false commenter:@me -author:@me -repo:ziglang/zig sort:updated-desc',
+        'is:open is:pr archived:false assignee:@me commenter:@me -author:@me -repo:ziglang/zig sort:updated-desc',
       first: 25,
       query:
-        'is:open is:pr archived:false (user-review-requested:@me OR commenter:@me OR reviewed-by:@me) -author:@me -repo:ziglang/zig sort:updated-desc',
+        'is:open is:pr archived:false assignee:@me -repo:ziglang/zig sort:updated-desc',
     });
   });
 });
@@ -85,6 +90,21 @@ describe('parseActivePullsPayload', () => {
             },
           }),
           activeNode({ id: 'D', viewerLatestReview: { state: 'COMMENTED' } }),
+          activeNode({
+            id: 'E',
+            assignees: { nodes: [{ isViewer: false }, { isViewer: true }] },
+            viewerLatestReviewRequest: {
+              requestedReviewer: { __typename: 'User' },
+            },
+          }),
+          // The viewer's own pull: thread replies leave a COMMENTED review,
+          // which must not read as reviewing it.
+          activeNode({
+            id: 'F',
+            viewerDidAuthor: true,
+            viewerLatestReview: { state: 'COMMENTED' },
+            assignees: { nodes: [{ isViewer: true }] },
+          }),
         ],
       },
       commented: { nodes: [{ id: 'A' }, { id: 'C' }] },
@@ -94,6 +114,8 @@ describe('parseActivePullsPayload', () => {
       ['changes-requested'],
       ['team-review-requested', 'commented'],
       ['reviewed'],
+      ['review-requested', 'assigned'],
+      ['authored', 'assigned'],
     ]);
   });
 
@@ -110,128 +132,81 @@ describe('parseActivePullsPayload', () => {
   });
 });
 
-function searchItem(overrides: Record<string, unknown> = {}) {
-  return {
-    number: 42,
-    title: 'Fix the flux capacitor',
-    updated_at: '2026-08-01T12:00:00Z',
-    repository_url: 'https://api.github.com/repos/oven-sh/bun',
-    user: { login: 'octocat', avatar_url: 'https://example.com/a.png' },
-    ...overrides,
-  };
-}
+describe('buildActiveSearchQuery', () => {
+  test('ORs every involvement by default', () => {
+    expect(buildActiveSearchQuery({ involves: [] })).toBe(
+      'is:open is:pr archived:false (user-review-requested:@me OR author:@me OR (reviewed-by:@me -author:@me) OR (commenter:@me -author:@me) OR assignee:@me)'
+    );
+  });
 
-describe('buildBucketSearchQuery', () => {
-  test('maps each bucket to its @me qualifier', () => {
-    expect(buildBucketSearchQuery('created')).toBe(
+  test('narrows to the selected involvements', () => {
+    expect(buildActiveSearchQuery({ involves: ['authored'] })).toBe(
       'is:open is:pr archived:false author:@me'
     );
-    expect(buildBucketSearchQuery('assigned')).toBe(
+    expect(
+      buildActiveSearchQuery({ involves: ['reviewed', 'commented'] })
+    ).toBe(
+      'is:open is:pr archived:false ((reviewed-by:@me -author:@me) OR (commenter:@me -author:@me))'
+    );
+    // Only reviewing and commenting skip own pulls; a self-assigned pull
+    // still lists under Assigned.
+    expect(buildActiveSearchQuery({ involves: ['assigned'] })).toBe(
       'is:open is:pr archived:false assignee:@me'
-    );
-    expect(buildBucketSearchQuery('review-requested')).toBe(
-      'is:open is:pr archived:false user-review-requested:@me'
-    );
-    expect(buildBucketSearchQuery('active')).toBe(
-      'is:open is:pr archived:false (user-review-requested:@me OR commenter:@me OR reviewed-by:@me) -author:@me'
     );
   });
 
   test('widens review requests to teams when asked', () => {
     expect(
-      buildBucketSearchQuery('review-requested', { reviewRequests: 'teams' })
+      buildActiveSearchQuery({
+        involves: ['review-requested'],
+        reviewRequests: 'teams',
+      })
     ).toBe('is:open is:pr archived:false review-requested:@me');
-    expect(buildBucketSearchQuery('active', { reviewRequests: 'teams' })).toBe(
-      'is:open is:pr archived:false (review-requested:@me OR commenter:@me OR reviewed-by:@me) -author:@me'
-    );
-    // Buckets without a review-request qualifier ignore the toggle.
-    expect(buildBucketSearchQuery('created', { reviewRequests: 'teams' })).toBe(
-      'is:open is:pr archived:false author:@me'
-    );
   });
 
-  test('keeps the active OR group intact when scoped to a repo', () => {
-    expect(buildBucketSearchQuery('active', { repo: 'oven-sh/bun' })).toBe(
-      'is:open is:pr archived:false (user-review-requested:@me OR commenter:@me OR reviewed-by:@me) -author:@me repo:oven-sh/bun'
-    );
-  });
-
-  test('appends a repo qualifier when scoped to a pinned repo', () => {
-    expect(buildBucketSearchQuery('created', { repo: 'oven-sh/bun' })).toBe(
-      'is:open is:pr archived:false author:@me repo:oven-sh/bun'
-    );
-  });
-
-  test('appends -repo qualifiers when excluding pinned repos', () => {
+  test('scopes to a pinned repo or excludes pinned repos', () => {
     expect(
-      buildBucketSearchQuery('created', {
+      buildActiveSearchQuery({
+        involves: ['review-requested', 'commented'],
+        repo: 'oven-sh/bun',
+      })
+    ).toBe(
+      'is:open is:pr archived:false (user-review-requested:@me OR (commenter:@me -author:@me)) repo:oven-sh/bun'
+    );
+    expect(
+      buildActiveSearchQuery({
+        involves: ['authored'],
         excludeRepos: ['oven-sh/bun', 'ziglang/zig'],
       })
     ).toBe(
       'is:open is:pr archived:false author:@me -repo:oven-sh/bun -repo:ziglang/zig'
     );
   });
-
-  test('isPullBucket rejects unknown values', () => {
-    expect(isPullBucket('created')).toBe(true);
-    expect(isPullBucket('closed')).toBe(false);
-  });
 });
 
-describe('parseSearchIssuesPayload', () => {
-  test('parses items with dotcom repository URLs', () => {
-    const { pulls, totalCount } = parseSearchIssuesPayload({
-      total_count: 87,
-      items: [searchItem()],
-    });
-    expect(totalCount).toBe(87);
-    expect(pulls).toEqual([
-      {
-        number: 42,
-        title: 'Fix the flux capacitor',
-        owner: 'oven-sh',
-        repo: 'bun',
-        authorLogin: 'octocat',
-        authorAvatarUrl: 'https://example.com/a.png',
-        state: 'open',
-        updatedAt: '2026-08-01T12:00:00Z',
-        viewerPath: '/oven-sh/bun/pull/42',
-      },
+describe('parsePullInvolvements', () => {
+  test('canonicalizes order, drops duplicates, and rejects unknowns', () => {
+    expect(parsePullInvolvements(null)).toEqual([]);
+    expect(parsePullInvolvements('')).toEqual([]);
+    expect(parsePullInvolvements('assigned,authored,assigned')).toEqual([
+      'authored',
+      'assigned',
     ]);
+    expect(parsePullInvolvements('authored,closed')).toBeUndefined();
   });
 
-  test('parses GHES-shaped repository URLs', () => {
-    const { pulls } = parseSearchIssuesPayload({
-      total_count: 1,
-      items: [
-        searchItem({
-          repository_url: 'https://ghe.example.com/api/v3/repos/acme/widgets',
-        }),
-      ],
-    });
-    expect(pulls[0]?.owner).toBe('acme');
-    expect(pulls[0]?.repo).toBe('widgets');
-    expect(pulls[0]?.viewerPath).toBe('/acme/widgets/pull/42');
+  test('folds a full selection into the empty "all" selection', () => {
+    expect(
+      parsePullInvolvements(
+        'review-requested,authored,reviewed,commented,assigned'
+      )
+    ).toEqual([]);
   });
 
-  test('marks drafts and drops malformed items', () => {
-    const { pulls } = parseSearchIssuesPayload({
-      total_count: 3,
-      items: [
-        searchItem({ draft: true }),
-        searchItem({ repository_url: 'not a url' }),
-        searchItem({ number: 'not a number' }),
-      ],
-    });
-    expect(pulls).toHaveLength(1);
-    expect(pulls[0]?.state).toBe('draft');
-  });
-
-  test('handles a malformed payload', () => {
-    expect(parseSearchIssuesPayload(null)).toEqual({
-      pulls: [],
-      totalCount: 0,
-    });
+  test('only selections with a review-request term use the teams switch', () => {
+    expect(involvementsUseReviewRequests([])).toBe(true);
+    expect(involvementsUseReviewRequests(['review-requested'])).toBe(true);
+    expect(involvementsUseReviewRequests(['authored'])).toBe(false);
   });
 });
 

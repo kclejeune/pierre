@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 
 import { storedGitHubTokenHeaders } from './githubSession';
 import type {
-  PullBucket,
+  PullInvolvement,
   PullSummary,
   ReviewRequestScope,
 } from '@/lib/githubPullSummaries';
@@ -19,24 +19,28 @@ export interface DashboardPullsState {
   totalCount: number;
 }
 
-// reviewRequests: 'teams' widens the bucket's review-request qualifier; the
-// dashboard only passes it for buckets that have one.
+// The dashboard's involvement filter chips. An empty `involves` means every
+// involvement. reviewRequests: 'teams' widens the review-request term; the
+// dashboard only passes it when that term is part of the search.
+export interface ActivePullsFilter {
+  involves: readonly PullInvolvement[];
+  reviewRequests?: ReviewRequestScope;
+}
+
 export type DashboardPullsSource =
-  // The main bucket list; excludeRepos drops pulls from repos already shown
+  // The main active list; excludeRepos drops pulls from repos already shown
   // in the pinned cards above it.
   | {
-      kind: 'bucket';
-      bucket: PullBucket;
+      kind: 'active';
+      filter: ActivePullsFilter;
       excludeRepos?: readonly string[];
-      reviewRequests?: ReviewRequestScope;
     }
-  // A repo card: scoped to the dashboard's active bucket tab when one is
-  // given, every open pull in the repo otherwise.
+  // A repo card: scoped to the dashboard's active filter when one is given,
+  // every open pull in the repo otherwise.
   | {
       kind: 'repo';
       repo: string;
-      bucket?: PullBucket;
-      reviewRequests?: ReviewRequestScope;
+      filter?: ActivePullsFilter;
     };
 
 interface PullsPayload {
@@ -49,7 +53,7 @@ interface CachedPulls {
   totalCount: number;
 }
 
-// Last rows per section, so revisiting a tab or repo card renders instantly
+// Last rows per section, so revisiting a filter or repo card renders instantly
 // while it revalidates. The route is browser-cached for 30s; this only removes
 // the loading flash.
 const MAX_CACHED_SECTIONS = 40;
@@ -99,9 +103,9 @@ export function useDashboardPulls(
 ): DashboardPullsState {
   // Doubles as the effect's dependency key and the query string.
   const params = new URLSearchParams();
-  if (source.bucket != null) {
-    params.set('bucket', source.bucket);
-    if (source.reviewRequests === 'teams') {
+  if (source.filter != null) {
+    params.set('involves', source.filter.involves.join(','));
+    if (source.filter.reviewRequests === 'teams') {
       params.set('requests', 'teams');
     }
   }

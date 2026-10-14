@@ -19,13 +19,10 @@ import {
 import {
   ACTIVE_PULLS_QUERY,
   buildActivePullsVariables,
-  buildBucketSearchQuery,
-  isPullBucket,
   isReviewRequestScope,
   parseActivePullsPayload,
+  parsePullInvolvements,
   parseRepoPullsPayload,
-  parseSearchIssuesPayload,
-  PULLS_PAGE_SIZE,
 } from '@/lib/githubPullSummaries';
 import {
   createJSONResponse,
@@ -35,10 +32,9 @@ import { isValidRepoName, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
-// Pull request lists for the /pulls dashboard: cross-repo buckets built on
-// @me search qualifiers (optionally scoped to one repo, for pinned-repo cards
-// following the active bucket tab), and per-repo open pull lists. The
-// "active" bucket goes through GraphQL search; the rest use REST search.
+// Pull request lists for the /pulls dashboard: the "active" list (?involves=,
+// a GraphQL search built on @me qualifiers, optionally scoped to one repo for
+// pinned-repo cards) and per-repo open pull lists (?repo= alone).
 
 async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
@@ -47,23 +43,23 @@ async function handleGET(request: NextRequest) {
   }
 
   const params = request.nextUrl.searchParams;
-  const bucket = params.get('bucket');
+  const involvesParam = params.get('involves');
   const repo = params.get('repo');
-  const environment = getGitHubEnvironment();
+  if (repo != null && !isValidRepoName(repo)) {
+    return createJSONResponse(
+      { error: 'repo must look like owner/name.' },
+      { status: 400 }
+    );
+  }
 
-  if (bucket != null) {
-    if (!isPullBucket(bucket)) {
+  if (involvesParam != null) {
+    const involves = parsePullInvolvements(involvesParam);
+    if (involves == null) {
       return createJSONResponse(
         {
           error:
-            'bucket must be created, assigned, review-requested, or active.',
+            'involves must list review-requested, authored, reviewed, commented, or assigned.',
         },
-        { status: 400 }
-      );
-    }
-    if (repo != null && !isValidRepoName(repo)) {
-      return createJSONResponse(
-        { error: 'repo must look like owner/name.' },
         { status: 400 }
       );
     }
@@ -97,58 +93,31 @@ async function handleGET(request: NextRequest) {
     }
     const scope =
       repo != null
-        ? { repo, reviewRequests }
-        : { excludeRepos, reviewRequests };
-    if (bucket === 'active') {
-      // GraphQL rather than REST search: one request returns the list along
-      // with the viewer's review state and comment involvement per pull.
-      try {
-        return createPrivateJSONResponse(
-          parseActivePullsPayload(
-            await sendGitHubGraphQL(
-              ACTIVE_PULLS_QUERY,
-              buildActivePullsVariables(scope),
-              token
-            )
-          ),
-          30
-        );
-      } catch (error) {
-        return commitErrorResponse(error);
-      }
+        ? { involves, repo, reviewRequests }
+        : { excludeRepos, involves, reviewRequests };
+    // GraphQL rather than REST search: one request returns the list along
+    // with the viewer's involvement per pull.
+    try {
+      return createPrivateJSONResponse(
+        parseActivePullsPayload(
+          await sendGitHubGraphQL(
+            ACTIVE_PULLS_QUERY,
+            buildActivePullsVariables(scope),
+            token
+          )
+        ),
+        30
+      );
+    } catch (error) {
+      return commitErrorResponse(error);
     }
-    const result = await fetchPullsPayload(
-      createGitHubAPIURL(environment, '/search/issues', {
-        // advanced_search opts into the post-migration /search/issues
-        // semantics ahead of GitHub's legacy cutover; older GHES ignores it.
-        advanced_search: 'true',
-        order: 'desc',
-        per_page: String(PULLS_PAGE_SIZE),
-        q: buildBucketSearchQuery(bucket, scope),
-        sort: 'updated',
-      }),
-      token
-    );
-    if (result.error != null) {
-      return result.error;
-    }
-    return createPrivateJSONResponse(
-      parseSearchIssuesPayload(result.payload),
-      30
-    );
   }
 
   if (repo != null) {
-    if (!isValidRepoName(repo)) {
-      return createJSONResponse(
-        { error: 'repo must look like owner/name.' },
-        { status: 400 }
-      );
-    }
     const [owner, name] = repo.split('/') as [string, string];
     const result = await fetchPullsPayload(
       createGitHubAPIURL(
-        environment,
+        getGitHubEnvironment(),
         `/repos/${encodeURLSegment(owner)}/${encodeURLSegment(name)}/pulls`,
         {
           direction: 'desc',
@@ -171,7 +140,7 @@ async function handleGET(request: NextRequest) {
   }
 
   return createJSONResponse(
-    { error: 'bucket or repo is required.' },
+    { error: 'involves or repo is required.' },
     { status: 400 }
   );
 }

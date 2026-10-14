@@ -1,7 +1,7 @@
 'use client';
 
 import { IconPin, IconX } from '@pierre/icons';
-import { type Ref, useState } from 'react';
+import { type Ref, useEffect, useState } from 'react';
 
 import { Button } from '@/components/Button';
 import { ButtonGroup, ButtonGroupItem } from '@/components/ButtonGroup';
@@ -19,35 +19,56 @@ import { PullRequestRow } from '@/components/PullRequestRow';
 import { RepoDirectory } from '@/components/RepoDirectory';
 import { RepoNameInput } from '@/components/RepoNameInput';
 import { Switch } from '@/components/Switch';
-import { useDashboardPulls } from '@/components/useDashboardPulls';
+import {
+  type ActivePullsFilter,
+  useDashboardPulls,
+} from '@/components/useDashboardPulls';
 import { useGitHubToken } from '@/components/useGitHubToken';
 import { usePinnedRepos } from '@/components/usePinnedRepos';
 import { cn } from '@/lib/cn';
 import {
-  bucketUsesReviewRequests,
-  isPullBucket,
+  involvementsUseReviewRequests,
   isReviewRequestScope,
-  PULL_BUCKETS,
-  type PullBucket,
+  normalizePullInvolvements,
+  parsePullInvolvements,
+  PULL_ACTIVITY_LABELS,
+  PULL_INVOLVEMENTS,
+  type PullInvolvement,
   type PullSummary,
   type ReviewRequestScope,
 } from '@/lib/githubPullSummaries';
 import { isRepoPinned, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
 
-const DEFAULT_BUCKET: PullBucket = 'created';
-
 const DEFAULT_REVIEW_REQUESTS: ReviewRequestScope = 'direct';
 
-// ?bucket= and ?requests= keep the tab and team-requests switch across
-// reloads and shared links. Read on the client so the page stays statically
-// prerenderable; defaults are left out of the URL.
-function readSearchParam<T extends string>(
-  name: string,
-  isValid: (value: string) => value is T,
-  fallback: T
-): T {
-  const value = new URLSearchParams(window.location.search).get(name);
-  return value != null && isValid(value) ? value : fallback;
+// The tabs this page used to have, mapped onto the filter chips that replaced
+// them so shared ?bucket= links keep landing on the same list.
+// A Map rather than an object literal: ?bucket= is user input, and keys like
+// "toString" or "__proto__" would resolve to inherited properties.
+const LEGACY_BUCKET_INVOLVES = new Map<string, readonly PullInvolvement[]>([
+  ['created', ['authored']],
+  ['review-requested', ['review-requested']],
+  ['active', ['review-requested', 'reviewed', 'commented']],
+  ['assigned', ['assigned']],
+]);
+
+// ?involves= and ?requests= keep the filter chips and team-requests switch
+// across reloads and shared links. Read on the client so the page stays
+// statically prerenderable; defaults are left out of the URL.
+function readInvolvesParam(): PullInvolvement[] {
+  const params = new URLSearchParams(window.location.search);
+  const raw =
+    params.get('involves') ??
+    LEGACY_BUCKET_INVOLVES.get(params.get('bucket') ?? '')?.join(',') ??
+    null;
+  return parsePullInvolvements(raw) ?? [];
+}
+
+function readReviewRequestsParam(): ReviewRequestScope {
+  const value = new URLSearchParams(window.location.search).get('requests');
+  return value != null && isReviewRequestScope(value)
+    ? value
+    : DEFAULT_REVIEW_REQUESTS;
 }
 
 function writeSearchParam(name: string, value: string, fallback: string) {
@@ -60,34 +81,14 @@ function writeSearchParam(name: string, value: string, fallback: string) {
   window.history.replaceState(window.history.state, '', url);
 }
 
-// emptyWithTeams replaces empty while the team-requests switch is on, for
-// buckets whose results it widens.
-const BUCKET_COPY: Record<
-  PullBucket,
-  { empty: string; emptyWithTeams?: string; label: string }
-> = {
-  created: { empty: 'you created', label: 'Created' },
-  assigned: { empty: 'assigned to you', label: 'Assigned' },
-  'review-requested': {
-    empty: 'waiting on your review',
-    emptyWithTeams: "waiting on your or your teams' review",
-    label: 'Review requested',
-  },
-  active: {
-    empty: "waiting on you or that you've commented on",
-    emptyWithTeams: "waiting on you or your teams, or that you've commented on",
-    label: 'Active',
-  },
-};
-
-function getEmptyCopy(
-  bucket: PullBucket,
-  reviewRequests: ReviewRequestScope | undefined
-): string {
-  const copy = BUCKET_COPY[bucket];
-  return reviewRequests === 'teams' && copy.emptyWithTeams != null
-    ? copy.emptyWithTeams
-    : copy.empty;
+function getEmptyCopy(filter: ActivePullsFilter, other: boolean): string {
+  const qualifier = other ? 'other ' : '';
+  if (filter.involves.length > 0) {
+    return `No ${qualifier}open pull requests match these filters.`;
+  }
+  return filter.reviewRequests === 'teams'
+    ? `No ${qualifier}open pull requests involving you or your teams.`
+    : `No ${qualifier}open pull requests involving you.`;
 }
 
 export function PullsDashboard() {
@@ -118,31 +119,44 @@ export function PullsDashboard() {
 }
 
 function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
-  const [bucket, setBucket] = useState(() =>
-    readSearchParam('bucket', isPullBucket, DEFAULT_BUCKET)
-  );
-  const selectBucket = (next: PullBucket) => {
-    setBucket(next);
-    writeSearchParam('bucket', next, DEFAULT_BUCKET);
+  const [involves, setInvolves] = useState(readInvolvesParam);
+  const selectInvolves = (next: PullInvolvement[]) => {
+    setInvolves(next);
+    writeSearchParam('involves', next.join(','), '');
   };
-  const [reviewRequests, setReviewRequests] = useState(() =>
-    readSearchParam('requests', isReviewRequestScope, DEFAULT_REVIEW_REQUESTS)
-  );
+  // Rewrites a legacy ?bucket= link to the chips it mapped onto, once on
+  // mount; later selections write ?involves= themselves.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('bucket')) {
+      return;
+    }
+    url.searchParams.delete('bucket');
+    const initial = readInvolvesParam();
+    if (initial.length > 0) {
+      url.searchParams.set('involves', initial.join(','));
+    }
+    window.history.replaceState(window.history.state, '', url);
+  }, []);
+  const [reviewRequests, setReviewRequests] = useState(readReviewRequestsParam);
   const selectReviewRequests = (next: ReviewRequestScope) => {
     setReviewRequests(next);
     writeSearchParam('requests', next, DEFAULT_REVIEW_REQUESTS);
   };
-  // Only buckets with a review-request qualifier carry the switch's value, so
+  // Only selections with a review-request term carry the switch's value, so
   // flipping it doesn't refetch (or re-key the cache for) the others.
-  const bucketReviewRequests = bucketUsesReviewRequests(bucket)
-    ? reviewRequests
-    : undefined;
+  const filter: ActivePullsFilter = {
+    involves,
+    reviewRequests: involvementsUseReviewRequests(involves)
+      ? reviewRequests
+      : undefined,
+  };
   // A repo picked from the directory below; its open pulls render in a card
   // above the directory until cleared.
   const [directoryRepo, setDirectoryRepo] = useState<string | null>(null);
   const directoryCard = useRevealDashboardSection<HTMLElement>();
   const { hydrated, pinned, toggle } = usePinnedRepos();
-  // Everything below both filters on the pinned list (cards + bucket
+  // Everything below both filters on the pinned list (cards + active-list
   // exclusions), so wait for the single post-mount localStorage read instead
   // of fetching unexcluded and immediately refetching.
   if (!hydrated) {
@@ -151,18 +165,8 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <ButtonGroup
-          size="sm"
-          value={bucket}
-          onValueChange={(value) => selectBucket(value as PullBucket)}
-        >
-          {PULL_BUCKETS.map((value) => (
-            <ButtonGroupItem key={value} value={value}>
-              {BUCKET_COPY[value].label}
-            </ButtonGroupItem>
-          ))}
-        </ButtonGroup>
-        {bucketReviewRequests != null && (
+        <InvolvementFilter value={involves} onChange={selectInvolves} />
+        {filter.reviewRequests != null && (
           <label
             className="text-muted-foreground flex cursor-pointer items-center gap-2 text-xs"
             title="Also count review requests sent to teams you're on"
@@ -178,21 +182,19 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
         )}
       </div>
       <PinnedReposSection
-        bucket={bucket}
+        filter={filter}
         pinned={pinned}
-        reviewRequests={bucketReviewRequests}
         tokenVersion={tokenVersion}
         onToggle={toggle}
       />
-      <BucketSection
-        bucket={bucket}
+      <ActiveSection
         excludeRepos={pinned}
-        reviewRequests={bucketReviewRequests}
+        filter={filter}
         tokenVersion={tokenVersion}
       />
       {directoryRepo != null && (
         // The card a directory selection opens: every open pull in that repo
-        // (regardless of the active bucket — the point is browsing the repo).
+        // (regardless of the filter chips — the point is browsing the repo).
         <RepoPullsCard
           key={directoryRepo}
           ref={directoryCard.ref}
@@ -218,29 +220,76 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   );
 }
 
-// A repo-scoped pulls card, shared by the pinned cards (scoped to the active
-// bucket tab) and directory selections (every open pull in the repo).
+// Multi-select involvement chips. "All" (the empty selection) lists every
+// pull involving the viewer; selecting chips narrows the search to those
+// terms, and selecting every chip folds back into All.
+function InvolvementFilter({
+  onChange,
+  value,
+}: {
+  onChange: (next: PullInvolvement[]) => void;
+  value: readonly PullInvolvement[];
+}) {
+  const toggle = (involvement: PullInvolvement) =>
+    onChange(
+      normalizePullInvolvements(
+        value.includes(involvement)
+          ? value.filter((entry) => entry !== involvement)
+          : [...value, involvement]
+      )
+    );
+  return (
+    <ButtonGroup
+      aria-label="Filter by involvement"
+      className="flex-wrap"
+      size="sm"
+    >
+      <ButtonGroupItem
+        aria-pressed={value.length === 0}
+        selected={value.length === 0}
+        title="Every pull request involving you"
+        value="all"
+        onClick={() => onChange([])}
+      >
+        All
+      </ButtonGroupItem>
+      {PULL_INVOLVEMENTS.map((involvement) => (
+        <ButtonGroupItem
+          key={involvement}
+          aria-pressed={value.includes(involvement)}
+          selected={value.includes(involvement)}
+          title={PULL_ACTIVITY_LABELS[involvement]}
+          value={involvement}
+          onClick={() => toggle(involvement)}
+        >
+          {PULL_ACTIVITY_LABELS[involvement]}
+        </ButtonGroupItem>
+      ))}
+    </ButtonGroup>
+  );
+}
+
+// A repo-scoped pulls card, shared by the pinned cards (scoped to the filter
+// chips) and directory selections (every open pull in the repo).
 function RepoPullsCard({
-  bucket,
   closeLabel,
   emptyLabel,
+  filter,
   onClose,
   ref,
   repo,
-  reviewRequests,
   tokenVersion,
 }: {
-  bucket?: PullBucket;
   closeLabel: string;
   emptyLabel: string;
+  filter?: ActivePullsFilter;
   onClose: () => void;
   ref?: Ref<HTMLElement>;
   repo: string;
-  reviewRequests?: ReviewRequestScope;
   tokenVersion: number;
 }) {
   const { error, loading, pulls, retry } = useDashboardPulls(
-    { kind: 'repo', repo, bucket, reviewRequests },
+    { kind: 'repo', repo, filter },
     tokenVersion
   );
   return (
@@ -274,27 +323,22 @@ function RepoPullsCard({
   );
 }
 
-function BucketSection({
-  bucket,
+function ActiveSection({
   excludeRepos,
-  reviewRequests,
+  filter,
   tokenVersion,
 }: {
-  bucket: PullBucket;
   excludeRepos: readonly string[];
-  reviewRequests?: ReviewRequestScope;
+  filter: ActivePullsFilter;
   tokenVersion: number;
 }) {
   const { error, loading, pulls, retry, totalCount } = useDashboardPulls(
-    { kind: 'bucket', bucket, excludeRepos, reviewRequests },
+    { kind: 'active', filter, excludeRepos },
     tokenVersion
   );
   // With pinned repos excluded, their pulls appear in the cards above, so
   // the empty state says "other" rather than implying there are none at all.
-  const emptyLabel =
-    excludeRepos.length > 0
-      ? `No other open pull requests ${getEmptyCopy(bucket, reviewRequests)}.`
-      : `No open pull requests ${getEmptyCopy(bucket, reviewRequests)}.`;
+  const emptyLabel = getEmptyCopy(filter, excludeRepos.length > 0);
   return (
     <div className={SECTION_CARD_CLASS} aria-busy={loading}>
       <SectionRows
@@ -315,16 +359,14 @@ function BucketSection({
 }
 
 function PinnedReposSection({
-  bucket,
+  filter,
   onToggle,
   pinned,
-  reviewRequests,
   tokenVersion,
 }: {
-  bucket: PullBucket;
+  filter: ActivePullsFilter;
   onToggle: (repo: string) => void;
   pinned: readonly string[];
-  reviewRequests?: ReviewRequestScope;
   tokenVersion: number;
 }) {
   return (
@@ -347,11 +389,10 @@ function PinnedReposSection({
       {pinned.map((repo) => (
         <RepoPullsCard
           key={repo}
-          bucket={bucket}
           closeLabel={`Unpin ${repo}`}
-          emptyLabel={`No open pull requests ${getEmptyCopy(bucket, reviewRequests)}.`}
+          emptyLabel={getEmptyCopy(filter, false)}
+          filter={filter}
           repo={repo}
-          reviewRequests={reviewRequests}
           tokenVersion={tokenVersion}
           onClose={() => onToggle(repo)}
         />

@@ -6,34 +6,28 @@ import Link from 'next/link';
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { RelativeTime } from './RelativeTime';
 import { cn } from '@/lib/cn';
-import type { PullActivity, PullSummary } from '@/lib/githubPullSummaries';
+import {
+  PULL_ACTIVITY_LABELS,
+  type PullActivity,
+  type PullSummary,
+} from '@/lib/githubPullSummaries';
 import { recordRecentDiff } from '@/lib/recentDiffs';
 
-// Chips for the viewer's involvement on "active" rows. Pending requests read
-// in amber (waiting on you), verdicts in the green/red the pull details
-// reviewer list uses, and plain participation stays muted.
-const ACTIVITY_CHIPS: Record<
-  PullActivity,
-  { className: string; label: string }
-> = {
-  'review-requested': {
-    className: 'border-amber-500/40 text-amber-600 dark:text-amber-400',
-    label: 'Review requested',
-  },
-  'team-review-requested': {
-    className: 'text-muted-foreground',
-    label: 'Team review requested',
-  },
-  approved: {
-    className: 'border-[#18a46c]/40 text-[#18a46c]',
-    label: 'Approved',
-  },
-  'changes-requested': {
-    className: 'border-red-500/40 text-red-600 dark:text-red-400',
-    label: 'Changes requested',
-  },
-  reviewed: { className: 'text-muted-foreground', label: 'Reviewed' },
-  commented: { className: 'text-muted-foreground', label: 'Commented' },
+// Chip colors for the viewer's involvement on "active" rows. Pending
+// requests and assignments read in amber (waiting on you), verdicts in the
+// green/red the pull details reviewer list uses, and plain participation
+// stays muted. Labels come from PULL_ACTIVITY_LABELS.
+const PENDING = 'border-amber-500/40 text-amber-600 dark:text-amber-400';
+const MUTED = 'text-muted-foreground';
+const ACTIVITY_CHIP_CLASSES: Record<PullActivity, string> = {
+  authored: MUTED,
+  'review-requested': PENDING,
+  'team-review-requested': MUTED,
+  assigned: PENDING,
+  approved: 'border-[#18a46c]/40 text-[#18a46c]',
+  'changes-requested': 'border-red-500/40 text-red-600 dark:text-red-400',
+  reviewed: MUTED,
+  commented: MUTED,
 };
 
 interface PullRequestRowProps {
@@ -77,10 +71,10 @@ export function PullRequestRow({ pull, showRepo = true }: PullRequestRowProps) {
               key={activity}
               className={cn(
                 'shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] leading-none font-medium',
-                ACTIVITY_CHIPS[activity].className
+                ACTIVITY_CHIP_CLASSES[activity]
               )}
             >
-              {ACTIVITY_CHIPS[activity].label}
+              {PULL_ACTIVITY_LABELS[activity]}
             </span>
           ))}
         </div>

@@ -70,9 +70,13 @@ function rememberPulls(key: string, value: CachedPulls): void {
   }
 }
 
-function fetchPulls(search: string): Promise<PullsPayload> {
+function fetchPulls(
+  search: string,
+  signal: AbortSignal
+): Promise<PullsPayload> {
   return requestJSON(`/api/github-pulls?${search}`, {
     headers: storedGitHubTokenHeaders(),
+    signal,
   }) as Promise<PullsPayload>;
 }
 
@@ -123,16 +127,18 @@ export function useDashboardPulls(
   const state =
     storedState.key === cacheKey ? storedState : initialSectionState(cacheKey);
 
+  // Aborts on cleanup rather than only ignoring the result, so toggling
+  // filter chips quickly doesn't leave superseded searches running upstream.
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     setState((previous) =>
       previous.key === cacheKey
         ? { ...previous, error: null, loading: true }
         : initialSectionState(cacheKey)
     );
-    fetchPulls(sourceKey)
+    fetchPulls(sourceKey, controller.signal)
       .then((payload) => {
-        if (cancelled) {
+        if (controller.signal.aborted) {
           return;
         }
         const value = {
@@ -148,7 +154,7 @@ export function useDashboardPulls(
         });
       })
       .catch((error: Error) => {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           // Keep any cached rows on screen; the error renders beneath them.
           setState((previous) => ({
             ...previous,
@@ -158,9 +164,7 @@ export function useDashboardPulls(
           }));
         }
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, [cacheKey, reloadVersion, sourceKey]);
 
   return {

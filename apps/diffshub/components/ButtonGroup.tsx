@@ -56,18 +56,23 @@ function ButtonGroup({
 
 interface ButtonGroupItemProps extends Omit<ButtonProps, 'variant'> {
   value: string;
+  // Overrides the group's single-select value, for multi-select groups whose
+  // items toggle independently. Set, it also keeps selected items clickable
+  // so they can be toggled off.
+  selected?: boolean;
   children: React.ReactNode;
 }
 
 function ButtonGroupItem({
   className,
   value,
+  selected,
   children,
   onClick,
   ...props
 }: ButtonGroupItemProps) {
   const context = React.useContext(ButtonGroupContext);
-  const isSelected = context.selectedValue === value;
+  const isSelected = selected ?? context.selectedValue === value;
 
   const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     context.onValueChange?.(value);
@@ -78,7 +83,8 @@ function ButtonGroupItem({
     <Button
       className={cn(
         'text-muted-foreground rounded-[calc(var(--radius-lg)-1px)] gap-1.5',
-        isSelected && 'text-foreground pointer-events-none shadow-xs',
+        isSelected && 'text-foreground shadow-xs',
+        isSelected && selected == null && 'pointer-events-none',
         className
       )}
       variant={isSelected ? (context.variant ?? 'outline') : 'ghost'}
@@ -92,44 +98,4 @@ function ButtonGroupItem({
   );
 }
 
-const ButtonGroupPositionContext = React.createContext<
-  'first' | 'middle' | 'last' | 'only'
->('only');
-
-function ButtonGroupProvider({ children }: { children: React.ReactNode }) {
-  const childrenArray = React.Children.toArray(children);
-  const childCount = childrenArray.length;
-
-  return (
-    <>
-      {childrenArray.map((child, index) => {
-        let position: 'first' | 'middle' | 'last' | 'only' = 'only';
-
-        if (childCount > 1) {
-          if (index === 0) position = 'first';
-          else if (index === childCount - 1) position = 'last';
-          else position = 'middle';
-        }
-
-        return (
-          <ButtonGroupPositionContext.Provider key={index} value={position}>
-            {child}
-          </ButtonGroupPositionContext.Provider>
-        );
-      })}
-    </>
-  );
-}
-
-// Enhance ButtonGroup to automatically provide position context
-function EnhancedButtonGroup({ children, ...props }: ButtonGroupProps) {
-  return (
-    <ButtonGroup {...props}>
-      <ButtonGroupProvider>{children}</ButtonGroupProvider>
-    </ButtonGroup>
-  );
-}
-
-EnhancedButtonGroup.displayName = 'ButtonGroup';
-
-export { EnhancedButtonGroup as ButtonGroup, ButtonGroupItem };
+export { ButtonGroup, ButtonGroupItem };

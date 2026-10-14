@@ -285,9 +285,9 @@ export function parseRepoPullsPayload(
 // on, since no per-pull viewer field reports conversation comments. The
 // subset is the main search narrowed by the "commented" term, sorted the same
 // way, so every commented pull in the main page also lands in the subset's
-// page.
+// page. $withCommented skips the subset when it can't match anything.
 // ISSUE_ADVANCED opts into the search syntax that understands the OR group.
-export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: String!, $first: Int!) {
+export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: String!, $withCommented: Boolean!, $first: Int!) {
   pulls: search(query: $query, type: ISSUE_ADVANCED, first: $first) {
     issueCount
     nodes {
@@ -306,7 +306,7 @@ export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: Stri
       }
     }
   }
-  commented: search(query: $commentedQuery, type: ISSUE_ADVANCED, first: $first) {
+  commented: search(query: $commentedQuery, type: ISSUE_ADVANCED, first: $first) @include(if: $withCommented) {
     nodes { ... on PullRequest { id } }
   }
 }`;
@@ -315,6 +315,7 @@ export function buildActivePullsVariables(scope: SearchScope): {
   commentedQuery: string;
   first: number;
   query: string;
+  withCommented: boolean;
 } {
   const sorted = (query: string) => `${query} sort:updated-desc`;
   return {
@@ -326,6 +327,11 @@ export function buildActivePullsVariables(scope: SearchScope): {
     ),
     first: PULLS_PAGE_SIZE,
     query: sorted(buildActiveSearchQuery(scope)),
+    // The commented term skips own pulls, so an Authored-only selection can
+    // never overlap it.
+    withCommented: !effectivePullInvolvements(scope.involves).every(
+      (involvement) => involvement === 'authored'
+    ),
   };
 }
 

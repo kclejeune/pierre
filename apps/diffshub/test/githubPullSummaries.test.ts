@@ -39,7 +39,17 @@ describe('buildActivePullsVariables', () => {
       first: 25,
       query:
         'is:open is:pr archived:false assignee:@me -repo:ziglang/zig sort:updated-desc',
+      withCommented: true,
     });
+  });
+
+  test('skips the commented subset when only authored pulls are selected', () => {
+    expect(
+      buildActivePullsVariables({ involves: ['authored'] }).withCommented
+    ).toBe(false);
+    expect(buildActivePullsVariables({ involves: [] }).withCommented).toBe(
+      true
+    );
   });
 });
 

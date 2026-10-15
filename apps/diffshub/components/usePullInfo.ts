@@ -25,6 +25,12 @@ interface UsePullInfoOptions {
 
 interface UsePullInfoResult {
   pullInfo: PullInfo | null;
+  // The pull's head sha, but only when the info was fetched for the current
+  // viewer generation. `pullInfo` deliberately keeps the previous response
+  // while a reload refetches, so its headSha can still name the old head
+  // while the new diff is already interactive; anchoring review comments to
+  // it would pair new line numbers with the old commit.
+  viewerHeadSha: string | undefined;
   // Merges just-saved fields into the latest details without a refetch.
   mergePullDetails(pull: PullRequestRef, fields: Partial<PullDetails>): void;
 }
@@ -41,9 +47,11 @@ export function usePullInfo({
 }: UsePullInfoOptions): UsePullInfoResult {
   // The info is stored with the pull it was fetched for: PullInfo itself
   // carries only the number, and two repos' pulls can share a number, so
-  // deciding staleness needs the full owner/repo/number ref.
+  // deciding staleness needs the full owner/repo/number ref. `forViewerKey`
+  // is the viewer generation whose load fetched it.
   const [state, setState] = useState<{
     forPull: PullRequestRef;
+    forViewerKey: number;
     info: PullInfo;
   } | null>(null);
   const loadedViewerKey = useRef<number | undefined>(undefined);
@@ -75,7 +83,7 @@ export function usePullInfo({
       .then((info) => {
         if (!controller.signal.aborted) {
           loadedViewerKey.current = viewerKey;
-          setState({ forPull: pullRequest, info });
+          setState({ forPull: pullRequest, forViewerKey: viewerKey, info });
         }
       })
       .catch(() => undefined);
@@ -112,5 +120,10 @@ export function usePullInfo({
     },
     [getGitHubToken]
   );
-  return { pullInfo: state?.info ?? null, mergePullDetails };
+  return {
+    pullInfo: state?.info ?? null,
+    viewerHeadSha:
+      state?.forViewerKey === viewerKey ? state.info.headSha : undefined,
+    mergePullDetails,
+  };
 }

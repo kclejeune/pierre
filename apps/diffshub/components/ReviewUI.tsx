@@ -339,17 +339,18 @@ function ReviewUIInner({
 
   // What the diff compares, for the header's base/head display. Compare
   // ranges carry both refs in the URL; pulls need their metadata fetched.
-  const { pullInfo, mergePullDetails } = usePullInfo({
+  const { pullInfo, mergePullDetails, viewerHeadSha } = usePullInfo({
     getGitHubToken,
     githubTokenVersion,
     pullRequest,
     tokenHydrated: githubTokenHydrated,
     viewerKey,
   });
-  // The head commit of the diff on screen: pull info re-reads per viewer
-  // generation, so it tracks each diff reload. New review comments anchor to
-  // it rather than to whatever the head is when they are submitted.
-  const pullHeadSha = pullInfo?.headSha;
+  // The head commit of the diff on screen, from pull info fetched for this
+  // same diff load (undefined until that fetch lands). New review comments
+  // anchor to it rather than to whatever the head is when they are
+  // submitted; without it the route falls back to the current head.
+  const pullHeadSha = viewerHeadSha;
   const diffRefs = useMemo(
     () =>
       githubSource == null ? null : describeDiffRefs(githubSource, pullInfo),

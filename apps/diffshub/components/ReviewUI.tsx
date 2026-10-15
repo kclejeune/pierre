@@ -77,6 +77,10 @@ import {
 import { recordRecentDiff } from '@/lib/recentDiffs';
 import { removeSavedCommentSidebarEntry } from '@/lib/removeSavedCommentSidebarEntry';
 import { buildDiffHeadTreePath } from '@/lib/repoBrowser';
+import {
+  chooseReviewCommit,
+  describeStaleReviewEntries,
+} from '@/lib/reviewCommit';
 import type { DarkThemeName, LightThemeName } from '@/lib/themeNames';
 import { toastRequestError } from '@/lib/toastRequestError';
 import type {
@@ -342,6 +346,10 @@ function ReviewUIInner({
     tokenHydrated: githubTokenHydrated,
     viewerKey,
   });
+  // The head commit of the diff on screen: pull info re-reads per viewer
+  // generation, so it tracks each diff reload. New review comments anchor to
+  // it rather than to whatever the head is when they are submitted.
+  const pullHeadSha = pullInfo?.headSha;
   const diffRefs = useMemo(
     () =>
       githubSource == null ? null : describeDiffRefs(githubSource, pullInfo),
@@ -726,6 +734,7 @@ function ReviewUIInner({
     loadState,
     onRestored: handleCommentSaved,
     pathToItemId: treeSource?.pathToItemId ?? null,
+    pullHeadSha,
     pullRequest,
     viewerKey,
     viewerReadyTick,
@@ -757,6 +766,13 @@ function ReviewUIInner({
         );
       }
       const entries = [...pendingReviewComments.values()];
+      const commitChoice = chooseReviewCommit(entries, pullHeadSha);
+      if (commitChoice.staleEntries.length > 0) {
+        toastRequestError(
+          new Error(describeStaleReviewEntries(commitChoice.staleEntries)),
+          'Submitting the review failed.'
+        );
+      }
       const comments: PullReviewDraftComment[] = [];
       for (const entry of entries) {
         const anchor = createCommentAnchor(entry.path, entry.range);
@@ -764,9 +780,15 @@ function ReviewUIInner({
           comments.push({ ...anchor, body: entry.message });
         }
       }
-      await submitPullReview(pullRequest, token, event, body, comments).catch(
-        (error: unknown) =>
-          toastRequestError(error, 'Submitting the review failed.')
+      await submitPullReview(
+        pullRequest,
+        token,
+        event,
+        body,
+        comments,
+        commitChoice.commitId
+      ).catch((error: unknown) =>
+        toastRequestError(error, 'Submitting the review failed.')
       );
       // Drop the local pending cards and their sidebar entries; the refetch
       // below re-injects the submitted comments as real GitHub threads and
@@ -816,6 +838,7 @@ function ReviewUIInner({
       clearPendingReviewComments,
       handleCommentDeleted,
       pendingReviewComments,
+      pullHeadSha,
       pullRequest,
       treeSource,
     ]
@@ -998,6 +1021,7 @@ function ReviewUIInner({
               initialItems={initialItems}
               loadDiffFiles={loadDiffFiles}
               pullRequest={pullRequest}
+              pullHeadSha={pullHeadSha}
               sourcePath={domain == null ? path : undefined}
               editSession={editSession}
               getGitHubToken={getGitHubToken}

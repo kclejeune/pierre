@@ -71,7 +71,8 @@ export function encodePath(path: string): string {
 const FULL_COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
 // Whether a ref is already a full commit sha, so callers can distinguish
-// immutable content from a branch or tag that may move.
-export function isFullCommitSha(ref: string): boolean {
-  return FULL_COMMIT_SHA_PATTERN.test(ref);
+// immutable content from a branch or tag that may move. Accepts untyped input
+// so request payloads and stored JSON can be validated directly.
+export function isFullCommitSha(ref: unknown): ref is string {
+  return typeof ref === 'string' && FULL_COMMIT_SHA_PATTERN.test(ref);
 }

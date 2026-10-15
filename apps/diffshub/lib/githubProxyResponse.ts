@@ -2,6 +2,7 @@ import type { GitHubEnvironment } from './githubEnvironment';
 import { createJSONResponse } from './jsonResponse';
 import { getCurrentRouteLabel } from './requestLog';
 import { logUpstreamFailure } from './serverLog';
+import { asRecord } from './untypedJson';
 
 // Shared failure responses for API routes that proxy the GitHub API, so every
 // route surfaces the same actionable error messages to the browser.
@@ -20,20 +21,18 @@ const UNKNOWN_ROUTE = 'unknown';
 export async function createGitHubFailureResponse(
   response: Response
 ): Promise<Response> {
+  let detail = '';
+  try {
+    detail = describeGitHubFailureBody(await response.json());
+  } catch {
+    // Non-JSON failure body; the status alone still tells the story.
+  }
   logUpstreamFailure({
+    error: detail === '' ? undefined : detail,
     response,
     route: getCurrentRouteLabel(UNKNOWN_ROUTE),
     upstreamURL: response.url,
   });
-  let detail = '';
-  try {
-    const payload = (await response.json()) as { message?: unknown };
-    if (typeof payload.message === 'string') {
-      detail = payload.message;
-    }
-  } catch {
-    // Non-JSON failure body; the status alone still tells the story.
-  }
   return createJSONResponse(
     {
       error:
@@ -43,6 +42,46 @@ export async function createGitHubFailureResponse(
     },
     { status: response.status >= 500 ? 502 : response.status }
   );
+}
+
+// Flattens a GitHub error body into one line: the top-level `message` plus
+// the `errors[]` entries that say which field failed and why. A 422's message
+// alone is usually just "Validation Failed"; the actionable part (for example
+// "pull_request_review_thread.line must be part of the diff") lives in
+// `errors`, which GitHub sends either as strings or as
+// {resource, field, code, message} objects.
+export function describeGitHubFailureBody(payload: unknown): string {
+  const record = asRecord(payload);
+  if (record == null) {
+    return '';
+  }
+  const message = typeof record.message === 'string' ? record.message : '';
+  const details = Array.isArray(record.errors)
+    ? record.errors
+        .map(describeGitHubErrorEntry)
+        .filter((entry) => entry !== '')
+    : [];
+  if (details.length === 0) {
+    return message;
+  }
+  const joined = details.join('; ');
+  return message === '' ? joined : `${message} (${joined})`;
+}
+
+function describeGitHubErrorEntry(entry: unknown): string {
+  if (typeof entry === 'string') {
+    return entry;
+  }
+  const record = asRecord(entry);
+  if (record == null) {
+    return '';
+  }
+  if (typeof record.message === 'string' && record.message !== '') {
+    return record.message;
+  }
+  return [record.resource, record.field, record.code]
+    .filter((part): part is string => typeof part === 'string' && part !== '')
+    .join(' ');
 }
 
 // The upstream fetch itself threw — DNS, TLS, or network failure — so there is

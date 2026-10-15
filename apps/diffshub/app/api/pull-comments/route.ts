@@ -1,5 +1,6 @@
 import { type NextRequest } from 'next/server';
 
+import { isFullCommitSha } from '@/lib/githubDiffSource';
 import {
   createGitHubAPIURL,
   createGitHubJSONHeaders,
@@ -28,10 +29,12 @@ import type {
 //                                        review summaries), normalized
 //   POST   {owner, repo, pull, body, inReplyToId}          → reply to a thread
 //   POST   {owner, repo, pull, body, path, line, side, …}  → new comment
+//          (optional commitId: the head commit the anchor was read from)
 //   POST   {owner, repo, pull, body, discussion: true}     → new PR-level comment
-//   POST   {owner, repo, pull, review: true, event, body, comments} → submit a
-//          review: verdict (APPROVE / REQUEST_CHANGES / COMMENT), optional
-//          summary body, and the batched inline comments, in one call
+//   POST   {owner, repo, pull, review: true, event, body, comments,
+//          commitId?} → submit a review: verdict (APPROVE / REQUEST_CHANGES /
+//          COMMENT), optional summary body, and the batched inline comments,
+//          in one call
 //   PATCH  {owner, repo, commentId, body}                  → edit a comment
 //   PATCH  {owner, repo, commentId, body, discussion: true} → edit PR-level
 //   DELETE ?owner&repo&commentId                           → delete a comment
@@ -264,15 +267,13 @@ async function handlePOST(request: NextRequest) {
       );
     }
 
-    // New review comments must reference the diff revision they were written
-    // against; resolve the pull's current head commit server-side.
-    const commitId = await resolvePullHeadCommit(
-      environment,
-      token,
-      owner,
-      repo,
-      pull
-    );
+    // GitHub resolves line/side against the diff at commit_id, so anchor to
+    // the head the client's diff was rendered from when it sends one; a newer
+    // head would reject (422) any line the author has since changed.
+    const requestedCommitId = payload?.commitId;
+    const commitId = isFullCommitSha(requestedCommitId)
+      ? requestedCommitId
+      : await resolvePullHeadCommit(environment, token, owner, repo, pull);
     if (typeof commitId !== 'string') {
       return commitId;
     }
@@ -426,13 +427,10 @@ async function submitReview(
   }
 
   try {
-    const commitId = await resolvePullHeadCommit(
-      environment,
-      token,
-      owner,
-      repo,
-      pull
-    );
+    const requestedCommitId = payload.commitId;
+    const commitId = isFullCommitSha(requestedCommitId)
+      ? requestedCommitId
+      : await resolvePullHeadCommit(environment, token, owner, repo, pull);
     if (typeof commitId !== 'string') {
       return commitId;
     }

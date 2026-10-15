@@ -32,6 +32,9 @@ interface UsePendingReviewCommentsOptions {
   // lists restored batch entries exactly like freshly added ones.
   onRestored(event: DiffsHubSavedCommentEvent): void;
   pathToItemId: ReadonlyMap<string, string> | null;
+  // The pull head the current diff shows; stamped on each new entry as the
+  // commit its anchor was read from.
+  pullHeadSha: string | undefined;
   pullRequest: PullRequestRef | undefined;
   viewerKey: number;
   viewerReadyTick: number;
@@ -56,6 +59,7 @@ export function usePendingReviewComments({
   loadState,
   onRestored,
   pathToItemId,
+  pullHeadSha,
   pullRequest,
   viewerKey,
   viewerReadyTick,
@@ -153,11 +157,18 @@ export function usePendingReviewComments({
     viewerRef,
   ]);
 
+  // An edit keeps the commit the entry was first written against: its anchor
+  // still describes that revision even if the diff has since reloaded.
   const handlePendingReviewCommentUpserted = useCallback(
     (entry: PendingReviewComment) => {
-      setPendingReviewComments((prev) => new Map(prev).set(entry.key, entry));
+      setPendingReviewComments((prev) =>
+        new Map(prev).set(entry.key, {
+          ...entry,
+          commitId: prev.get(entry.key)?.commitId ?? pullHeadSha,
+        })
+      );
     },
-    []
+    [pullHeadSha]
   );
   const handlePendingReviewCommentRemoved = useCallback((key: string) => {
     setPendingReviewComments((prev) => {

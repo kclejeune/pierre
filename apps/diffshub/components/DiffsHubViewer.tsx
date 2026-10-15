@@ -36,6 +36,7 @@ import { ThreadAnnotation } from './ThreadAnnotation';
 import { useChromeThemeProps } from './useChromeThemeProps';
 import { buildAnnotationThemeStyle } from '@/lib/annotationThemeStyle';
 import { cn } from '@/lib/cn';
+import { isRangeInsideSingleHunk } from '@/lib/commentableRange';
 import { CODE_VIEW_CUSTOM_CSS, CODE_VIEW_LAYOUT } from '@/lib/constants';
 import { applyDocPreviewToItem } from '@/lib/docPreview';
 import { incrementItemVersion } from '@/lib/incrementItemVersion';
@@ -137,6 +138,9 @@ interface DiffsHubViewerProps {
   // Set when the viewer shows a pull request on the configured GitHub
   // instance; enables publishing comments/replies to the real PR.
   pullRequest?: PullRequestRef;
+  // The pull head commit the loaded diff shows; new comments anchor to it so
+  // GitHub resolves their lines against the diff the reviewer saw.
+  pullHeadSha?: string;
   // The diff-source path (e.g. owner/repo/pull/123) on the configured GitHub
   // instance; lets the rendered-document view proxy relative image
   // references. Unset for arbitrary-domain patch URLs.
@@ -206,6 +210,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
   className,
   diffStyle,
   pullRequest,
+  pullHeadSha,
   sourcePath,
   editSession,
   getGitHubToken,
@@ -291,11 +296,25 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       }
 
       const lineNumber = range.end;
-      const commentKey = `draft-${nextCommentKeyRef.current++}`;
       const { current: viewer } = viewerRef;
       if (viewer == null) {
         return;
       }
+      // Pull-request comments end up on GitHub (directly or via the batched
+      // review), which rejects anchors outside the diff's hunks.
+      const targetItem = viewer.getItem(itemId);
+      if (
+        pullRequest != null &&
+        targetItem != null &&
+        isDiffItem(targetItem) &&
+        !isRangeInsideSingleHunk(targetItem.fileDiff, range)
+      ) {
+        toast(
+          'GitHub only accepts comments on lines inside a single diff hunk, not on expanded context.'
+        );
+        return;
+      }
+      const commentKey = `draft-${nextCommentKeyRef.current++}`;
 
       const draftAnnotation: DiffLineAnnotation<CommentMetadata> = {
         side,
@@ -518,7 +537,8 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
             pullRequest,
             token,
             anchor,
-            trimmedMessage
+            trimmedMessage,
+            pullHeadSha
           ).catch((error: unknown) =>
             toastRequestError(error, 'Posting the comment failed.')
           );

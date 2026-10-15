@@ -61,6 +61,24 @@ describe('pendingReviewStorage', () => {
     expect(fake.store.size).toBe(0);
   });
 
+  test('round-trips the commit an entry was written against', () => {
+    const storageKey = getPendingReviewStorageKey(PULL);
+    const entry = createEntry({ commitId: 'a'.repeat(40) });
+    savePendingReviewComments(storageKey, [entry]);
+
+    expect(loadPendingReviewComments(storageKey)).toEqual([entry]);
+  });
+
+  test('keeps an entry whose stored commit id is malformed, minus the id', () => {
+    const storageKey = getPendingReviewStorageKey(PULL);
+    fake.store.set(
+      `diffshub.pending-review.${storageKey}`,
+      JSON.stringify([{ ...createEntry(), commitId: 'not-a-sha' }])
+    );
+
+    expect(loadPendingReviewComments(storageKey)[0]?.commitId).toBeUndefined();
+  });
+
   test('drops malformed entries instead of failing the whole batch', () => {
     const storageKey = getPendingReviewStorageKey(PULL);
     const valid = createEntry();

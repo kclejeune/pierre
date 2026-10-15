@@ -5,7 +5,10 @@ import {
   createGitHubJSONHeaders,
   getGitHubEnvironment,
 } from './githubEnvironment';
-import { parseGitHubJSONBody } from './githubProxyResponse';
+import {
+  describeGitHubFailureBody,
+  parseGitHubJSONBody,
+} from './githubProxyResponse';
 import { createJSONResponse } from './jsonResponse';
 import { type PlainFetch } from './plainFetch';
 import { getCurrentRouteLabel } from './requestLog';
@@ -128,20 +131,17 @@ async function gitDataRequest(
   return body.data;
 }
 
-// GitHub errors are normally JSON objects with a user-facing `message`. Keep
-// non-JSON bodies intact for GitHub Enterprise proxies and older endpoints.
+// GitHub errors are normally JSON objects with a user-facing `message` plus
+// `errors[]` detail (see describeGitHubFailureBody). Keep non-JSON bodies
+// intact for GitHub Enterprise proxies and older endpoints.
 export function parseGitHubErrorMessage(body: string): string {
   const trimmed = body.trim();
   if (trimmed === '') {
     return '';
   }
   try {
-    const payload: unknown = JSON.parse(trimmed);
-    const message =
-      typeof payload === 'object' && payload != null
-        ? (payload as Record<string, unknown>).message
-        : undefined;
-    return typeof message === 'string' && message !== '' ? message : trimmed;
+    const message = describeGitHubFailureBody(JSON.parse(trimmed));
+    return message !== '' ? message : trimmed;
   } catch {
     return trimmed;
   }

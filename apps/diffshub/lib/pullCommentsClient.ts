@@ -72,17 +72,21 @@ export async function postPullReviewReply(
   });
 }
 
+// `commitId` is the pull head the anchor was read from (see lib/pullHeadSha);
+// when omitted the route anchors to the pull's current head.
 export async function postPullReviewComment(
   pull: PullRequestRef,
   token: string,
   anchor: NewCommentAnchor,
-  body: string
+  body: string,
+  commitId?: string
 ): Promise<PullReviewComment> {
   return await requestComment<PullReviewComment>('/api/pull-comments', {
     method: 'POST',
     headers: buildHeaders(token),
     body: JSON.stringify({
       body,
+      commitId,
       line: anchor.line,
       owner: pull.owner,
       path: anchor.path,
@@ -138,19 +142,22 @@ export interface PullReviewDraftComment extends NewCommentAnchor {
 }
 
 // Submits a review in one call: verdict, optional summary, and the batched
-// inline comments. The route resolves the head commit server-side.
+// inline comments, all anchored to `commitId` (the route resolves the pull's
+// current head when it is omitted).
 export async function submitPullReview(
   pull: PullRequestRef,
   token: string,
   event: PullReviewEvent,
   body: string,
-  comments: readonly PullReviewDraftComment[]
+  comments: readonly PullReviewDraftComment[],
+  commitId?: string
 ): Promise<void> {
   await requestJSON('/api/pull-comments', {
     method: 'POST',
     headers: buildHeaders(token),
     body: JSON.stringify({
       body,
+      commitId,
       comments,
       event,
       owner: pull.owner,

@@ -42,6 +42,10 @@ export interface DraftCommentMetadata {
 // durable anchor and the item is re-resolved wherever one is needed.
 export interface PendingReviewComment {
   author: CommentAuthor;
+  // The pull head commit whose diff the comment was written against, used as
+  // the review's commit_id. Absent on entries stored before it was recorded,
+  // or when the diff loaded without a known head.
+  commitId?: string;
   key: string;
   message: string;
   path: string;

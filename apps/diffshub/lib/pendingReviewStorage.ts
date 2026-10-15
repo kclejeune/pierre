@@ -1,5 +1,6 @@
 import type { SelectedLineRange, SelectionSide } from '@pierre/diffs';
 
+import { isFullCommitSha } from './githubDiffSource';
 import { readStoredJSON, writeStoredJSON } from './storedJSON';
 import type { CommentAuthor, PendingReviewComment } from './types';
 
@@ -25,7 +26,15 @@ export function loadPendingReviewComments(
   if (!Array.isArray(parsed)) {
     return [];
   }
-  return parsed.filter(isPendingReviewComment);
+  // A corrupt commit id degrades to "unknown revision" rather than discarding
+  // the comment text along with it.
+  return parsed
+    .filter(isPendingReviewComment)
+    .map((entry) =>
+      entry.commitId === undefined || isFullCommitSha(entry.commitId)
+        ? entry
+        : { ...entry, commitId: undefined }
+    );
 }
 
 export function savePendingReviewComments(

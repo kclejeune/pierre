@@ -1006,11 +1006,14 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
         return null;
       }
 
+      // A line-less diff (e.g. a pure rename) has nothing to collapse unless
+      // a file-level annotation, such as the rendered document, sits above it.
       return (
         <CollapseDiffButton
           disabled={
             item.fileDiff.splitLineCount === 0 &&
-            item.fileDiff.unifiedLineCount === 0
+            item.fileDiff.unifiedLineCount === 0 &&
+            (item.annotations?.length ?? 0) === 0
           }
           collapsed={item.collapsed}
           onToggle={() => handleToggleItemCollapsed(item.id)}

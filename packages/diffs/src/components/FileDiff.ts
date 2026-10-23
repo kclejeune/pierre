@@ -969,6 +969,7 @@ export class FileDiff<LAnnotation = undefined, Caret = undefined> {
     }
     this.clearAuxiliaryNodes();
     this.annotationCache.clear();
+    this.pre?.remove();
     this.pre = undefined;
     this.codeUnified = undefined;
     this.codeDeletions = undefined;
@@ -978,11 +979,9 @@ export class FileDiff<LAnnotation = undefined, Caret = undefined> {
     this.bufferAfter?.remove();
     this.bufferAfter = undefined;
     this.appliedPreAttributes = undefined;
+    this.headerElement?.remove();
     this.headerElement = undefined;
-    this.headerPrefix = undefined;
-    this.headerFilenameSuffix = undefined;
-    this.headerMetadata = undefined;
-    this.headerCustom = undefined;
+    this.clearHeaderSlots();
     this.placeHolder?.remove();
     this.placeHolder = undefined;
     this.headerCache.lastRenderedHTML = undefined;

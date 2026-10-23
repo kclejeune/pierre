@@ -742,6 +742,7 @@ export class File<LAnnotation = undefined, Caret = undefined> {
       this.pendingData = undefined;
     }
     this.clearAuxiliaryNodes();
+    this.pre?.remove();
     this.pre = undefined;
     this.code = undefined;
     this.bufferBefore?.remove();
@@ -750,11 +751,9 @@ export class File<LAnnotation = undefined, Caret = undefined> {
     this.bufferAfter = undefined;
     this.appliedPreAttributes = undefined;
     this.lastRowCount = undefined;
+    this.headerElement?.remove();
     this.headerElement = undefined;
-    this.headerPrefix = undefined;
-    this.headerFilenameSuffix = undefined;
-    this.headerMetadata = undefined;
-    this.headerCustom = undefined;
+    this.clearHeaderSlots();
     this.lastRenderedHeaderHTML = undefined;
     if (!recycle) {
       this.cachedHeaderHTML = undefined;

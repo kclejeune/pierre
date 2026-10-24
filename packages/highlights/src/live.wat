@@ -229,7 +229,7 @@
   (global $lvStateCount (mut i32) (i32.const 0))
   (global $lvStateBytes (mut i32) (i32.const 0))
 
-  ;; FNV-1a 64 over 8-byte lanes with a masked tail.
+  ;; FNV-1a 64 over 8-byte lanes with a masked tail, then a 64-bit finalizer.
   ;; Tail loads require the heap and transient window's reserved slack.
   (func $lvHash (param $ptr i32) (param $len i32) (result i64)
     (local $h i64)
@@ -258,7 +258,15 @@
                 (i64.shr_u (i64.const -1)
                   (i64.extend_i32_u (i32.shl (i32.sub (i32.const 8) (local.get $k)) (i32.const 3))))))
             (i64.const 0x100000001b3)))))
-    (local.get $h))
+    ;; Finalize (murmur3 fmix64). The lane multiplies carry bits only upward,
+    ;; so without this the bucket index (the low bits) would depend only on
+    ;; the low bits of each 8-byte lane, and states that differ only in higher
+    ;; bytes would share one bucket chain (quadratic re-tokenization).
+    (local.set $h
+      (i64.mul (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 33))) (i64.const 0xff51afd7ed558ccd)))
+    (local.set $h
+      (i64.mul (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 33))) (i64.const 0xc4ceb9fe1a85ec53)))
+    (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 33))))
 
   (func $lvBytesEq (param $a i32) (param $b i32) (param $len i32) (result i32)
     (local $different v128)

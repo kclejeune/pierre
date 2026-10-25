@@ -1741,12 +1741,14 @@ export function wasmToText(wasmBytes: Uint8Array): string {
 }
 
 /**
- * Optimize with Binaryen at `-O3 --shrink-level=1` and emit Stack IR.
+ * Optimize with Binaryen at `-O3 --shrink-level=0`, plus wider inlining, and emit Stack IR.
  * Three passes reduce the module size. A fourth gives no further reduction.
  */
 export function optimizeWasm(wasmBytes: Uint8Array): Uint8Array {
   binaryen.setOptimizeLevel(3);
-  binaryen.setShrinkLevel(1);
+  binaryen.setShrinkLevel(0);
+  binaryen.setFlexibleInlineMaxSize(60);
+  binaryen.setOneCallerInlineMaxSize(200);
   binaryen.setGenerateStackIR(true);
   binaryen.setOptimizeStackIR(true);
   for (let pass = 0; pass < 3; pass++) {

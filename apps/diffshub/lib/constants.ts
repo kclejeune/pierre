@@ -225,6 +225,9 @@ export const FILE_TREE_DENSITY_STYLES = {
 // Options shared across all mounts of this tree. Lives at module scope so the
 // reference stays stable and useFileTree() never churns its initial snapshot.
 export const BASE_FILE_TREE_OPTIONS = {
+  // The viewer collapses files the tree search hides (see
+  // DiffsHubFileTree's onSearchMatchesChange), which assumes this mode.
+  fileTreeSearchMode: 'hide-non-matches',
   flattenEmptyDirectories: true,
   id: 'gh-code-view-tree',
   initialExpansion: 'open',

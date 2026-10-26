@@ -6,7 +6,7 @@ import type {
   FileTree as FileTreeModel,
   FileTreeOptions,
 } from '@pierre/trees';
-import { useFileTree } from '@pierre/trees/react';
+import { useFileTree, useFileTreeSelector } from '@pierre/trees/react';
 import { memo, useEffect, useRef, useState } from 'react';
 
 import type { FileTreePublicId } from '../../../packages/trees/dist/model/publicTypes';
@@ -26,17 +26,44 @@ type FileTreeSortComparator = Exclude<
 // follows the same patch path sequence that drives the code view.
 const PRESERVE_INPUT_ORDER_SORT: FileTreeSortComparator = () => 0;
 
+function selectSearchMatchingPaths(model: FileTreeModel): readonly string[] {
+  return model.getSearchMatchingPaths();
+}
+
+function areSetsEqual(
+  previous: ReadonlySet<string> | null,
+  next: ReadonlySet<string> | null
+): boolean {
+  if (previous == null || next == null) {
+    return previous === next;
+  }
+  if (previous.size !== next.size) {
+    return false;
+  }
+  for (const value of previous) {
+    if (!next.has(value)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 interface DiffsHubFileTreeProps {
   // Callback invoked with the underlying tree model once it's mounted, and
   // again with `null` on unmount. Lets parents drive imperative APIs like
   // search open/close without owning the model creation.
   onModelReady(model: FileTreeModel | null): void;
+  // Called with the file paths the tree's search currently narrows to, or
+  // `null` when search isn't filtering (closed, empty, or no matches — the
+  // tree shows every row in those cases).
+  onSearchMatchesChange(paths: ReadonlySet<string> | null): void;
   onSelectItem(itemId: string): void;
   source: DiffsHubFileTreeSource;
 }
 
 export const DiffsHubFileTree = memo(function DiffsHubFileTree({
   onModelReady,
+  onSearchMatchesChange,
   onSelectItem,
   source,
 }: DiffsHubFileTreeProps) {
@@ -116,6 +143,27 @@ export const DiffsHubFileTree = memo(function DiffsHubFileTree({
       model.setGitStatus(source.gitStatus);
     }
   }, [model, source]);
+
+  // Matching directories end in `/`; only files map to viewer items. A file
+  // under a matching directory matches too, since its path contains the
+  // directory's. The controller rebuilds the match array on every search
+  // recompute, so unchanged file sets are skipped before notifying.
+  const matchingPaths = useFileTreeSelector(model, selectSearchMatchingPaths);
+  const emittedMatchesRef = useRef<ReadonlySet<string> | null>(null);
+  useEffect(() => {
+    const files = new Set<string>();
+    for (const path of matchingPaths) {
+      if (!path.endsWith('/')) {
+        files.add(path);
+      }
+    }
+    const next = files.size > 0 ? files : null;
+    if (areSetsEqual(emittedMatchesRef.current, next)) {
+      return;
+    }
+    emittedMatchesRef.current = next;
+    onSearchMatchesChange(next);
+  }, [matchingPaths, onSearchMatchesChange]);
 
   useEffect(() => {
     onModelReady(model);

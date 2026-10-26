@@ -292,6 +292,7 @@ function ReviewUIInner({
   const {
     applyCollapseModeToLoaded,
     applyCollapsePatternsToLoaded,
+    applyHiddenItemsToLoaded,
     applyMarkdownViewToLoaded,
     commentFileByItemId,
     commentSections,
@@ -993,6 +994,7 @@ function ReviewUIInner({
               discussion={discussion}
               discussionActions={discussionActions}
               mobileOverlayOpen={fileTreeOverlayOpen}
+              onHiddenItemsChange={applyHiddenItemsToLoaded}
               onMobileClose={handleCloseFileTreeOverlay}
               onSelectComment={handleSelectComment}
               renderSearchPanel={renderSearchPanel}

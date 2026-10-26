@@ -50,6 +50,7 @@ import { cn } from '@/lib/cn';
 import { MOBILE_MEDIA_QUERY } from '@/lib/constants';
 import { filterDiffsHubFileTreeSource } from '@/lib/filterDiffsHubFileTreeSource';
 import { getDiffsHubFileTreeAvailableStatuses } from '@/lib/getDiffsHubFileTreeAvailableStatuses';
+import { getHiddenTreeItemIds } from '@/lib/getHiddenTreeItemIds';
 import { isMacPlatform } from '@/lib/platform';
 import { diffshubChromeMapping } from '@/lib/theme/diffshubChromeMapping';
 import { getDropdownThemeStyle } from '@/lib/theme/dropdownChromeStyle';
@@ -63,6 +64,8 @@ import type {
 } from '@/lib/types';
 
 type SidebarTab = 'files' | 'search' | 'comments';
+
+const HIDDEN_ITEMS_SYNC_DELAY_MS = 150;
 type SidebarStatusPanel = 'diffStats' | 'systemMonitor';
 
 interface DiffsHubSidebarProps {
@@ -73,6 +76,10 @@ interface DiffsHubSidebarProps {
   discussion?: readonly PullDiscussionComment[];
   discussionActions?: DiscussionActions;
   mobileOverlayOpen?: boolean;
+  // Called with the ids of files the tree is filtering out (Git-status filter
+  // and tree search), so the viewer can collapse them. Empty when nothing is
+  // filtered.
+  onHiddenItemsChange?(hiddenItemIds: ReadonlySet<string>): void;
   onMobileClose(): void;
   onSelectComment(comment: DiffsHubSavedCommentEntry): void;
   onSelectItem(itemId: string): void;
@@ -96,6 +103,7 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
   discussion = [],
   discussionActions,
   mobileOverlayOpen = false,
+  onHiddenItemsChange,
   onMobileClose,
   onSelectComment,
   onSelectItem,
@@ -174,6 +182,30 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
     () => filterDiffsHubFileTreeSource(source, selectedStatuses),
     [source, selectedStatuses]
   );
+  const [searchMatchPaths, setSearchMatchPaths] =
+    useState<ReadonlySet<string> | null>(null);
+  const hiddenItemIds = useMemo(
+    () =>
+      getHiddenTreeItemIds(
+        source,
+        filteredSource,
+        selectedStatuses.size > 0,
+        searchMatchPaths
+      ),
+    [source, filteredSource, selectedStatuses, searchMatchPaths]
+  );
+  // Collapsing thousands of viewer items is far slower than re-filtering the
+  // tree, so the viewer catches up once typing in the tree search pauses.
+  useEffect(() => {
+    if (onHiddenItemsChange == null) {
+      return undefined;
+    }
+    const timeout = window.setTimeout(
+      () => onHiddenItemsChange(hiddenItemIds),
+      HIDDEN_ITEMS_SYNC_DELAY_MS
+    );
+    return () => window.clearTimeout(timeout);
+  }, [hiddenItemIds, onHiddenItemsChange]);
   const handleModelReady = useCallback((model: FileTree | null) => {
     setFileTreeModel(model);
   }, []);
@@ -351,6 +383,7 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
             <DiffsHubFileTree
               source={filteredSource}
               onModelReady={handleModelReady}
+              onSearchMatchesChange={setSearchMatchPaths}
               onSelectItem={onSelectItem}
             />
           </div>

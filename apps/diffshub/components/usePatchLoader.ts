@@ -30,6 +30,7 @@ import {
   takePendingDiffsHubItems,
 } from '@/lib/diffsHubDataAccumulator';
 import { applyDocPreviewToItem } from '@/lib/docPreview';
+import { NO_HIDDEN_ITEM_IDS } from '@/lib/getHiddenTreeItemIds';
 import { getPatchTreePathPrefix } from '@/lib/gitPatchMetadata';
 import { incrementItemVersion } from '@/lib/incrementItemVersion';
 import { getOpenDocDiff } from '@/lib/isDocAnnotation';
@@ -100,6 +101,7 @@ interface UsePatchLoaderOptions {
 interface UsePatchLoaderResult {
   applyCollapseModeToLoaded(mode: 'expanded' | 'collapsed'): void;
   applyCollapsePatternsToLoaded(patterns: readonly RegExp[]): void;
+  applyHiddenItemsToLoaded(hiddenItemIds: ReadonlySet<string>): void;
   applyMarkdownViewToLoaded(view: 'rendered' | 'raw'): void;
   commentFileByItemId: DiffsHubCommentFileByItemId | null;
   commentSections: DiffsHubSavedCommentItem[];
@@ -175,6 +177,13 @@ export function usePatchLoader({
   // when a load starts and kept authoritative in memory afterwards.
   const reviewedFilesRef = useRef<Map<string, string>>(new Map());
   const reviewedSourceKeyRef = useRef('');
+  // Ids the sidebar currently filters out of the file tree (Git-status filter
+  // and tree search). Filtered-out files are collapsed in the viewer so it
+  // follows the tree. `filterCollapsedIdsRef` holds only the files the filter
+  // itself collapsed, so clearing the filter re-expands those without
+  // touching files collapsed by hand, by pattern, or by a reviewed mark.
+  const hiddenItemIdsRef = useRef<ReadonlySet<string>>(NO_HIDDEN_ITEM_IDS);
+  const filterCollapsedIdsRef = useRef<Set<string>>(new Set());
 
   // Pre-mutates fresh items so they arrive in the viewer matching the current
   // collapse mode, then records their ids for later bulk updates. Diff items
@@ -216,6 +225,10 @@ export function usePatchLoader({
         matchesCollapsePattern(item.fileDiff.name, patterns)
       ) {
         item.collapsed = true;
+      }
+      if (item.collapsed !== true && hiddenItemIdsRef.current.has(item.id)) {
+        item.collapsed = true;
+        filterCollapsedIdsRef.current.add(item.id);
       }
       if (markdownViewRef.current === 'rendered') {
         applyDocPreviewToItem(item, true);
@@ -307,6 +320,65 @@ export function usePatchLoader({
         item.collapsed = true;
         return true;
       });
+    }
+  );
+
+  // Syncs viewer collapse state with the sidebar's file filter. Only files
+  // whose hidden state changed since the last call are touched, so a file the
+  // user expands while filtered out stays expanded across later tree
+  // publishes; it collapses again only after leaving and re-entering the
+  // hidden set. Once the viewer is mounted, only that symmetric difference is
+  // visited instead of every loaded item.
+  const applyHiddenItemsToLoaded = useStableCallback(
+    (hiddenItemIds: ReadonlySet<string>) => {
+      const previousHiddenItemIds = hiddenItemIdsRef.current;
+      if (previousHiddenItemIds === hiddenItemIds) {
+        return;
+      }
+      hiddenItemIdsRef.current = hiddenItemIds;
+      const filterCollapsedIds = filterCollapsedIdsRef.current;
+      const mutate = (item: CodeViewDiffItem<CommentMetadata>): boolean => {
+        const hidden = hiddenItemIds.has(item.id);
+        if (hidden === previousHiddenItemIds.has(item.id)) {
+          return false;
+        }
+        if (hidden) {
+          if (item.collapsed === true) {
+            return false;
+          }
+          item.collapsed = true;
+          filterCollapsedIds.add(item.id);
+          return true;
+        }
+        if (!filterCollapsedIds.delete(item.id) || item.collapsed !== true) {
+          return false;
+        }
+        item.collapsed = false;
+        return true;
+      };
+      const viewer = viewerRef.current;
+      if (viewer == null) {
+        applyToLoadedItems(mutate);
+        return;
+      }
+      const visit = (itemId: string) => {
+        const item = viewer.getItem(itemId);
+        if (item == null || item.type !== 'diff' || !mutate(item)) {
+          return;
+        }
+        incrementItemVersion(item);
+        viewer.updateItem(item);
+      };
+      for (const itemId of hiddenItemIds) {
+        if (!previousHiddenItemIds.has(itemId)) {
+          visit(itemId);
+        }
+      }
+      for (const itemId of previousHiddenItemIds) {
+        if (!hiddenItemIds.has(itemId)) {
+          visit(itemId);
+        }
+      }
     }
   );
 
@@ -539,6 +611,8 @@ export function usePatchLoader({
     viewerKeyRef.current = requestId;
     appliedLineHashKeyRef.current = null;
     loadedItemIdsRef.current = new Set();
+    hiddenItemIdsRef.current = NO_HIDDEN_ITEM_IDS;
+    filterCollapsedIdsRef.current = new Set();
     reviewedSourceKeyRef.current = patchRequestKey;
     reviewedFilesRef.current = loadReviewedFiles(patchRequestKey);
     setViewerKey(requestId);
@@ -745,6 +819,9 @@ export function usePatchLoader({
             if (loadedItemIdsRef.current.delete(itemIdRename.oldId)) {
               loadedItemIdsRef.current.add(itemIdRename.newId);
             }
+            if (filterCollapsedIdsRef.current.delete(itemIdRename.oldId)) {
+              filterCollapsedIdsRef.current.add(itemIdRename.newId);
+            }
           }
           pendingPublishFileCount++;
           pendingTreePublishFileCount++;
@@ -821,6 +898,7 @@ export function usePatchLoader({
   return {
     applyCollapseModeToLoaded,
     applyCollapsePatternsToLoaded,
+    applyHiddenItemsToLoaded,
     applyMarkdownViewToLoaded,
     commentFileByItemId,
     commentSections,

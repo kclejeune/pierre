@@ -8,6 +8,27 @@ export const CODE_VIEW_LAYOUT: CodeViewLayout = {
   paddingBottom: 0,
 };
 
+// Find-in-diff match colors, painted through the CSS Custom Highlight API by
+// DiffSearchHighlighter. The highlight registry is document-wide, but
+// ::highlight() rules only reach elements in the stylesheet's own tree: these
+// rules go into the viewer's shadow stylesheet (CODE_VIEW_CUSTOM_CSS) for
+// source rows, and DiffSearchHighlighter also adopts them onto the document
+// for rendered markdown documents, which live in the light DOM. Each source
+// (find bar, search panel, jumped-to symbol) paints its own layer.
+export const SEARCH_HIGHLIGHT_CSS = `
+::highlight(diffshub-find-match),
+::highlight(diffshub-panel-match) {
+  background-color: light-dark(rgb(250 204 21 / 0.4), rgb(250 204 21 / 0.28));
+}
+
+::highlight(diffshub-find-active),
+::highlight(diffshub-panel-active),
+::highlight(diffshub-symbol-active),
+::highlight(diffshub-symbol-match) {
+  background-color: light-dark(rgb(249 115 22 / 0.55), rgb(249 115 22 / 0.5));
+}
+`;
+
 export const CODE_VIEW_CUSTOM_CSS = `
 [data-diffs-header] {
   container-type: scroll-state;
@@ -58,22 +79,7 @@ export const CODE_VIEW_CUSTOM_CSS = `
   --diffs-column-content-width: 100% !important;
 }
 
-/* Find-in-diff matches, painted through the CSS Custom Highlight API by
-   DiffSearchHighlighter. The highlight registry is document-wide, but
-   ::highlight() rules only reach elements in the stylesheet's own tree, so
-   they have to live here in the shadow stylesheet. Each source (find bar,
-   search panel, jumped-to symbol) paints its own layer. */
-::highlight(diffshub-find-match),
-::highlight(diffshub-panel-match) {
-  background-color: light-dark(rgb(250 204 21 / 0.4), rgb(250 204 21 / 0.28));
-}
-
-::highlight(diffshub-find-active),
-::highlight(diffshub-panel-active),
-::highlight(diffshub-symbol-active),
-::highlight(diffshub-symbol-match) {
-  background-color: light-dark(rgb(249 115 22 / 0.55), rgb(249 115 22 / 0.5));
-}
+${SEARCH_HIGHLIGHT_CSS}
 
 /* Cmd/Ctrl-hovering an identifier marks it as a go-to-definition link. */
 [data-diffshub-symbol-link] {

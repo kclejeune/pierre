@@ -32,6 +32,7 @@ import {
 import { applyDocPreviewToItem } from '@/lib/docPreview';
 import { getPatchTreePathPrefix } from '@/lib/gitPatchMetadata';
 import { incrementItemVersion } from '@/lib/incrementItemVersion';
+import { getOpenDocDiff } from '@/lib/isDocAnnotation';
 import {
   type DiffsHubLineHashTarget,
   formatDiffsHubItemHash,
@@ -39,11 +40,16 @@ import {
   parseDiffsHubLineHash,
 } from '@/lib/lineHash';
 import { fetchReportingRejection } from '@/lib/rejectedCredential';
+import { docLineTarget } from '@/lib/renderedDocDom';
 import {
   getFileDiffFingerprint,
   loadReviewedFiles,
   saveReviewedFiles,
 } from '@/lib/reviewedFiles';
+import {
+  cancelDocTargetScroll,
+  scrollDocTargetIntoView,
+} from '@/lib/scrollDocTargetIntoView';
 import {
   getStreamedPatchMetadata,
   streamGitPatchFiles,
@@ -383,8 +389,11 @@ export function usePatchLoader({
       return;
     }
 
-    if (applyDiffsHubLineHashTarget(viewer, target)) {
+    const applied = applyDiffsHubLineHashTarget(viewer, target);
+    if (applied !== 'unapplied') {
       appliedLineHashKeyRef.current = applyKey;
+    }
+    if (applied === 'applied') {
       settleLineHashScroll(target);
     }
   });
@@ -401,6 +410,7 @@ export function usePatchLoader({
       behavior: 'instant' | 'smooth' = 'instant'
     ) => {
       cancelLineHashSettleRef.current?.();
+      cancelDocTargetScroll();
       let ticks = 0;
       let timer: number | undefined;
       const cleanup = () => {
@@ -480,8 +490,10 @@ export function usePatchLoader({
   // marks it as already applied so the restore path doesn't scroll-jump the
   // view the user is currently looking at.
   const recordLineHash = useStableCallback((hash: string | null) => {
-    // A new navigation supersedes any still-settling restore scroll.
+    // A new navigation supersedes any still-settling restore or document
+    // scroll.
     cancelLineHashSettleRef.current?.();
+    cancelDocTargetScroll();
     appliedLineHashKeyRef.current =
       hash == null ? null : getLineHashApplyKey(viewerKeyRef.current, hash);
     replaceLocationHash(hash);
@@ -834,29 +846,35 @@ function getLineHashApplyKey(viewerKey: number, hash: string): string {
   return `${viewerKey}:${hash}`;
 }
 
+// How applying a hash target went: not yet possible (the item is not loaded),
+// applied and in need of the settle loop, or handed to the doc-target scroll
+// loop, which settles on its own while a rendered document is open.
+type LineHashApplyResult = 'unapplied' | 'applied' | 'doc-scroll';
+
 function applyDiffsHubLineHashTarget(
   viewer: CodeViewHandle<CommentMetadata>,
   target: DiffsHubLineHashTarget
-): boolean {
+): LineHashApplyResult {
   const item = viewer.getItem(target.itemId);
   if (item == null) {
-    return false;
+    return 'unapplied';
   }
 
   const selectedLines = viewer.getSelectedLines();
-  if (
+  const alreadySelected =
     target.range != null &&
     selectedLines?.id === target.itemId &&
-    areSelectionsEqual(selectedLines.range, target.range)
-  ) {
-    return true;
+    areSelectionsEqual(selectedLines.range, target.range);
+  const docDiff = getOpenDocDiff(item);
+  if (alreadySelected && docDiff == null) {
+    return 'applied';
   }
 
   if (item.collapsed === true) {
     item.collapsed = false;
     incrementItemVersion(item);
     if (!viewer.updateItem(item)) {
-      return false;
+      return 'unapplied';
     }
     viewer.getInstance()?.render(true);
   }
@@ -868,18 +886,39 @@ function applyDiffsHubLineHashTarget(
       align: 'start',
       behavior: 'instant',
     });
-    return true;
+    return 'applied';
   }
 
-  viewer.setSelectedLines({ id: target.itemId, range: target.range });
-  viewer.scrollTo({
-    type: 'range',
-    id: target.itemId,
-    range: target.range,
-    align: 'center',
-    behavior: 'instant',
-  });
-  return true;
+  if (!alreadySelected) {
+    viewer.setSelectedLines({ id: target.itemId, range: target.range });
+  }
+  const { range } = target;
+  const scrollToRange = () =>
+    viewer.scrollTo({
+      type: 'range',
+      id: target.itemId,
+      range,
+      align: 'center',
+      behavior: 'instant',
+    });
+  // While the item's rendered markdown document is open the range's rows are
+  // hidden, so center the document block holding the range's end instead,
+  // falling back to the range when the document failed to render.
+  if (docDiff != null) {
+    scrollDocTargetIntoView(
+      viewer,
+      target.itemId,
+      docLineTarget(docDiff, {
+        itemId: target.itemId,
+        side: range.endSide ?? range.side ?? 'additions',
+        lineNumber: range.end,
+      }),
+      scrollToRange
+    );
+    return 'doc-scroll';
+  }
+  scrollToRange();
+  return 'applied';
 }
 
 function applyDiffsHubItemIdRename(

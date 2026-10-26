@@ -41,7 +41,11 @@ import { CODE_VIEW_CUSTOM_CSS, CODE_VIEW_LAYOUT } from '@/lib/constants';
 import { applyDocPreviewToItem } from '@/lib/docPreview';
 import { incrementItemVersion } from '@/lib/incrementItemVersion';
 import { isDiffItem } from '@/lib/isDiffItem';
-import { getDocAnnotationSide, isDocAnnotation } from '@/lib/isDocAnnotation';
+import {
+  getDocAnnotationSide,
+  hasDocAnnotation,
+  isDocAnnotation,
+} from '@/lib/isDocAnnotation';
 import { isDraftAnnotation } from '@/lib/isDraftAnnotation';
 import { isDraftMetadata } from '@/lib/isDraftMetadata';
 import { isMarkdownFileName } from '@/lib/isMarkdownFileName';
@@ -776,7 +780,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       return;
     }
     updateViewerDiffItem(viewer, itemId, (item) => {
-      const shown = item.annotations?.some(isDocAnnotation) === true;
+      const shown = hasDocAnnotation(item.annotations);
       return applyDocPreviewToItem(item, !shown);
     });
   });
@@ -991,7 +995,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       // instead of at their diff lines.
       if (
         isDocRailComment(annotation, item) &&
-        item.annotations?.some(isDocAnnotation) === true
+        hasDocAnnotation(item.annotations)
       ) {
         return null;
       }
@@ -1028,7 +1032,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
         return null;
       }
 
-      const docShown = item.annotations?.some(isDocAnnotation) === true;
+      const docShown = hasDocAnnotation(item.annotations);
       const reviewed = isFileReviewed(item);
       const editable = editSession.canEdit(item);
       const editing = editable && editSession.isEditing(item.id);

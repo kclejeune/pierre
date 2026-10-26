@@ -60,6 +60,7 @@ import { createGitHubDiffFileLoader } from '@/lib/githubDiffFileLoader';
 import { parseGitHubDiffSource } from '@/lib/githubDiffSource';
 import { incrementItemVersion } from '@/lib/incrementItemVersion';
 import { isDiffItem } from '@/lib/isDiffItem';
+import { getOpenDocDiff } from '@/lib/isDocAnnotation';
 import {
   createCommentAnchor,
   deletePullDiscussionComment,
@@ -76,11 +77,13 @@ import {
 } from '@/lib/pullConflictsClient';
 import { recordRecentDiff } from '@/lib/recentDiffs';
 import { removeSavedCommentSidebarEntry } from '@/lib/removeSavedCommentSidebarEntry';
+import { docCommentTarget } from '@/lib/renderedDocDom';
 import { buildDiffHeadTreePath } from '@/lib/repoBrowser';
 import {
   chooseReviewCommit,
   describeStaleReviewEntries,
 } from '@/lib/reviewCommit';
+import { scrollDocTargetIntoView } from '@/lib/scrollDocTargetIntoView';
 import type { DarkThemeName, LightThemeName } from '@/lib/themeNames';
 import { toastRequestError } from '@/lib/toastRequestError';
 import type {
@@ -864,21 +867,14 @@ function ReviewUIInner({
       recordViewTarget(comment.itemId, comment.range);
       // When the item's rendered-document view is open, the diff lines the
       // comment anchors to are hidden, so a line-target scroll would land in
-      // collapsed space. Scroll to the item instead and then center the
-      // comment's card in the document's comment rail.
-      const item = viewer.getItem(comment.itemId);
-      const docOpen =
-        item?.annotations?.some(
-          (annotation) => annotation.metadata?.kind === 'doc'
-        ) ?? false;
-      if (docOpen) {
-        viewer.scrollTo({
-          type: 'item',
-          id: comment.itemId,
-          align: 'start',
-          behavior: 'smooth-auto',
-        });
-        scrollDocCommentIntoView(comment.key);
+      // collapsed space. Center the comment's card in the document's comment
+      // rail instead, bringing the item into view first if it is not mounted.
+      if (getOpenDocDiff(viewer.getItem(comment.itemId)) != null) {
+        scrollDocTargetIntoView(
+          viewer,
+          comment.itemId,
+          docCommentTarget(comment.key)
+        );
         return;
       }
       viewer.scrollTo({
@@ -1079,72 +1075,6 @@ function ReviewUIInner({
         )}
     </>
   );
-}
-
-const DOC_COMMENT_SCROLL_CANCEL_EVENTS = [
-  'wheel',
-  'touchstart',
-  'keydown',
-] as const;
-
-// Cancels the previous card-scroll loop whenever a new selection starts.
-let cancelActiveDocCommentScroll: (() => void) | null = null;
-
-// Centers a doc-rail comment card (stamped with data-diffshub-doc-comment by
-// MarkdownDocAnnotation) in the viewport. The card only exists once the
-// virtualizer has mounted the item the preceding scrollTo targets AND the
-// rendered document has hydrated — a network fetch on partial diffs — so the
-// loop polls against a generous deadline rather than a fixed frame count, and
-// keeps re-centering until layout stops shifting (mounting neighbors
-// re-measure underneath a one-shot scrollIntoView). Any manual scroll input
-// cancels it so the page never fights the user.
-function scrollDocCommentIntoView(key: string): void {
-  cancelActiveDocCommentScroll?.();
-  const selector = `[data-diffshub-doc-comment="${CSS.escape(key)}"]`;
-  const deadline = Date.now() + 8000;
-  let stableChecks = 0;
-  let timer: number | undefined;
-  const cleanup = () => {
-    if (timer != null) {
-      window.clearTimeout(timer);
-    }
-    for (const type of DOC_COMMENT_SCROLL_CANCEL_EVENTS) {
-      window.removeEventListener(type, cleanup, true);
-    }
-    if (cancelActiveDocCommentScroll === cleanup) {
-      cancelActiveDocCommentScroll = null;
-    }
-  };
-  cancelActiveDocCommentScroll = cleanup;
-  for (const type of DOC_COMMENT_SCROLL_CANCEL_EVENTS) {
-    window.addEventListener(type, cleanup, { capture: true, passive: true });
-  }
-  const tick = () => {
-    if (Date.now() > deadline) {
-      cleanup();
-      return;
-    }
-    const element = document.querySelector(selector);
-    if (element != null) {
-      const rect = element.getBoundingClientRect();
-      const visible =
-        rect.top < window.innerHeight * 0.75 &&
-        rect.bottom > window.innerHeight * 0.25;
-      if (visible) {
-        // Stop once the card has stayed put for a few checks — layout has
-        // settled and lingering longer would only risk fighting the user.
-        if (++stableChecks >= 5) {
-          cleanup();
-          return;
-        }
-      } else {
-        stableChecks = 0;
-        element.scrollIntoView({ behavior: 'auto', block: 'center' });
-      }
-    }
-    timer = window.setTimeout(tick, 120);
-  };
-  tick();
 }
 
 interface ReviewGridProps {

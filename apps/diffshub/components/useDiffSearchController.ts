@@ -18,6 +18,12 @@ import {
 
 import type { DiffLocation, DiffSearchSource } from '@/lib/diffSearch';
 import { incrementItemVersion } from '@/lib/incrementItemVersion';
+import { getOpenDocDiff } from '@/lib/isDocAnnotation';
+import { DOC_RENDERED_EVENT, docLineTarget } from '@/lib/renderedDocDom';
+import {
+  cancelDocTargetScroll,
+  scrollDocTargetIntoView,
+} from '@/lib/scrollDocTargetIntoView';
 import { DiffSearchHighlighter } from '@/lib/searchHighlights';
 import type { CommentMetadata } from '@/lib/types';
 
@@ -116,6 +122,14 @@ export function useDiffSearchController({
       highlighter.schedule();
     }
   });
+
+  // A rendered markdown document mounts after its item does; repaint so its
+  // text picks up any active matches.
+  useEffect(() => {
+    window.addEventListener(DOC_RENDERED_EVENT, scheduleHighlights);
+    return () =>
+      window.removeEventListener(DOC_RENDERED_EVENT, scheduleHighlights);
+  }, [scheduleHighlights]);
 
   useEffect(
     () => () => {
@@ -281,19 +295,14 @@ export function useDiffSearchController({
   // need the viewer to hydrate the file and re-layout before the row exists,
   // so the scroll is re-issued on a short timer until the line is renderable
   // and has stopped moving. Wheel or touch input cancels it.
-  const navigateTo = useStableCallback((location: DiffLocation) => {
+  const scrollToSourceLine = useStableCallback((location: DiffLocation) => {
     cancelNavigateRef.current?.();
     const viewer = viewerRef.current;
     const item = viewer?.getItem(location.itemId);
     if (viewer == null || item == null) {
       return;
     }
-    if (item.collapsed === true) {
-      item.collapsed = false;
-      incrementItemVersion(item);
-      viewer.updateItem(item);
-      viewer.getInstance()?.render(true);
-    }
+    expandIfCollapsed(viewer, item);
     const scroll = (behavior: 'instant' | 'smooth-auto') => {
       viewer.scrollTo({
         type: 'line',
@@ -351,6 +360,30 @@ export function useDiffSearchController({
     tick();
   });
 
+  // Navigates to a location. While a markdown file's rendered document is
+  // open, its source rows are hidden, so a line scroll would land in collapsed
+  // space (snapping toward the end of the diff); center the document block the
+  // location falls in instead, falling back to the line scroll when the
+  // document failed to render and the source diff is still showing.
+  const navigateTo = useStableCallback((location: DiffLocation) => {
+    cancelDocTargetScroll();
+    const viewer = viewerRef.current;
+    const item = viewer?.getItem(location.itemId);
+    const docDiff = getOpenDocDiff(item);
+    if (viewer == null || item == null || docDiff == null) {
+      scrollToSourceLine(location);
+      return;
+    }
+    cancelNavigateRef.current?.();
+    expandIfCollapsed(viewer, item);
+    scrollDocTargetIntoView(
+      viewer,
+      location.itemId,
+      docLineTarget(docDiff, location),
+      () => scrollToSourceLine(location)
+    );
+  });
+
   const showMatches = useStableCallback(
     (
       layer: HighlightLayer,
@@ -400,4 +433,19 @@ export function useDiffSearchController({
 
 function isPartialSource(source: DiffSearchSource): boolean {
   return canHydrateDiff(source.fileDiff);
+}
+
+// Expands a collapsed file so its rows (or rendered document) mount before a
+// navigation scrolls into it.
+function expandIfCollapsed(
+  viewer: CodeViewHandle<CommentMetadata>,
+  item: NonNullable<ReturnType<CodeViewHandle<CommentMetadata>['getItem']>>
+): void {
+  if (item.collapsed !== true) {
+    return;
+  }
+  item.collapsed = false;
+  incrementItemVersion(item);
+  viewer.updateItem(item);
+  viewer.getInstance()?.render(true);
 }

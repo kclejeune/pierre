@@ -79,3 +79,35 @@ export function findCommentableNewLine(
   }
   return null;
 }
+
+// Maps an old-file line to the new-file line where its content sits, so a
+// search match on a removed line can be shown in the rendered (post-change)
+// document. Lines inside a removed block map to the new-file position the
+// block used to occupy, the same anchor buildNewFileChangeMap marks; lines
+// outside every hunk shift by the line-count difference accumulated before
+// them. Unchanged gaps between hunks have the same length on both sides, so
+// the old-file position of each additions-side block is its start minus that
+// running difference.
+export function toNewFileLine(
+  fileDiff: FileDiffMetadata,
+  oldLine: number
+): number {
+  let offset = 0;
+  for (const block of iterateHunkLineBlocks(fileDiff, 'additions')) {
+    const oldStart = block.startLine - offset;
+    if (oldLine < oldStart) {
+      break;
+    }
+    if (block.type === 'context') {
+      if (oldLine < oldStart + block.lineCount) {
+        return block.startLine + (oldLine - oldStart);
+      }
+      continue;
+    }
+    if (oldLine < oldStart + block.deletions) {
+      return block.startLine;
+    }
+    offset += block.lineCount - block.deletions;
+  }
+  return oldLine + offset;
+}

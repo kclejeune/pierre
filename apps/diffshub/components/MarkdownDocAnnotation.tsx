@@ -39,6 +39,7 @@ import {
   rehypeGitHubHeadingIds,
   scrollToDocFragment,
 } from '@/lib/markdownHeadingIds';
+import { DOC_OPEN_ATTR, DOC_RENDERED_EVENT } from '@/lib/renderedDocDom';
 import type { CommentMetadata } from '@/lib/types';
 
 interface MarkdownDocAnnotationProps {
@@ -124,12 +125,10 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
     if (host == null) {
       return;
     }
-    host.setAttribute(
-      'data-diffshub-doc-open',
-      isDeletedDoc ? 'deletions' : 'additions'
-    );
+    host.setAttribute(DOC_OPEN_ATTR, isDeletedDoc ? 'deletions' : 'additions');
+    host.dispatchEvent(new Event(DOC_RENDERED_EVENT, { bubbles: true }));
     return () => {
-      host.removeAttribute('data-diffshub-doc-open');
+      host.removeAttribute(DOC_OPEN_ATTR);
     };
   }, [docReady, isDeletedDoc]);
 
@@ -247,6 +246,8 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
               );
         return (
           <div
+            data-diffshub-doc-claim-start={claimStart}
+            data-diffshub-doc-claim-end={claimEnd}
             className={cn(
               'group/mdblock',
               // Side-by-side only when the card itself is wide enough for a
@@ -306,6 +307,8 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
   return (
     <div
       ref={containerRef}
+      data-diffshub-doc-item={itemId}
+      data-diffshub-doc-state={contentsState.kind}
       className={cn(
         '@container m-2 rounded-xl border border-[var(--diffshub-annotation-border,var(--color-border))] bg-[var(--diffshub-annotation-bg,var(--color-card))] font-sans text-[var(--diffshub-annotation-fg,var(--color-card-foreground))] shadow-[var(--diffshub-annotation-shadow,0_2px_4px_rgb(0_0_0_/_0.025),0_4px_8px_rgb(0_0_0_/_0.025))]',
         // With a comment rail the card spans the viewer column — the prose

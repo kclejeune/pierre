@@ -33,6 +33,7 @@ export function transformWat(
   content ??= readFileSync(url, 'utf-8');
   const enumMap = new Map<string, Record<string, number>>();
   const languages: Record<string, number> = {};
+  let languageNames: number[] = [];
   const bitsetMap = new Map<
     string,
     { base: number; bits: Record<string, number> }
@@ -103,11 +104,13 @@ export function transformWat(
         languages[alias] = id;
       }
     }
+    // partial fixtures without the memory layout carry no name table
+    if (/\(const\s+\$mem\.languageNames\b/.test(code))
+      languageNames = languageNamesData(languages, names);
     return (
       `(enum $Language ${names.join(' ')})\n  (table $hlDispatch funcref\n    (elem ${functions.join(' ')}))\n` +
-      // partial fixtures without the memory layout carry no name table
-      (/\(const\s+\$mem\.languageNames\b/.test(code)
-        ? languageNamesData(languages, names)
+      (languageNames.length > 0
+        ? `  (data (i32.const $mem.languageNames) "${languageNames.map((b) => '\\' + b.toString(16).padStart(2, '0')).join('')}")`
         : '')
     );
   });
@@ -201,14 +204,22 @@ export function transformWat(
   // uses its own state machine. Save only locals read before their next
   // write at the checkpoint. See liveLocalsAtCheckpoint.
   const lexers = new Set([
+    '$hlAda',
+    '$hlApache',
+    '$hlAsciidoc',
     '$hlAsm',
     '$hlAstro',
+    '$hlAwk',
     '$hlBash',
     '$hlBatch',
+    '$hlBicep',
+    '$hlBlade',
     '$hlC',
     '$hlC3',
     '$hlClojure',
     '$hlCmake',
+    '$hlCobol',
+    '$hlCoffee',
     '$hlCppImpl',
     '$hlCsharp',
     '$hlCssImpl',
@@ -216,34 +227,45 @@ export function transformWat(
     '$hlDart',
     '$hlDiff',
     '$hlDockerfile',
+    '$hlDotenv',
     '$hlElixir',
     '$hlElm',
+    '$hlErb',
     '$hlErlang',
     '$hlFortranImpl',
     '$hlFsharp',
     '$hlGdresource',
     '$hlGdscript',
+    '$hlGherkin',
     '$hlGleam',
     '$hlGlslImpl',
+    '$hlGnuplot',
     '$hlGo',
     '$hlGraphql',
     '$hlGroq',
     '$hlGroovy',
+    '$hlHaml',
     '$hlHaskell',
+    '$hlHaxe',
     '$hlHlsl',
     '$hlHtml',
-    '$hlJava',
+    '$hlHttp',
+    '$hlIni',
+    '$hlJavaImpl',
+    '$hlJinjaImpl',
     '$hlJsonImpl',
     '$hlJulia',
     '$hlKotlin',
     '$hlLatex',
     '$hlLean',
     '$hlLisp',
+    '$hlLog',
     '$hlLua',
     '$hlMakefile',
     '$hlMarkdown',
     '$hlMatlab',
     '$hlMdx',
+    '$hlNginx',
     '$hlNim',
     '$hlNix',
     '$hlObjc',
@@ -252,19 +274,30 @@ export function transformWat(
     '$hlPascal',
     '$hlPerl',
     '$hlPhp',
+    '$hlPo',
     '$hlPowershell',
+    '$hlPrisma',
+    '$hlProlog',
     '$hlProto',
+    '$hlPug',
     '$hlPython',
+    '$hlQml',
     '$hlR',
+    '$hlRazor',
+    '$hlRst',
     '$hlRuby',
     '$hlRust',
     '$hlScala',
     '$hlSolidity',
-    '$hlSql',
+    '$hlSqlImpl',
     '$hlSvelte',
     '$hlSwift',
+    '$hlTcl',
     '$hlTerraform',
     '$hlToml',
+    '$hlVerilog',
+    '$hlVhdl',
+    '$hlViml',
     '$hlVue',
     '$hlWat',
     '$hlWgsl',
@@ -330,11 +363,11 @@ export function transformWat(
     const exit =
       state.length === 0
         ? ''
-        : `(global.set $streamWindow (i32.const $mem.streamState+${base}))\n        ${save}\n        `;
+        : `(global.set $streamWindow (i32.const $mem.streamState+${base}))\n        ${save}\n        (if (i32.gt_u (global.get $streamStateLo) (i32.const ${base}))\n          (then (global.set $streamStateLo (i32.const ${base}))))\n        (if (i32.lt_u (global.get $streamStateHi) (i32.const ${streamStateOffset}))\n          (then (global.set $streamStateHi (i32.const ${streamStateOffset}))))\n        `;
     return `(func${body}\n    (if (local.get $streamRoot)\n      (then\n        ${exit}(global.set $streamDepth (i32.const 0)))))`;
   });
-  // The live tokenizer captures the whole used checkpoint region per line;
-  // publish its length as a named address for src/live.wat.
+  // The end of the last window bounds the saved checkpoint range; publish it
+  // as a named address for src/emit.wat and src/live.wat.
   code += `\n(const $mem.streamStateUsed ${streamStateOffset})\n`;
 
   // Nested lexers cannot yield: their callers' locals are not saved here.
@@ -458,6 +491,16 @@ export function transformWat(
   );
   if (streamStateOffset > streamStateEnd - streamStateBase) {
     throw new Error('stream lexer state exceeds reserved memory');
+  }
+  // the name table ends at the next named address; streamStateUsed is a length
+  const languageNamesBase = constMap.get('$mem.languageNames') ?? 0;
+  const languageNamesEnd = Math.min(
+    ...[...constMap]
+      .filter(([k, v]) => v > languageNamesBase && k !== '$mem.streamStateUsed')
+      .map(([, v]) => v)
+  );
+  if (languageNames.length > languageNamesEnd - languageNamesBase) {
+    throw new Error('language names exceed reserved memory');
   }
   code = code.replace(/(\$[\w.]+)([+-]\d+)?/g, (all, name, bias) => {
     const value = constMap.get(name);
@@ -641,7 +684,7 @@ export function transformWat(
   // index, or 0 if absent. `keyword-table.value` returns the group's value,
   // or -1 if absent. A declared value of -1 also means absent.
   // The hash uses the first two bytes, last byte, and length. Words must
-  // be 2..31 bytes long. Tables support at most 63 groups.
+  // be 2..31 bytes long. Tables support at most 31 groups.
   //
   // A multiply and shift reduce the hash to any slot count.
   // Choose the smallest bucket/slot layout that places all words.
@@ -676,8 +719,8 @@ export function transformWat(
       /\(group(?:\s+(\$[\w.-]+(?:\+\d+)?|-?\d+))?((?:\s+"[\w.$@#!-]+")+)\s*\)/g
     )) {
       group += 1;
-      if (group > 63)
-        throw new Error(`keyword-table ${name} has more than 63 groups`);
+      if (group > 31)
+        throw new Error(`keyword-table ${name} has more than 31 groups`);
       values.push(
         value === undefined ? null : resolveEnumValue(value, enumMap)
       );
@@ -712,8 +755,8 @@ export function transformWat(
   });
 
   // `(keyword-pool <base> <end>)` reserves shared keyword bytes.
-  // packKeywordPool combines the words into one string. The 13-bit descriptor
-  // offset limits it to 8191 bytes. Declare it once beside $lexKeywordLookup.
+  // packKeywordPool combines the words into one string. The 14-bit descriptor
+  // offset limits it to 16383 bytes. Declare it once beside $lexKeywordLookup.
   let keywordPool: { base: number; rangeEnd: number } | undefined;
   code = replaceForm(code, 'keyword-pool', (inner) => {
     const m = inner.match(/^\s*(\d+)\s+(\d+)\s*$/);
@@ -731,7 +774,7 @@ export function transformWat(
       pendingTables.flatMap((t) => t.words.map((w) => w.word))
     );
     const poolCapacity = Math.min(
-      8191,
+      16383,
       keywordPool.rangeEnd - keywordPool.base
     );
     if (pool.length > poolCapacity)
@@ -752,7 +795,7 @@ export function transformWat(
         }
         const w = table.words[index];
         const desc =
-          (w.word.length << 19) | (w.group << 13) | pool.indexOf(w.word);
+          (w.word.length << 19) | (w.group << 14) | pool.indexOf(w.word);
         bytes.push(desc & 0xff, (desc >> 8) & 0xff, desc >> 16);
       }
       // group values follow as signed 16-bit entries indexed by group (entry
@@ -1179,7 +1222,7 @@ function packKeywordPool(all: string[]): string {
 function languageNamesData(
   languages: Record<string, number>,
   canonical: string[]
-): string {
+): number[] {
   const isCanonical = new Set(canonical.map((quoted) => quoted.slice(1, -1)));
   const maxLength = 18; // $languageByName rejects longer words
   // plain text's names resolve to id 0, the same as no match
@@ -1201,9 +1244,7 @@ function languageNamesData(
     for (const name of names.filter((n) => n.length === length))
       records.push(languages[name], ...Buffer.from(name, 'latin1'));
   }
-  const bytes = [...offsets.flatMap((o) => [o & 255, o >> 8]), ...records];
-  const text = bytes.map((b) => '\\' + b.toString(16).padStart(2, '0'));
-  return `  (data (i32.const $mem.languageNames) "${text.join('')}")`;
+  return [...offsets.flatMap((o) => [o & 255, o >> 8]), ...records];
 }
 
 /**

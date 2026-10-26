@@ -324,6 +324,16 @@
   -webkit-font-smoothing: antialiased;
 }
 
+/* Code text read washed out next to GitHub's diff view: the antialiased
+   smoothing above turns off macOS's light-on-dark stroke thickening, and
+   JetBrains Mono's regular weight is thinner than SF Mono's. Both properties
+   inherit into the shadow root, so setting them on the host covers every
+   diff, file, and code view; theme colors are untouched. */
+diffs-container {
+  -webkit-font-smoothing: auto;
+  font-weight: 450;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

@@ -25,8 +25,14 @@ export function* iterateHunkLineBlocks(
   side: AnnotationSide
 ): Generator<HunkLineBlock> {
   for (const hunk of fileDiff.hunks) {
-    let startLine =
-      side === 'additions' ? hunk.additionStart : hunk.deletionStart;
+    // A side with no lines in the hunk (@@ -3,2 +2,0 @@) names the line
+    // before the hunk rather than its first line, so step past it to where
+    // the hunk's content sits on that side.
+    const [start, count] =
+      side === 'additions'
+        ? [hunk.additionStart, hunk.additionCount]
+        : [hunk.deletionStart, hunk.deletionCount];
+    let startLine = count === 0 ? start + 1 : start;
     for (const content of hunk.hunkContent) {
       const lineCount =
         content.type === 'context'

@@ -10,6 +10,7 @@ import {
   IconColorLight,
   IconDiffSplit,
   IconDiffUnified,
+  IconEllipsis,
   IconExpandAll,
   IconEyeSlash,
   IconFileTreeFill,
@@ -179,6 +180,17 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
   const pinnedRepos = usePinnedRepos();
   const isPinned =
     pinnableRepo != null && isRepoPinned(pinnedRepos.pinned, pinnableRepo);
+  // Shared by the 2xl icon buttons and the narrower overflow menu.
+  const togglePin =
+    pinnableRepo != null && pinnedRepos.hydrated
+      ? () => pinnedRepos.toggle(pinnableRepo)
+      : undefined;
+  const nextDiffStyle = diffStyle === 'split' ? 'unified' : 'split';
+  const diffStyleLabel =
+    nextDiffStyle === 'unified'
+      ? 'Switch to unified view'
+      : 'Switch to split view';
+  const toggleDiffStyle = () => setDiffStyle(nextDiffStyle);
   return (
     <div
       className={cn(
@@ -208,8 +220,11 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
           </Link>
         </Button>
       )}
-      <div className="order-last flex w-full min-w-0 flex-col gap-2 md:order-none md:mr-auto md:w-auto md:flex-row md:items-center md:gap-3">
-        <div className="flex min-w-0 items-center gap-1.5">
+      {/* Narrow widths give way in order: the head/base pills truncate first,
+          then the left group clips rather than painting under the actions on
+          the right (the URL row itself never collapses). */}
+      <div className="order-last flex w-full min-w-0 flex-col gap-2 md:order-none md:mr-auto md:w-auto md:flex-row md:items-center md:gap-3 md:overflow-hidden md:p-0.5">
+        <div className="flex min-w-0 items-center gap-1.5 md:shrink-0">
           <UpstreamHostChip url={upstreamUrl} />
           <DiffUrlForm
             initialUrl={initialUrl}
@@ -241,9 +256,9 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
         </Button>
         <div className="flex items-center gap-2">
           {fileSearchAvailable && (
-            <FileSearchPaletteTrigger className="hidden w-36 lg:inline-flex" />
+            <FileSearchPaletteTrigger className="hidden w-36 2xl:inline-flex" />
           )}
-          {pinnableRepo != null && pinnedRepos.hydrated && (
+          {togglePin != null && (
             <Button
               type="button"
               variant="ghost"
@@ -256,10 +271,10 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
               }
               className={cn(
                 CHROME_ICON_BUTTON_CLASS,
-                'hidden md:flex',
+                'hidden 2xl:flex',
                 isPinned && 'text-foreground bg-muted'
               )}
-              onClick={() => pinnedRepos.toggle(pinnableRepo)}
+              onClick={togglePin}
             >
               <IconPin className="size-4 md:size-3" />
             </Button>
@@ -271,7 +286,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
               size="icon-md"
               aria-label="Browse files at this ref"
               title="Browse files at this ref"
-              className={cn(CHROME_ICON_BUTTON_CLASS, 'hidden md:flex')}
+              className={cn(CHROME_ICON_BUTTON_CLASS, 'hidden 2xl:flex')}
             >
               <Link href={browseFilesPath}>
                 <IconFolder className="size-4 md:size-3" />
@@ -279,37 +294,39 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
             </Button>
           )}
           {showExternalLink && (
-            <>
-              <Button
-                asChild
-                variant="ghost"
-                size="icon-md"
-                aria-label="Open source in new tab"
-                title="Open source in new tab"
-                className={cn(CHROME_ICON_BUTTON_CLASS, 'hidden md:flex')}
-              >
-                <a href={upstreamUrl} target="_blank" rel="noreferrer noopener">
-                  <IconShare className="size-4 md:size-3" />
-                </a>
-              </Button>
-              <div className="bg-border hidden h-3 w-px md:block" />
-            </>
+            <Button
+              asChild
+              variant="ghost"
+              size="icon-md"
+              aria-label="Open source in new tab"
+              title="Open source in new tab"
+              className={cn(CHROME_ICON_BUTTON_CLASS, 'hidden 2xl:flex')}
+            >
+              <a href={upstreamUrl} target="_blank" rel="noreferrer noopener">
+                <IconShare className="size-4 md:size-3" />
+              </a>
+            </Button>
           )}
+          <HeaderOverflowMenu
+            browseFilesPath={browseFilesPath}
+            diffStyleLabel={diffStyleLabel}
+            dropdownThemeStyle={dropdownThemeStyle}
+            isPinned={isPinned}
+            nextDiffStyle={nextDiffStyle}
+            onToggleDiffStyle={toggleDiffStyle}
+            onTogglePin={togglePin}
+            upstreamUrl={showExternalLink ? upstreamUrl : undefined}
+          />
+          <div className="bg-border hidden h-3 w-px md:block" />
           <div className="flex items-center">
             {reviewControl}
             <Button
               type="button"
               variant="ghost"
               size="icon-md"
-              title={
-                diffStyle === 'split'
-                  ? 'Switch to unified view'
-                  : 'Switch to split view'
-              }
-              className={cn(CHROME_ICON_BUTTON_CLASS, 'hidden md:flex')}
-              onClick={() =>
-                setDiffStyle(diffStyle === 'split' ? 'unified' : 'split')
-              }
+              title={diffStyleLabel}
+              className={cn(CHROME_ICON_BUTTON_CLASS, 'hidden 2xl:flex')}
+              onClick={toggleDiffStyle}
             >
               {diffStyle === 'split' ? (
                 <IconDiffSplit className="size-4 md:size-3" />
@@ -769,9 +786,95 @@ function UpstreamHostChip({ url }: { url: string }) {
       target="_blank"
       rel="noreferrer"
       title={`Open on ${host}`}
-      className="text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex h-6 shrink-0 items-center rounded-md border border-[var(--diffshub-card-border,var(--color-border))] bg-[var(--diffshub-card-bg,var(--color-muted))] px-1.5 font-mono text-[11px] outline-none hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2"
+      className="text-muted-foreground hover:text-foreground focus-visible:ring-ring hidden h-6 shrink-0 items-center rounded-md border border-[var(--diffshub-card-border,var(--color-border))] bg-[var(--diffshub-card-bg,var(--color-muted))] px-1.5 font-mono text-[11px] outline-none hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2 lg:inline-flex"
     >
       {host}
     </a>
+  );
+}
+
+interface HeaderOverflowMenuProps {
+  browseFilesPath?: string;
+  diffStyleLabel: string;
+  dropdownThemeStyle?: CSSProperties;
+  isPinned: boolean;
+  nextDiffStyle: 'split' | 'unified';
+  onToggleDiffStyle(): void;
+  // Unset when the diff has no pinnable repo (or pins are still loading).
+  onTogglePin?(): void;
+  // Unset when the URL input holds an uncommitted draft.
+  upstreamUrl?: string;
+}
+
+const MENU_ITEM_CLASS = 'flex cursor-pointer items-center gap-2';
+
+// Below the 2xl breakpoint the header has no room for every secondary action
+// beside long branch names and the review controls (whose PR title widens at
+// xl), so pinning, browsing the ref, opening the upstream page, and the
+// split/unified toggle collapse into this menu; from 2xl up they show as
+// individual icon buttons instead.
+function HeaderOverflowMenu({
+  browseFilesPath,
+  diffStyleLabel,
+  dropdownThemeStyle,
+  isPinned,
+  nextDiffStyle,
+  onToggleDiffStyle,
+  onTogglePin,
+  upstreamUrl,
+}: HeaderOverflowMenuProps) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-md"
+          aria-label="More actions"
+          title="More actions"
+          className={cn(CHROME_ICON_BUTTON_CLASS, 'hidden md:flex 2xl:hidden')}
+        >
+          <IconEllipsis className="size-4 md:size-3" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        className="w-56"
+        style={dropdownThemeStyle}
+      >
+        {onTogglePin != null && (
+          <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={onTogglePin}>
+            <IconPin className="size-3.5" />
+            {isPinned ? 'Unpin from dashboard' : 'Pin to dashboard'}
+          </DropdownMenuItem>
+        )}
+        {browseFilesPath != null && (
+          <DropdownMenuItem asChild className={MENU_ITEM_CLASS}>
+            <Link href={browseFilesPath}>
+              <IconFolder className="size-3.5" />
+              Browse files at this ref
+            </Link>
+          </DropdownMenuItem>
+        )}
+        {upstreamUrl != null && (
+          <DropdownMenuItem asChild className={MENU_ITEM_CLASS}>
+            <a href={upstreamUrl} target="_blank" rel="noreferrer noopener">
+              <IconShare className="size-3.5" />
+              Open source in new tab
+            </a>
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem
+          className={MENU_ITEM_CLASS}
+          onSelect={onToggleDiffStyle}
+        >
+          {nextDiffStyle === 'unified' ? (
+            <IconDiffUnified className="size-3.5" />
+          ) : (
+            <IconDiffSplit className="size-3.5" />
+          )}
+          {diffStyleLabel}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

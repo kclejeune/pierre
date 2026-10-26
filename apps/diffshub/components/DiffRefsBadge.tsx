@@ -52,20 +52,27 @@ export function DiffRefsBadge({
   return (
     <div
       role="group"
-      className={cn('flex shrink-0 items-center gap-1 text-xs', className)}
+      // Shrinkable: the pills truncate their labels when the header runs out
+      // of room, with the full refs kept in the group's tooltip.
+      className={cn('flex min-w-0 items-center gap-1 text-xs', className)}
       aria-label={description}
       title={description}
     >
-      <RefPill
-        kind="base"
-        end={refs.base}
-        refs={refs}
-        refsState={refsState}
-        excludeRefs={excludeRefs}
-        onOpenChange={handleOpenChange}
-        dropdownThemeStyle={dropdownThemeStyle}
-      />
-      <RefPillArrow />
+      {/* Below lg the header cannot fit both pills beside the review
+          controls; the base (usually the default branch) gives way first,
+          and the group's tooltip still names both refs. */}
+      <span className="hidden lg:contents">
+        <RefPill
+          kind="base"
+          end={refs.base}
+          refs={refs}
+          refsState={refsState}
+          excludeRefs={excludeRefs}
+          onOpenChange={handleOpenChange}
+          dropdownThemeStyle={dropdownThemeStyle}
+        />
+        <RefPillArrow />
+      </span>
       <RefPill
         kind="head"
         end={refs.head}
@@ -110,6 +117,9 @@ function RefPill({
       : buildComparePath(refs.repo, refs.base?.label ?? null, ref);
   return (
     <RefPillMenu
+      // When the header is out of room the pill truncates its ref name, but
+      // never below its BASE/HEAD prefix plus a few characters of the name.
+      className="min-w-[5.75rem]"
       kind={kind}
       label={end?.label ?? 'default'}
       placeholder={end == null}

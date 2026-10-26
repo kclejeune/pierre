@@ -168,6 +168,8 @@ interface RefPillMenuProps {
   onOpenChange(open: boolean): void;
   // The menu content: optional RefPickerActions, then RefPickerItems.
   children: ReactNode;
+  // Extra classes for the trigger pill, e.g. a shrink floor.
+  className?: string;
 }
 
 // One base/head pill: a labeled trigger opening a dropdown the caller fills.
@@ -182,13 +184,14 @@ export function RefPillMenu({
   dropdownThemeStyle,
   onOpenChange,
   children,
+  className,
 }: RefPillMenuProps) {
   return (
     <DropdownMenu onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
         aria-label={ariaLabel}
         title={title}
-        className={PILL_CLASS}
+        className={cn(PILL_CLASS, className)}
       >
         <span
           aria-hidden="true"

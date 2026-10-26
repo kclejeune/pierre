@@ -37,6 +37,8 @@ const CONFIG_VARIABLES: ConfigVariable[] = [
   { name: 'DIFFSHUB_REFRESH_TOKEN_MAX_TTL' },
   { name: 'DIFFSHUB_TOKEN_ENCRYPTION_KEY', secret: true },
   { name: 'DIFFSHUB_AVATAR_TOKEN', secret: true },
+  { name: 'DIFFSHUB_DEFAULT_LIGHT_THEME' },
+  { name: 'DIFFSHUB_DEFAULT_DARK_THEME' },
   { name: 'NEXT_PUBLIC_WORKTREE_SLUG' },
 ];
 

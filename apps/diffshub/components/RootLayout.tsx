@@ -11,6 +11,7 @@ import { GitHubSessionRefresher } from '@/components/GitHubSessionRefresher';
 import { PreloadHighlighter } from '@/components/PreloadHighlighter';
 import { RequireLoginGate } from '@/components/RequireLoginGate';
 import { ScrollbarGutterVariables } from '@/components/ScrollbarGutterVariables';
+import { themeDefaults } from '@/components/themeCatalog';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { Toaster } from '@/components/Toaster';
 import { WorkerPoolContext } from '@/components/WorkerPoolContext';
@@ -22,6 +23,7 @@ import {
   THEME_BOOTSTRAP_VERSION,
   type ThemeBootstrapCache,
 } from '@/lib/theme/themeBootstrap';
+import type { ThemeDefaults } from '@/lib/theme/themeDefaults';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -37,8 +39,12 @@ function applyInitialTheme(
   bootstrapStorageKey: string,
   bootstrapVersion: number,
   ruleId: string,
-  selector: string
+  selector: string,
+  defaults: ThemeDefaults
 ) {
+  // Publish the server-resolved default theme names before any client module
+  // evaluates; readThemeDefaults() picks them up in the browser.
+  window.__DIFFSHUB_THEME_DEFAULTS__ = defaults;
   try {
     const storedTheme = window.localStorage.getItem('theme');
     const theme =
@@ -53,12 +59,15 @@ function applyInitialTheme(
         : theme;
     const root = document.documentElement;
 
-    const selectedThemeName = window.localStorage.getItem(
-      resolvedTheme === 'dark' ? 'diffshub-dark-theme' : 'diffshub-light-theme'
-    );
+    const selectedThemeName =
+      window.localStorage.getItem(
+        resolvedTheme === 'dark'
+          ? 'diffshub-dark-theme'
+          : 'diffshub-light-theme'
+      ) ?? defaults[resolvedTheme];
     let bootstrapStyle: Record<string, string> | undefined;
     const storedBootstrap = window.localStorage.getItem(bootstrapStorageKey);
-    if (selectedThemeName != null && storedBootstrap != null) {
+    if (storedBootstrap != null) {
       try {
         const parsed = JSON.parse(
           storedBootstrap
@@ -117,7 +126,15 @@ function applyInitialTheme(
   }
 }
 
-const themeBootstrapScript = `(${String(applyInitialTheme)})(${JSON.stringify(THEME_BOOTSTRAP_STORAGE_KEY)},${THEME_BOOTSTRAP_VERSION},${JSON.stringify(THEME_BOOTSTRAP_RULE_ID)},${JSON.stringify(THEME_BOOTSTRAP_SELECTOR)})`;
+// The default theme names come from runtime DIFFSHUB_DEFAULT_*_THEME settings,
+// which themeCatalog reads once per process, so the script is built once too.
+const themeBootstrapScript = `(${String(applyInitialTheme)})(${[
+  JSON.stringify(THEME_BOOTSTRAP_STORAGE_KEY),
+  THEME_BOOTSTRAP_VERSION,
+  JSON.stringify(THEME_BOOTSTRAP_RULE_ID),
+  JSON.stringify(THEME_BOOTSTRAP_SELECTOR),
+  JSON.stringify(themeDefaults),
+].join(',')})`;
 
 export async function RootLayout({
   children,

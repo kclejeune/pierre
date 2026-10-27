@@ -18,7 +18,8 @@ export interface TransformedWat {
  * - inline local imports
  * - derive language IDs, dispatch, and aliases (`language-table`)
  * - expand enums
- * - resolve named addresses (`const`; see `src/memory.wat`)
+ * - copy a function with globals fixed to constants (`func-variant`)
+ * - resolve named values (`const`; see `src/memory.wat`)
  * - emit CSS-variable tables (`css-variable-table`)
  * - emit enum bitsets (`bitset`)
  * - convert string operands for `i32.const` and `i64.const` to integer literals
@@ -204,14 +205,17 @@ export function transformWat(
   // uses its own state machine. Save only locals read before their next
   // write at the checkpoint. See liveLocalsAtCheckpoint.
   const lexers = new Set([
+    '$hlAbap',
     '$hlAda',
     '$hlApache',
+    '$hlApplescript',
     '$hlAsciidoc',
     '$hlAsm',
     '$hlAstro',
     '$hlAwk',
     '$hlBash',
     '$hlBatch',
+    '$hlBibtex',
     '$hlBicep',
     '$hlBlade',
     '$hlC',
@@ -219,12 +223,18 @@ export function transformWat(
     '$hlClojure',
     '$hlCmake',
     '$hlCobol',
+    '$hlCodeowners',
+    '$hlCodeql',
     '$hlCoffee',
+    '$hlCoq',
     '$hlCppImpl',
     '$hlCsharp',
     '$hlCssImpl',
     '$hlCsvImpl',
+    '$hlCypher',
+    '$hlD',
     '$hlDart',
+    '$hlDax',
     '$hlDiff',
     '$hlDockerfile',
     '$hlDotenv',
@@ -232,6 +242,7 @@ export function transformWat(
     '$hlElm',
     '$hlErb',
     '$hlErlang',
+    '$hlFish',
     '$hlFortranImpl',
     '$hlFsharp',
     '$hlGdresource',
@@ -244,6 +255,7 @@ export function transformWat(
     '$hlGraphql',
     '$hlGroq',
     '$hlGroovy',
+    '$hlHack',
     '$hlHaml',
     '$hlHaskell',
     '$hlHaxe',
@@ -254,57 +266,119 @@ export function transformWat(
     '$hlJavaImpl',
     '$hlJinjaImpl',
     '$hlJsonImpl',
+    '$hlJsonnet',
     '$hlJulia',
+    '$hlJust',
+    '$hlKdl',
     '$hlKotlin',
     '$hlLatex',
     '$hlLean',
     '$hlLisp',
+    '$hlLlvm',
     '$hlLog',
     '$hlLua',
+    '$hlLuau',
     '$hlMakefile',
     '$hlMarkdown',
     '$hlMatlab',
     '$hlMdx',
+    '$hlMermaid',
+    '$hlMoonbit',
     '$hlNginx',
     '$hlNim',
     '$hlNix',
     '$hlObjc',
     '$hlOcaml',
     '$hlOdin',
+    '$hlOpenscad',
     '$hlPascal',
     '$hlPerl',
     '$hlPhp',
     '$hlPo',
+    '$hlPowerquery',
     '$hlPowershell',
     '$hlPrisma',
     '$hlProlog',
     '$hlProto',
     '$hlPug',
+    '$hlPuppet',
     '$hlPython',
     '$hlQml',
     '$hlR',
     '$hlRazor',
+    '$hlRdfImpl',
+    '$hlReg',
+    '$hlRosmsg',
     '$hlRst',
     '$hlRuby',
     '$hlRust',
+    '$hlSas',
     '$hlScala',
+    '$hlShaderlab',
     '$hlSolidity',
     '$hlSqlImpl',
+    '$hlStata',
     '$hlSvelte',
     '$hlSwift',
     '$hlTcl',
     '$hlTerraform',
     '$hlToml',
+    '$hlTypst',
     '$hlVerilog',
     '$hlVhdl',
     '$hlViml',
     '$hlVue',
     '$hlWat',
     '$hlWgsl',
+    '$hlWolfram',
     '$hlXml',
     '$hlYaml',
     '$hlZig',
   ]);
+  // `(func-variant $copy $base (global $g <int>) ...)` adds a copy of $base
+  // that reads each listed global as a constant. Binaryen then drops the
+  // branches the copy never takes, so a dialect can get its own loop
+  // without slowing the lexer it shares code with.
+  const variants: { name: string; base: string; globals: string[][] }[] = [];
+  code = replaceForm(code, 'func-variant', (inner) => {
+    const m = inner.match(
+      /^\s*(\$\w+)\s+(\$\w+)((?:\s*\(global\s+\$\w+\s+-?\d+\s*\))+)\s*$/
+    );
+    if (m === null)
+      throw new Error(`Malformed func-variant in ${url.pathname}`);
+    variants.push({
+      name: m[1],
+      base: m[2],
+      globals: [...m[3].matchAll(/(\$\w+)\s+(-?\d+)/g)].map((g) => [
+        g[1],
+        g[2],
+      ]),
+    });
+    return '';
+  });
+  if (variants.length > 0) {
+    code = replaceForm(code, 'func', (inner) => {
+      const name = inner.match(/^\s*(\$\w+)/)?.[1];
+      let out = `(func${inner})`;
+      for (const variant of variants) {
+        if (variant.base !== name) continue;
+        let body = inner.replace(/^\s*\$\w+/, ` ${variant.name}`);
+        for (const [global, value] of variant.globals) {
+          if (new RegExp(`global\\.set\\s+\\${global}(?![\\w.])`).test(body))
+            throw new Error(
+              `func-variant ${variant.name} fixes ${global}, which ${name} sets`
+            );
+          body = body.replace(
+            new RegExp(`\\(\\s*global\\.get\\s+\\${global}\\s*\\)`, 'g'),
+            `(i32.const ${value})`
+          );
+        }
+        out += `\n  (func${body})`;
+        if (lexers.has(name)) lexers.add(variant.name);
+      }
+      return out;
+    });
+  }
   let streamStateOffset = 0;
   code = replaceForm(code, 'func', (inner) => {
     const name = inner.match(/^\s*(\$\w+)/)?.[1];
@@ -367,8 +441,8 @@ export function transformWat(
     return `(func${body}\n    (if (local.get $streamRoot)\n      (then\n        ${exit}(global.set $streamDepth (i32.const 0)))))`;
   });
   // The end of the last window bounds the saved checkpoint range; publish it
-  // as a named address for src/emit.wat and src/live.wat.
-  code += `\n(const $mem.streamStateUsed ${streamStateOffset})\n`;
+  // as a named length for src/emit.wat and src/live.wat.
+  code += `\n(const $streamStateUsed ${streamStateOffset})\n`;
 
   // Nested lexers cannot yield: their callers' locals are not saved here.
   const liveModule = code.includes('(export "liveRun")');
@@ -451,8 +525,9 @@ export function transformWat(
       ${block}${inner.slice(loopBlock.end)})`;
   });
 
-  // `(const $mem.name <int|$other>[+-<int>])` defines a named address.
-  // Addresses live in src/memory.wat so each region moves in one place.
+  // `(const $name <int|$other>[+-<int>])` defines a named value; `$mem.`
+  // names are addresses. They live in src/memory.wat so each region moves
+  // in one place.
   // References may add a +/- bias; names cannot contain `-`.
   const constExprs = new Map<string, { value: string; bias: number }>();
   code = code.replace(
@@ -484,22 +559,20 @@ export function transformWat(
     return base + expr.bias;
   };
   for (const name of constExprs.keys()) resolveConst(name, new Set());
-  // the checkpoint region ends at the next named address above its base
+  // A region ends at the next `$mem.` address above its base. Other consts,
+  // such as $streamStateUsed, are lengths.
+  const regionEnd = (base: number): number =>
+    Math.min(
+      ...[...constMap]
+        .filter(([k, v]) => v > base && k.startsWith('$mem.'))
+        .map(([, v]) => v)
+    );
   const streamStateBase = constMap.get('$mem.streamState') ?? 0;
-  const streamStateEnd = Math.min(
-    ...[...constMap.values()].filter((v) => v > streamStateBase)
-  );
-  if (streamStateOffset > streamStateEnd - streamStateBase) {
+  if (streamStateOffset > regionEnd(streamStateBase) - streamStateBase) {
     throw new Error('stream lexer state exceeds reserved memory');
   }
-  // the name table ends at the next named address; streamStateUsed is a length
   const languageNamesBase = constMap.get('$mem.languageNames') ?? 0;
-  const languageNamesEnd = Math.min(
-    ...[...constMap]
-      .filter(([k, v]) => v > languageNamesBase && k !== '$mem.streamStateUsed')
-      .map(([, v]) => v)
-  );
-  if (languageNames.length > languageNamesEnd - languageNamesBase) {
+  if (languageNames.length > regionEnd(languageNamesBase) - languageNamesBase) {
     throw new Error('language names exceed reserved memory');
   }
   code = code.replace(/(\$[\w.]+)([+-]\d+)?/g, (all, name, bias) => {
@@ -813,6 +886,10 @@ export function transformWat(
           bytes.push(v & 0xff, (v >> 8) & 0xff);
         }
       }
+      if (table.rangeEnd > regionEnd(table.base))
+        throw new Error(
+          `keyword-table ${table.name} range ends past the next region at ${regionEnd(table.base)}`
+        );
       if (table.base + bytes.length > table.rangeEnd)
         throw new Error(
           `keyword-table ${table.name} needs ${bytes.length} bytes, range holds ${table.rangeEnd - table.base}`
@@ -882,13 +959,9 @@ export function transformWat(
   // Other expressions need an exact 0/1 result for boolean arithmetic.
   const byteSets = new Map<string, number>();
   const byteSetBase = constMap.get('$mem.byteSets');
-  // the region ends at the next named address, 32 bytes (256 bits) per set
+  // 32 bytes (256 bits) per set
   const byteSetCap =
-    byteSetBase === undefined
-      ? 0
-      : (Math.min(...[...constMap.values()].filter((v) => v > byteSetBase)) -
-          byteSetBase) >>
-        5;
+    byteSetBase === undefined ? 0 : (regionEnd(byteSetBase) - byteSetBase) >> 5;
   const byteSetBranches = branchOperands(code, 'byteset.get');
   code = replaceForm(code, 'byteset.get', (inner, at) => {
     const m = inner.match(
@@ -980,7 +1053,7 @@ export function transformWat(
       return `i${bits}.const ${hex}`;
     });
   code = wrapCompoundNegations(code);
-  checkDataSegments(code, url.pathname);
+  checkDataSegments(code, url.pathname, constMap.get('$mem.input') ?? 65536);
   if (imports.length > 0) {
     code = code.replace(
       /^\s*\(\s*module(\s+)/,
@@ -1705,10 +1778,10 @@ function markSimdReachers(code: string): string {
 }
 
 /**
- * Check that `src/memory.wat` data segments fit in page 1 without overlap.
- * A bad address can silently corrupt another table.
+ * Check that `src/memory.wat` data segments fit below the input without
+ * overlap. A bad address can silently corrupt another table.
  */
-function checkDataSegments(code: string, path: string): void {
+function checkDataSegments(code: string, path: string, limit: number): void {
   const segments: { base: number; end: number }[] = [];
   const open = /\(\s*data\s+\(\s*i32\.const\s+(\d+)\s*\)/g;
   let m;
@@ -1743,9 +1816,9 @@ function checkDataSegments(code: string, path: string): void {
   }
   segments.sort((a, b) => a.base - b.base);
   for (const [i, seg] of segments.entries()) {
-    if (seg.end > 65536) {
+    if (seg.end > limit) {
       throw new Error(
-        `data segment [${seg.base}:${seg.end}) overflows page 1 in ${path}`
+        `data segment [${seg.base}:${seg.end}) overflows the static region in ${path}`
       );
     }
     const next = segments[i + 1];

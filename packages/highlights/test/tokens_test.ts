@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import t from 'node:test';
 
-import { HighlightsHighlighter, LANGS } from '../lib/highlighter';
+import { HighlightsHighlighter, inputPtr, LANGS } from '../lib/highlighter';
 import type {
   CodeToHtmlOptions,
   CodeToTokensOptions,
@@ -38,7 +38,7 @@ t.before(() => {
     `(module
     (import "../src/highlights.wat")
     (func (export "highlightByteRecords")
-      (global.set $srcBase (i32.const 65536))
+      (global.set $srcBase (i32.const $mem.input))
       (global.set $streaming (i32.const 0))
       (global.set $streamDepth (i32.const 0))
       (call $sigReset)
@@ -161,8 +161,11 @@ void t.test(
       const expected = encoder.encode(code);
       const length = hl.writeInput(code);
       assert.equal(length, expected.length);
-      assert.deepEqual(hl.buffer.subarray(65536, 65536 + length), expected);
-      assert.ok(hl.buffer.length >= 65536 + length + 96);
+      assert.deepEqual(
+        hl.buffer.subarray(inputPtr, inputPtr + length),
+        expected
+      );
+      assert.ok(hl.buffer.length >= inputPtr + length + 96);
     }
   }
 );

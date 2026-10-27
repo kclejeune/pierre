@@ -91,7 +91,7 @@ exports from `@pierre/diffs`.
 | -------------------------------- | -------- | ---------------------------------------------------------- |
 | `createAnnotationElement`        | Function | Creates a HAST annotation row from an annotation span.     |
 | `createAnnotationWrapperNode`    | Function | Creates a DOM host for an annotation slot.                 |
-| `createDiffSpanDecoration`       | Function | Creates one Shiki inline diff decoration.                  |
+| `createDiffSpanDecoration`       | Function | Creates one inline diff decoration.                        |
 | `pushOrJoinSpan`                 | Function | Adds or joins one inline diff span.                        |
 | `createEmptyRowBuffer`           | Function | Creates an empty virtual row buffer.                       |
 | `createFileHeaderElement`        | Function | Creates a file or diff header HAST element.                |
@@ -171,10 +171,8 @@ exports from `@pierre/diffs`.
 | `INDEX_LINE_METADATA`                      | Provides the patch index metadata marker.             |
 | `COMMIT_METADATA_SPLIT`                    | Provides the commit metadata separator expression.    |
 | `FILENAME_HEADER_REGEX`                    | Matches a standard patch file header.                 |
-| `FILENAME_HEADER_REGEX_GIT`                | Matches a Git patch file header.                      |
 | `GIT_DIFF_FILE_BREAK_REGEX`                | Matches a Git patch file boundary.                    |
 | `UNIFIED_DIFF_FILE_BREAK_REGEX`            | Matches a unified patch file boundary.                |
-| `ALTERNATE_FILE_NAMES_GIT`                 | Matches alternate file names in a Git patch header.   |
 | `MERGE_CONFLICT_START_MARKER_REGEX`        | Matches a conflict start marker.                      |
 | `MERGE_CONFLICT_BASE_MARKER_REGEX`         | Matches a conflict base marker.                       |
 | `MERGE_CONFLICT_SEPARATOR_MARKER_REGEX`    | Matches a conflict separator marker.                  |

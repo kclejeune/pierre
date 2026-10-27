@@ -14,7 +14,7 @@ import { ScrollbarGutterVariables } from '@/components/ScrollbarGutterVariables'
 import { themeDefaults } from '@/components/themeCatalog';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { Toaster } from '@/components/Toaster';
-import { WorkerPoolContext } from '@/components/WorkerPoolContext';
+import { WorkerPoolProvider } from '@/components/WorkerPoolProvider';
 import { getGitHubClientEnvironment } from '@/lib/githubEnvironment';
 import {
   THEME_BOOTSTRAP_RULE_ID,
@@ -165,7 +165,7 @@ export async function RootLayout({
       <body className="diffshub">
         <ScrollbarGutterVariables />
         <GitHubEnvironmentProvider environment={getGitHubClientEnvironment()}>
-          <WorkerPoolContext>
+          <WorkerPoolProvider>
             <AppEditProvider>
               <ThemeProvider attribute="class">
                 <RequireLoginGate>{children}</RequireLoginGate>
@@ -184,7 +184,7 @@ export async function RootLayout({
                 ></div>
               </ThemeProvider>
             </AppEditProvider>
-          </WorkerPoolContext>
+          </WorkerPoolProvider>
         </GitHubEnvironmentProvider>
         <PreloadHighlighter />
         {/* Vercel sets VERCEL=1 at build time; skip the scripts on other hosts

@@ -11,8 +11,7 @@ The root, React, and SSR entries re-export these types.
 - [`CodeView` types](#codeview-types)
 - [Lines, hunks, and render state](#lines-hunks-and-render-state)
 - [Render results and virtualization](#render-results-and-virtualization)
-- [Component and editor contracts](#component-and-editor-contracts)
-- [Shiki and diff types](#shiki-and-diff-types)
+- [Tokenization and diff types](#tokenization-and-diff-types)
 
 ## Files and patches
 
@@ -41,44 +40,42 @@ The root, React, and SSR entries re-export these types.
 
 ## Themes and options
 
-| Export                               | Purpose                                                      |
-| ------------------------------------ | ------------------------------------------------------------ |
-| `SupportedLanguages`                 | Accepts a bundled, text, ANSI, or custom language name.      |
-| `HighlighterTypes`                   | Selects the JavaScript or WebAssembly Shiki engine.          |
-| `HighlightedToken`                   | Stores a character index, foreground, and token text.        |
-| `DiffsThemeNames`                    | Accepts a bundled or custom theme name.                      |
-| `ThemesType`                         | Maps light and dark schemes to theme names.                  |
-| `ThemeTypes`                         | Selects system, light, or dark mode.                         |
-| `DiffsHighlighter`                   | Defines the package's configured Shiki highlighter.          |
-| `BaseCodeOptions`                    | Configures themes, wrapping, headers, tokenization, and CSS. |
-| `BaseDiffOptions`                    | Adds layout, indicators, context, and line diff options.     |
-| `BaseDiffOptionsWithDefaults`        | Describes required diff options after defaults apply.        |
-| `DiffIndicators`                     | Selects classic, bar, or hidden diff indicators.             |
-| `HunkSeparators`                     | Selects the hunk separator presentation.                     |
-| `LineDiffTypes`                      | Selects word, alternate word, character, or no inline diff.  |
-| `FileHeaderRenderMode`               | Selects a default or custom file header.                     |
-| `CustomPreProperties`                | Defines custom properties for the rendered `pre` element.    |
-| `PrePropertiesConfig`                | Describes calculated `pre` element properties.               |
-| `ExtensionFormatMap`                 | Maps file names or extensions to languages.                  |
-| `RenderHeaderPrefixCallback`         | Produces prefix content for a diff header.                   |
-| `RenderHeaderFilenameSuffixCallback` | Produces filename suffix content for a diff header.          |
-| `RenderHeaderMetadataCallback`       | Produces metadata content for a diff header.                 |
-| `RenderFileMetadata`                 | Produces header content for a file.                          |
-| `PostRenderPhase`                    | Names mount, update, or unmount callback phases.             |
+| Export                               | Purpose                                                        |
+| ------------------------------------ | -------------------------------------------------------------- |
+| `SupportedLanguages`                 | Accepts a bundled, text, ANSI, or custom language name.        |
+| `HighlighterTypes`                   | Selects shiki-js, shiki-wasm, or highlights.                   |
+| `HighlightedToken`                   | Stores a character index, foreground, and token text.          |
+| `DiffsThemeNames`                    | Accepts a bundled or custom theme name.                        |
+| `ThemesType`                         | Maps light and dark schemes to theme names.                    |
+| `ThemeTypes`                         | Selects system, light, or dark mode.                           |
+| `DiffsHighlighter`                   | Defines backend-independent tokenization and theme resolution. |
+| `BaseCodeOptions`                    | Configures themes, wrapping, headers, tokenization, and CSS.   |
+| `BaseDiffOptions`                    | Adds layout, indicators, context, and line diff options.       |
+| `BaseDiffOptionsWithDefaults`        | Describes required diff options after defaults apply.          |
+| `DiffIndicators`                     | Selects classic, bar, or hidden diff indicators.               |
+| `HunkSeparators`                     | Selects the hunk separator presentation.                       |
+| `LineDiffTypes`                      | Selects word, alternate word, character, or no inline diff.    |
+| `FileHeaderRenderMode`               | Selects a default or custom file header.                       |
+| `CustomPreProperties`                | Defines custom properties for the rendered `pre` element.      |
+| `PrePropertiesConfig`                | Describes calculated `pre` element properties.                 |
+| `ExtensionFormatMap`                 | Maps file names or extensions to languages.                    |
+| `RenderHeaderPrefixCallback`         | Produces prefix content for a diff header.                     |
+| `RenderHeaderFilenameSuffixCallback` | Produces filename suffix content for a diff header.            |
+| `RenderHeaderMetadataCallback`       | Produces metadata content for a diff header.                   |
+| `RenderFileMetadata`                 | Produces header content for a file.                            |
+| `PostRenderPhase`                    | Names mount, update, or unmount callback phases.               |
 
 ## Annotations and selection
 
-| Export                    | Purpose                                                      |
-| ------------------------- | ------------------------------------------------------------ |
-| `AnnotationSide`          | Selects deletions or additions for an annotation.            |
-| `LineAnnotation`          | Associates metadata with one file line.                      |
-| `DiffLineAnnotation`      | Associates metadata with one side and line.                  |
-| `AnnotationLineMap`       | Groups diff annotations by line number.                      |
-| `SelectedLineRange`       | Describes a selected start and end across diff sides.        |
-| `SelectionSide`           | Selects deletions or additions for a selection.              |
-| `SelectionPoint`          | Describes one line and optional side.                        |
-| `SelectionDirection`      | Describes backward, neutral, or forward selection direction. |
-| `EditorActiveLineOptions` | Configures reveal behavior for an editor active line.        |
+| Export               | Purpose                                               |
+| -------------------- | ----------------------------------------------------- |
+| `AnnotationSide`     | Selects deletions or additions for an annotation.     |
+| `LineAnnotation`     | Associates metadata with one file line.               |
+| `DiffLineAnnotation` | Associates metadata with one side and line.           |
+| `AnnotationLineMap`  | Groups diff annotations by line number.               |
+| `SelectedLineRange`  | Describes a selected start and end across diff sides. |
+| `SelectionSide`      | Selects deletions or additions for a selection.       |
+| `SelectionPoint`     | Describes one line and optional side.                 |
 
 ## `CodeView` types
 
@@ -162,35 +159,17 @@ file or diff invalidates that cache.
 | `VirtualWindowSpecs`        | Describes viewport position, height, and row window.    |
 | `VirtualFileMetrics`        | Describes estimated header and line heights.            |
 
-## Component and editor contracts
+## Tokenization and diff types
 
-| Export                   | Purpose                                                     |
-| ------------------------ | ----------------------------------------------------------- |
-| `DiffsComponentOptions`  | Defines shared options for a render component.              |
-| `DiffsBaseComponent`     | Defines the common file and diff component methods.         |
-| `DiffsEditableComponent` | Adds editor attachment and document updates to a component. |
-| `EditableInstance`       | Selects an editable file or diff instance.                  |
-| `DiffsEditor`            | Defines the editor interface that render components use.    |
-| `DiffsTextDocument`      | Defines the text document interface that components use.    |
-| `Position`               | Identifies a zero-based line and character.                 |
-| `Range`                  | Identifies start and end positions.                         |
-| `TextEdit`               | Replaces one range with new text.                           |
-| `EditorSelection`        | Adds direction to a range.                                  |
-| `EditorViewState`        | Holds editor selections and view state.                     |
-| `EditorViewportState`    | Holds horizontal and optional vertical scroll offsets.      |
-| `EditorChange`           | Describes one normalized document edit.                     |
-| `EditorChangeEvent`      | Reports normalized changes and current document data.       |
+| Export                                                | Purpose                                                              |
+| ----------------------------------------------------- | -------------------------------------------------------------------- |
+| `DiffsTheme`                                          | Shared editor colors with optional TextMate and Zed syntax palettes. |
+| `ThemedToken`                                         | One styled token with content, offset, color, and optional styles.   |
+| `TokensResult`                                        | Token rows and root colors/styles.                                   |
+| `CodeToTokensOptions`, `CodeToHtmlOptions`            | Select a language, themes, and tokenization limits.                  |
+| `DiffsStreamTokenizer`                                | Incremental tokenization of appended chunks.                         |
+| `DiffsEditorTokenizer`, `DiffsEditorTokenizerOptions` | Incremental tokenization of document edits.                          |
+| `CreatePatchOptionsNonabortable`                      | Configures the underlying patch algorithm.                           |
 
-## Shiki and diff types
-
-| Export                           | Purpose                                         |
-| -------------------------------- | ----------------------------------------------- |
-| `BundledLanguage`                | Names a language bundled by Shiki.              |
-| `CodeToHastOptions`              | Configures Shiki code-to-HAST output.           |
-| `DecorationItem`                 | Describes a Shiki source decoration.            |
-| `LanguageRegistration`           | Describes a Shiki language grammar.             |
-| `ShikiTransformer`               | Defines a Shiki syntax tree transformer.        |
-| `ThemeRegistration`              | Describes a raw Shiki theme.                    |
-| `ThemeRegistrationResolved`      | Describes a normalized Shiki theme.             |
-| `ThemedToken`                    | Describes one Shiki token with its theme style. |
-| `CreatePatchOptionsNonabortable` | Configures the underlying patch algorithm.      |
+Import TextMate registration and Shiki transformer types from `shiki`. Diffs no
+longer re-exports Shiki's public API.

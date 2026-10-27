@@ -56,12 +56,12 @@ immutability or deep equality checks, which can quickly become expensive.
 - CodeView-level options such as `layout`, `itemMetrics`, `stickyHeaders`,
   `pointerEventsOnScroll`, and `smoothScrollSettings` allow you to configure the
   scroll view. All other options are shared between all files and diffs.
-- `loadDiffFiles` is one of those shared diff options. It applies to diff items
-  rendered inside `CodeView`, which is useful for large patch-driven review UIs
-  where full file contents should be fetched only when users expand unchanged
-  context. Hydration updates the existing `fileDiff` object in place, so keep
-  its identity stable when the hydrated metadata should persist across later
-  renders.
+- `loadDiffFiles` is one of those shared diff options. It is required whenever a
+  partial diff item needs its full contents: editing, `expandUnchanged`,
+  `expandHunk`, or replacing an editing item with another partial diff. Without
+  it those paths throw. Hydration updates the existing `fileDiff` object in
+  place, so keep its identity stable when the hydrated metadata should persist
+  across later renders.
 
 ### Editing
 
@@ -75,6 +75,14 @@ the owning item and its attached editor.
 session ends. Return `'accept'` to install `nextItem`; a controlled component
 must also mirror it into its own state. Return `'reject'` to restore the latest
 external item. A missing handler will automatically reject.
+
+A partial diff item in edit mode starts loading its full files when it renders
+(in view, not collapsed). If it scrolls out during the load, CodeView keeps the
+result and primes its highlighting without rendering the item. The editor
+attaches once a load completes while the item is rendered. Until then
+`getEditor(itemId)` returns `undefined`, and `onAttach` runs after the editor's
+first render sync. A partial edit item without `loadDiffFiles` throws from
+`render()` once it renders.
 
 Collapsing or scrolling an item out of view suspends its session rather than
 completing it. Disabling editing, removing an item, `reset()`, `cleanUp()`, and
@@ -112,7 +120,11 @@ object whose `onAttach` callback targets the first editable row with a visible
 top edge:
 
 ```tsx
-const editorOptions: EditorOptions<ThreadMetadata> = {
+const editorOptions: EditorOptions<
+  'file' | 'file-diff',
+  ThreadMetadata,
+  undefined
+> = {
   onAttach(editor) {
     editor.focus({ lineNumber: 'first-visible', preventScroll: true });
   },
@@ -128,9 +140,9 @@ const viewer = new CodeView({
   getEditStateKey(item) {
     return `review:${item.id}`;
   },
-  createEditor(documentKind, options, editStateKey) {
+  createEditor(editorType, options, editStateKey) {
     return new Editor(
-      documentKind,
+      editorType,
       {
         ...options,
         onAttach(editor) {
@@ -263,8 +275,23 @@ remapping rules, stable metadata IDs, and annotation-content lifetime guidance.
   `clearSelectedLines`, `getItem`, `updateItem`, `addItems`, `removeItem`, and
   `getInstance`.
 - `renderCustomHeader`, `renderHeaderPrefix`, `renderHeaderFilenameSuffix`,
-  `renderHeaderMetadata`, `renderAnnotation`, and `renderGutterUtility` receive
-  the whole `CodeViewItem`, which makes it easy to branch on `item.type`.
+  `renderHeaderMetadata`, and `renderGutterUtility` receive the whole
+  `CodeViewItem`, which makes it easy to branch on `item.type`.
+- `renderAnnotation(annotation, fileOrDiff, item)` receives the displayed
+  `FileContents` or `FileDiffMetadata` second and the original input item third.
+  Item metadata such as `id` and `version` is available on the third argument.
+  While a replacement is being highlighted, `item` contains the replacement
+  while `fileOrDiff` is still the previous content. In Vanilla JS, the third
+  argument is the item context:
+  `renderAnnotation(annotation, fileOrDiff, context)`, with the input item at
+  `context.item`. Standalone `File` and `FileDiff` use the same first two
+  arguments. During editing, React keeps the supplied file/diff and annotations;
+  the editor moves the existing annotation rows without rerendering their React
+  content. Edit changes are available through `onItemEditChange`.
+- The React callback's argument types require a file item with a file, or a diff
+  item with a diff and a diff annotation. Checking `item.type` narrows `item`
+  only; check `'additionLines' in fileOrDiff` to narrow the displayed content
+  separately.
 - In Vanilla JS, `CodeView` owns a scrollable root that you set up once and
   update over time.
 - In Vanilla JS, call `setup(root)` once with the scrollable container.

@@ -8,11 +8,29 @@ import {
   spyOn,
   test,
 } from 'bun:test';
+import { bundledLanguages } from 'shiki';
 
-import { parseDiffFromFile } from '../src';
+import { parseDiffFromFile, registerCustomLanguage } from '../src';
+import { RegisteredCustomLanguages } from '../src/highlighter/languages/constants';
+import * as sharedHighlighter from '../src/highlighter/shared_highlighter';
 import { disposeHighlighter } from '../src/highlighter/shared_highlighter';
-import type { FileContents, FileDiffMetadata } from '../src/types';
-import type { DiffRendererInstance } from '../src/worker/types';
+import type {
+  DiffsHighlighter,
+  FileContents,
+  FileDiffMetadata,
+} from '../src/types';
+import { getThemes } from '../src/utils/getThemes';
+import {
+  isHandledWorkerPoolError,
+  WorkerPoolTaskCanceledError,
+  WorkerPoolTerminatedError,
+  WorkerPoolWorkerError,
+} from '../src/worker/errors';
+import type {
+  DiffRendererInstance,
+  RenderFileRequest,
+} from '../src/worker/types';
+import { createDeferred } from './testUtils';
 import {
   createInitializedManager,
   createInitializingManager,
@@ -38,6 +56,19 @@ afterEach(() => {
 });
 
 describe('WorkerPoolManager lifecycle', () => {
+  test('initializes the pool and its workers with Shiki JS by default', async () => {
+    await disposeHighlighter();
+    const { manager, worker } = await createInitializedManager();
+    try {
+      const request = await worker.waitForInitializeRequest();
+      expect(manager.getPreferredHighlighter()).toBe('shiki-js');
+      expect(request.preferredHighlighter).toBe('shiki-js');
+      expect(request.resolvedThemes[0].textmate).toBeDefined();
+    } finally {
+      manager.terminate();
+    }
+  });
+
   test('fails initialization when a worker emits an error', async () => {
     spyOn(console, 'error').mockImplementation(() => {});
     const { initialization, manager, worker } = createInitializingManager();
@@ -47,6 +78,10 @@ describe('WorkerPoolManager lifecycle', () => {
 
     const initializationError = await getRejection(initialization);
     expect(initializationError.message).toContain('worker failed to load');
+    // Without an error callback, consumers still need to log startup
+    // failures.
+    expect(initializationError).toBeInstanceOf(WorkerPoolWorkerError);
+    expect(isHandledWorkerPoolError(initializationError)).toBe(false);
     expect(manager.isWorkingPool()).toBe(false);
     expect(manager.getStats()).toMatchObject({
       managerState: 'waiting',
@@ -55,6 +90,68 @@ describe('WorkerPoolManager lifecycle', () => {
       workersFailed: true,
     });
     expect(worker.terminated).toBe(true);
+    manager.terminate();
+  });
+
+  test('hands a worker error to onWorkerError and logs nothing itself', async () => {
+    const consoleError = spyOn(console, 'error').mockImplementation(() => {});
+    const received: Array<{ event: ErrorEvent | Event; worker: Worker }> = [];
+    const { initialization, manager, worker } = createInitializingManager(
+      {},
+      {
+        onWorkerError: (event, failedWorker) => {
+          received.push({ event, worker: failedWorker });
+        },
+      }
+    );
+    await worker.waitForInitializeRequest();
+
+    worker.emitError(new Error('worker failed to load'));
+
+    const initializationError = await getRejection(initialization);
+    expect(initializationError).toBeInstanceOf(WorkerPoolWorkerError);
+    expect(initializationError.message).toContain('worker failed to load');
+    expect(isHandledWorkerPoolError(initializationError)).toBe(true);
+    expect(received).toHaveLength(1);
+    expect(received[0]?.event).toMatchObject({
+      message: 'worker failed to load',
+    });
+    expect(received[0]?.worker).toBe(worker as unknown as Worker);
+    expect(manager.isWorkingPool()).toBe(false);
+    // Allow the constructor's error handler to run and check that it does not
+    // log the failure already passed to onWorkerError.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(consoleError).not.toHaveBeenCalled();
+    manager.terminate();
+  });
+
+  test('hands the plain Event of a worker script that failed to load to onWorkerError', async () => {
+    const consoleError = spyOn(console, 'error').mockImplementation(() => {});
+    const received: Event[] = [];
+    const { initialization, manager, worker } = createInitializingManager(
+      {},
+      {
+        onWorkerError: (event) => {
+          received.push(event);
+          event.preventDefault();
+        },
+      }
+    );
+    await worker.waitForInitializeRequest();
+
+    // Failed script requests can produce an Event without message or error.
+    const event = new Event('error', { cancelable: true });
+    worker.emitErrorEvent(event);
+
+    const initializationError = await getRejection(initialization);
+    expect(initializationError).toBeInstanceOf(WorkerPoolWorkerError);
+    expect(initializationError.message).toContain('failed to load');
+    expect(isHandledWorkerPoolError(initializationError)).toBe(true);
+    expect(received).toEqual([event]);
+    expect(event.defaultPrevented).toBe(true);
+    expect(manager.isWorkingPool()).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(consoleError).not.toHaveBeenCalled();
     manager.terminate();
   });
 
@@ -134,6 +231,103 @@ describe('WorkerPoolManager lifecycle', () => {
 });
 
 describe('WorkerPoolManager cache priming', () => {
+  for (const rejectLanguage of [true, false]) {
+    test(`a worker ${rejectLanguage ? 'rejection resends' : 'success reuses'} the requested language on the next task`, async () => {
+      await disposeHighlighter();
+      const { manager, worker } = await createInitializedManager({
+        preferredHighlighter: 'shiki-js',
+      });
+      const mismatch =
+        'attachResolvedLanguages: No returned grammar declares "tf" as its name or an alias.';
+      if (rejectLanguage) {
+        registerCustomLanguage('tf', bundledLanguages.hcl);
+        spyOn(console, 'error').mockImplementation(() => {});
+      }
+      try {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const posted = createDeferred<RenderFileRequest>();
+          spyOn(worker, 'postMessage').mockImplementation((request) => {
+            if (request.type === 'file') {
+              posted.resolve(structuredClone(request));
+            }
+          });
+          const prime = manager.primeFileHighlightCache({
+            name: 'example.tf',
+            contents: `locals { label = "${attempt}" }`,
+            cacheKey: `terraform:${attempt}`,
+          });
+          const settled = prime.catch((error: unknown) => error);
+          const request = await withTimeout(posted.promise);
+          if (rejectLanguage) {
+            worker.respond({
+              type: 'error',
+              id: request.id,
+              error: mismatch,
+            });
+            expect(await withTimeout(settled)).toEqual(new Error(mismatch));
+            expect(request.resolvedLanguages?.map(({ name }) => name)).toEqual([
+              'tf',
+            ]);
+            expect(
+              request.resolvedLanguages?.[0]?.data.map(({ name }) => name)
+            ).toEqual(['hcl']);
+          } else {
+            respondToFileRequest(manager, worker, request);
+            expect(await withTimeout(settled)).toBeUndefined();
+            if (attempt === 0) {
+              expect(
+                request.resolvedLanguages?.map(({ name }) => name)
+              ).toEqual(['tf']);
+            } else {
+              expect(request.resolvedLanguages).toBeUndefined();
+            }
+          }
+        }
+      } finally {
+        manager.terminate();
+        RegisteredCustomLanguages.delete('tf');
+        await disposeHighlighter();
+      }
+    });
+  }
+
+  test('reports a background preload failure without blocking worker rendering', async () => {
+    await disposeHighlighter();
+    const { manager, worker } = await createInitializedManager({
+      preferredHighlighter: 'shiki-js',
+    });
+    const highlighter = await sharedHighlighter.getSharedHighlighter({
+      themes: [],
+      langs: [],
+    });
+    const preload = createDeferred<DiffsHighlighter>();
+    const logged = createDeferred<unknown>();
+    const error = new Error('Shared highlighter preload failed');
+    spyOn(sharedHighlighter, 'getSharedHighlighter').mockImplementation(
+      () => preload.promise
+    );
+    const logError = spyOn(console, 'error').mockImplementation((error) => {
+      logged.resolve(error);
+    });
+    try {
+      const file = { ...createCacheableFile(), lang: 'css' as const };
+      const prime = manager.primeFileHighlightCache(file);
+      const request = await withTimeout(worker.waitForFileRequest());
+      respondToFileRequest(manager, worker, request);
+      await withTimeout(prime);
+      expect(manager.getFileResultCache(file)).toBeDefined();
+
+      preload.reject(error);
+      expect(await withTimeout(logged.promise)).toBe(error);
+      expect(logError).toHaveBeenCalledTimes(1);
+      expect(manager.isWorkingPool()).toBe(true);
+      expect(manager.getStats().activeTasks).toBe(0);
+    } finally {
+      preload.resolve(highlighter);
+      manager.terminate();
+    }
+  });
+
   test('does not read or populate the shared cache for an unkeyed diff', async () => {
     const { manager, worker } = await createInitializedManager();
     const successes: FileDiffMetadata[] = [];
@@ -313,8 +507,174 @@ describe('WorkerPoolManager cache priming', () => {
         rejectedError = error;
       }
 
-      expect(rejectedError).toBeInstanceOf(Error);
+      expect(rejectedError).toBeInstanceOf(WorkerPoolTerminatedError);
       expect((rejectedError as Error).message).toContain('pool terminated');
+      // Components should ignore expected cancellations when logging errors.
+      expect(isHandledWorkerPoolError(rejectedError)).toBe(true);
+    } finally {
+      manager.terminate();
+    }
+  });
+});
+
+describe('WorkerPoolManager main-thread threshold', () => {
+  test('routes files and diffs by character count against the threshold', async () => {
+    const file = createCacheableFile();
+    const diff = createCacheableDiff();
+    const diffCharacters =
+      diff.deletionCharacterCount + diff.additionCharacterCount;
+    const unset = await createInitializedManager();
+    const atFile = await createInitializedManager(
+      {},
+      { mainThreadMaxCharacters: file.contents.length }
+    );
+    const belowDiff = await createInitializedManager(
+      {},
+      { mainThreadMaxCharacters: diffCharacters - 1 }
+    );
+    try {
+      expect(unset.manager.shouldHighlightOnMainThread(file)).toBe(false);
+      expect(unset.manager.shouldHighlightOnMainThread(diff)).toBe(false);
+
+      expect(atFile.manager.shouldHighlightOnMainThread(file)).toBe(true);
+      expect(
+        atFile.manager.shouldHighlightOnMainThread({
+          ...file,
+          contents: `${file.contents} `,
+        })
+      ).toBe(false);
+
+      // Diffs count both sides, so one character under their sum routes the
+      // diff to a worker even though each side alone fits.
+      expect(belowDiff.manager.shouldHighlightOnMainThread(diff)).toBe(false);
+      expect(
+        belowDiff.manager.shouldHighlightOnMainThread({
+          ...diff,
+          additionCharacterCount: diff.additionCharacterCount - 1,
+        })
+      ).toBe(true);
+    } finally {
+      unset.manager.terminate();
+      atFile.manager.terminate();
+      belowDiff.manager.terminate();
+    }
+  });
+
+  test('rejects a main-thread prime whose language load outlives terminate', async () => {
+    const { manager } = await createInitializedManager(
+      {},
+      { mainThreadMaxCharacters: 1000 }
+    );
+    // With no highlighter loaded, this prime has to wait for its grammar.
+    await disposeHighlighter();
+    const file: FileContents = {
+      name: 'prime.py',
+      contents: 'value = [1, 2]\n',
+      cacheKey: 'main-thread:terminated',
+    };
+    const prime = manager.primeFileHighlightCache(file);
+    manager.terminate();
+
+    expect(await getRejection(prime)).toBeInstanceOf(WorkerPoolTerminatedError);
+    expect(manager.getFileResultCache(file)).toBeUndefined();
+  });
+
+  test('cancels a main-thread prime whose render options change while loading', async () => {
+    const { manager } = await createInitializedManager(
+      {},
+      { mainThreadMaxCharacters: 1000 }
+    );
+    try {
+      // Nothing else in this file loads Ruby, so this prime waits for it.
+      const file: FileContents = {
+        name: 'prime.rb',
+        contents: 'value = [1, 2]\n',
+        cacheKey: 'main-thread:options-changed',
+      };
+      const prime = manager.primeFileHighlightCache(file);
+      // The theme is unchanged, so the new options apply synchronously; the
+      // workers never acknowledge them in this harness, so don't await it.
+      void manager.setRenderOptions({ tokenizeMaxLineLength: 500 });
+
+      expect(await getRejection(prime)).toBeInstanceOf(
+        WorkerPoolTaskCanceledError
+      );
+      expect(manager.getFileResultCache(file)).toBeUndefined();
+    } finally {
+      manager.terminate();
+    }
+  });
+
+  test('cancels a main-thread prime whose highlighter is disposed while loading', async () => {
+    const { manager } = await createInitializedManager(
+      {},
+      { mainThreadMaxCharacters: 1000 }
+    );
+    try {
+      // With no highlighter loaded, this prime has to wait for its grammar.
+      await disposeHighlighter();
+      const file: FileContents = {
+        name: 'prime.py',
+        contents: 'value = [1, 2]\n',
+        cacheKey: 'main-thread:disposed',
+      };
+      const prime = manager.primeFileHighlightCache(file);
+      await disposeHighlighter();
+
+      expect(await getRejection(prime)).toBeInstanceOf(
+        WorkerPoolTaskCanceledError
+      );
+      expect(manager.getFileResultCache(file)).toBeUndefined();
+    } finally {
+      manager.terminate();
+    }
+  });
+
+  test('keeps a main-thread prime that completes while workers initialize', async () => {
+    const { initialization, manager, worker } = createInitializingManager(
+      {},
+      { mainThreadMaxCharacters: 1000 }
+    );
+    try {
+      await sharedHighlighter.getSharedHighlighter({
+        themes: getThemes(manager.getFileRenderOptions().theme),
+        langs: ['typescript'],
+        preferredHighlighter: manager.getPreferredHighlighter(),
+      });
+      const file = createCacheableFile('main-thread:during-initialize');
+      const prime = manager.primeFileHighlightCache(file);
+      expect(manager.getFileResultCache(file)).toBeDefined();
+      await withTimeout(prime);
+
+      const request = await worker.waitForInitializeRequest();
+      worker.respond({
+        type: 'success',
+        requestType: 'initialize',
+        id: request.id,
+        sentAt: Date.now(),
+      });
+      await withTimeout(initialization);
+
+      expect(manager.getFileResultCache(file)).toBeDefined();
+    } finally {
+      manager.terminate();
+    }
+  });
+
+  test('drops shared results rendered with outdated options', async () => {
+    const { manager } = await createInitializedManager();
+    try {
+      const file = createCacheableFile();
+      const result = { code: [], themeStyles: '', baseThemeType: undefined };
+      const options = manager.getFileRenderOptions();
+      manager.setFileResultCache(file.cacheKey, {
+        result,
+        options: { ...options, tokenizeMaxLineLength: 5 },
+      });
+      expect(manager.getFileResultCache(file)).toBeUndefined();
+
+      manager.setFileResultCache(file.cacheKey, { result, options });
+      expect(manager.getFileResultCache(file)).toEqual({ result, options });
     } finally {
       manager.terminate();
     }

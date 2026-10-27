@@ -9,16 +9,15 @@ const LAYER_ORDER = '@layer base,theme,rendered,unsafe;';
 
 const config: UserConfig[] = defineConfig([
   {
-    entry: [
-      'src/**/*.ts',
-      'src/**/*.tsx',
-      '!src/worker/worker.ts',
-      '!src/worker/worker-portable.ts',
-    ],
+    entry: ['src/**/*.ts', 'src/**/*.tsx', '!src/worker/worker.ts'],
     loader: {
       '.css': 'text',
     },
-    attw: process.env.ATTW === 'true',
+    // Inline CSS is repeated in every SSR example and its hydration data.
+    // tsdown processes `?inline` separately from the PostCSS transform below.
+    css: {
+      minify: true,
+    },
     tsconfig: './tsconfig.json',
     clean: true,
     dts: {
@@ -31,6 +30,16 @@ const config: UserConfig[] = defineConfig([
       {
         name: 'postcss-diffs-css',
         async transform(code, id) {
+          if (id.endsWith('.css?inline')) {
+            // Minification drops empty layers. Keep their order for styles
+            // that are added to the shadow root after the core stylesheet.
+            return {
+              code: code.startsWith(LAYER_ORDER)
+                ? code
+                : `${LAYER_ORDER}${code}`,
+              map: null,
+            };
+          }
           if (!id.endsWith('.css')) return;
 
           const result = await postcss([
@@ -72,16 +81,21 @@ const config: UserConfig[] = defineConfig([
     platform: 'neutral',
   },
   {
-    entry: ['src/worker/worker-portable.ts'],
+    // A shim importing worker.ts would be removed by tree shaking because
+    // package.json sideEffects only lists dist files.
+    entry: { 'worker-portable': 'src/worker/worker.ts' },
     outDir: 'dist/worker',
     tsconfig: './tsconfig.json',
     clean: false,
     unbundle: false,
-    noExternal: [/.*/],
+    deps: { alwaysBundle: [/.*/] },
+    // The pool sends resolved themes and grammars; omit their main-thread catalogs.
+    define: { __DIFFS_WORKER__: 'true' },
+    minify: true,
     dts: { sourcemap: true, tsgo: true },
     platform: 'neutral',
     format: 'esm',
-    treeshake: false,
+    outputOptions: { codeSplitting: false },
   },
 ]);
 

@@ -1,14 +1,15 @@
+import { applyDocumentChangeToLineAnnotations } from './lineAnnotations';
+import type { TextDocument, TextDocumentChange } from './textDocument';
 import type {
-  DiffLineAnnotation,
+  EditorLineAnnotation,
   EditorSelection,
+  EditorType,
   Position,
   Range,
   ResolvedTextEdit,
   SelectionDirection,
   TextEdit,
-} from '../types';
-import { applyDocumentChangeToLineAnnotations } from './lineAnnotations';
-import type { TextDocument, TextDocumentChange } from './textDocument';
+} from './types';
 import {
   createSegmenter,
   endsWithLineBreak,
@@ -75,7 +76,7 @@ export function convertSelection(
  * Resolves the indent edits for a selection.
  */
 export function resolveIndentEdits(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selection: EditorSelection,
   tabSize: number,
   outdent: boolean
@@ -160,15 +161,24 @@ export type ResolveRenderableLine = (
  * Maps the cursor move to all selections.
  */
 export function mapCursorMove(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selections: EditorSelection[],
-  shortcut: 'textStart' | 'start' | 'end' | 'up' | 'down' | 'left' | 'right',
+  shortcut:
+    | 'textStart'
+    | 'start'
+    | 'end'
+    | 'up'
+    | 'down'
+    | 'left'
+    | 'right'
+    | 'wordLeft'
+    | 'wordRight',
   options: CursorMoveOptions = {}
 ): EditorSelection[] {
   const lineCount = textDocument.lineCount;
   return selections.map((selection) => {
     let { line, character } =
-      shortcut === 'up' || shortcut === 'left'
+      shortcut === 'up' || shortcut === 'left' || shortcut === 'wordLeft'
         ? selection.start
         : selection.end;
     if (
@@ -222,16 +232,18 @@ export function mapCursorMove(
     } else if (isCollapsedSelection(selection)) {
       const lineLength = textDocument.getLineLength(line);
       character = Math.min(character, lineLength);
-      if (shortcut === 'left') {
+      if (shortcut === 'left' || shortcut === 'wordLeft') {
         if (character > 0) {
           // Step left by a whole grapheme so the caret never lands inside an
           // emoji or other multi-code-unit character.
-          character = stepCharacterByGrapheme(
-            textDocument,
-            line,
-            character,
-            false
-          );
+          character =
+            shortcut === 'left'
+              ? stepCharacterByGrapheme(textDocument, line, character, false)
+              : findWordBoundary(
+                  textDocument.getLineText(line),
+                  character,
+                  false
+                );
         } else if (line > 0) {
           // Fold-skip: land at the end of the nearest renderable line above;
           // stay put when everything above is collapsed.
@@ -245,12 +257,10 @@ export function mapCursorMove(
           }
         }
       } else if (character < lineLength) {
-        character = stepCharacterByGrapheme(
-          textDocument,
-          line,
-          character,
-          true
-        );
+        character =
+          shortcut === 'right'
+            ? stepCharacterByGrapheme(textDocument, line, character, true)
+            : findWordBoundary(textDocument.getLineText(line), character, true);
       } else if (line < lineCount - 1) {
         // Fold-skip: land at the start of the nearest renderable line below;
         // stay put when everything below is collapsed.
@@ -274,7 +284,7 @@ export function mapCursorMove(
 }
 
 function moveBySoftLine(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   line: number,
   character: number,
   direction: -1 | 1,
@@ -316,7 +326,7 @@ function moveBySoftLine(
     }
 
     targetLine = Math.min(resolvedLine, textDocument.lineCount - 1);
-    const targetCount = getSoftLineCount(textDocument, targetLine, options);
+    const targetCount = getSoftLineCount(targetLine, options);
     target = getSoftLineInfoAtIndex(
       textDocument,
       targetLine,
@@ -382,7 +392,7 @@ export function snapCharacterToGraphemeBoundary(
 }
 
 function getSoftLineInfo(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   line: number,
   character: number,
   options: CursorMoveOptions
@@ -408,17 +418,13 @@ function getSoftLineInfo(
   );
 }
 
-function getSoftLineCount(
-  textDocument: TextDocument<unknown>,
-  line: number,
-  options: CursorMoveOptions
-): number {
+function getSoftLineCount(line: number, options: CursorMoveOptions): number {
   const offsets = options.getSoftLineOffsets?.(line);
   return offsets === undefined || offsets.length < 2 ? 1 : offsets.length - 1;
 }
 
 function getSoftLineInfoAtIndex(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   line: number,
   index: number,
   options: CursorMoveOptions
@@ -443,9 +449,18 @@ function getSoftLineInfoAtIndex(
  * Same as mapCursorMove, but with shift key pressed.
  */
 export function mapSelectionShift(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selections: EditorSelection[],
-  shortcut: 'textStart' | 'start' | 'end' | 'up' | 'down' | 'left' | 'right',
+  shortcut:
+    | 'textStart'
+    | 'start'
+    | 'end'
+    | 'up'
+    | 'down'
+    | 'left'
+    | 'right'
+    | 'wordLeft'
+    | 'wordRight',
   options: CursorMoveOptions = {}
 ): EditorSelection[] {
   return selections.map((selection) => {
@@ -472,11 +487,14 @@ export function mapSelectionShift(
 /**
  * Applies a text change to the given text document
  */
-export function applyTextChangeToSelections<LAnnotation>(
-  textDocument: TextDocument<LAnnotation>,
+export function applyTextChangeToSelections<
+  EType extends EditorType,
+  LAnnotation,
+>(
+  textDocument: TextDocument<EType, LAnnotation>,
   selections: EditorSelection[],
   edit: ResolvedTextEdit,
-  lineAnnotations?: DiffLineAnnotation<LAnnotation>[],
+  lineAnnotations?: EditorLineAnnotation<EType, LAnnotation>[],
   tabSize = 2,
   undoBoundary = false
 ): {
@@ -622,11 +640,10 @@ export function applyTextChangeToSelections<LAnnotation>(
   );
   textDocument.setLastUndoSelectionsAfter(nextSelections);
   if (change !== undefined && lineAnnotations !== undefined) {
-    const nextLineAnnotations =
-      applyDocumentChangeToLineAnnotations<LAnnotation>(
-        change,
-        lineAnnotations
-      );
+    const nextLineAnnotations = applyDocumentChangeToLineAnnotations(
+      change,
+      lineAnnotations
+    );
     if (nextLineAnnotations !== undefined) {
       textDocument.setLastUndoLineAnnotations(
         lineAnnotations,
@@ -665,7 +682,7 @@ function getAutoSurroundPreservedOffset(
 }
 
 function getNextSelectionOffsetPairAfterReplace(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   entry: { start: number; end: number },
   offsetDelta: number,
   newText: string
@@ -693,11 +710,14 @@ function getNextSelectionOffsetPairAfterReplace(
  * Applies text replacements to multiple selections. Texts pair by selection
  * index unless they are explicitly marked as document ordered.
  */
-export function applyTextReplaceToSelections<LAnnotation>(
-  textDocument: TextDocument<LAnnotation>,
+export function applyTextReplaceToSelections<
+  EType extends EditorType,
+  LAnnotation,
+>(
+  textDocument: TextDocument<EType, LAnnotation>,
   selections: EditorSelection[],
   texts: string[],
-  lineAnnotations?: DiffLineAnnotation<LAnnotation>[],
+  lineAnnotations?: EditorLineAnnotation<EType, LAnnotation>[],
   undoBoundary = false,
   textOrder: 'selection' | 'document' = 'selection'
 ): {
@@ -849,11 +869,10 @@ export function applyTextReplaceToSelections<LAnnotation>(
   );
   textDocument.setLastUndoSelectionsAfter(nextSelections);
   if (change !== undefined && lineAnnotations !== undefined) {
-    const nextLineAnnotations =
-      applyDocumentChangeToLineAnnotations<LAnnotation>(
-        change,
-        lineAnnotations
-      );
+    const nextLineAnnotations = applyDocumentChangeToLineAnnotations(
+      change,
+      lineAnnotations
+    );
     if (nextLineAnnotations !== undefined) {
       textDocument.setLastUndoLineAnnotations(
         lineAnnotations,
@@ -891,8 +910,8 @@ function shouldAutoSurroundChar(
  * Returns per-selection replacement text when typing a surround character over
  * non-collapsed selections, matching VS Code auto-surround behavior.
  */
-export function getAutoSurroundReplacementTexts<LAnnotation>(
-  textDocument: TextDocument<LAnnotation>,
+export function getAutoSurroundReplacementTexts(
+  textDocument: TextDocument,
   selections: EditorSelection[],
   char: string,
   autoSurround?: AutoSurround
@@ -918,10 +937,13 @@ export function getAutoSurroundReplacementTexts<LAnnotation>(
  * Swaps the two characters adjacent to a collapsed selection, matching browser
  * insertTranspose (Ctrl+T) behavior.
  */
-export function applyTransposeToSelections<LAnnotation>(
-  textDocument: TextDocument<LAnnotation>,
+export function applyTransposeToSelections<
+  EType extends EditorType,
+  LAnnotation,
+>(
+  textDocument: TextDocument<EType, LAnnotation>,
   selections: EditorSelection[],
-  lineAnnotations?: DiffLineAnnotation<LAnnotation>[]
+  lineAnnotations?: EditorLineAnnotation<EType, LAnnotation>[]
 ): {
   nextSelections: EditorSelection[];
   change?: TextDocumentChange;
@@ -1036,11 +1058,10 @@ export function applyTransposeToSelections<LAnnotation>(
   );
   textDocument.setLastUndoSelectionsAfter(nextSelections);
   if (change !== undefined && lineAnnotations !== undefined) {
-    const nextLineAnnotations =
-      applyDocumentChangeToLineAnnotations<LAnnotation>(
-        change,
-        lineAnnotations
-      );
+    const nextLineAnnotations = applyDocumentChangeToLineAnnotations(
+      change,
+      lineAnnotations
+    );
     if (nextLineAnnotations !== undefined) {
       textDocument.setLastUndoLineAnnotations(
         lineAnnotations,
@@ -1056,10 +1077,13 @@ export function applyTransposeToSelections<LAnnotation>(
  * when the caret is already at the end of a non-final line. Non-collapsed
  * selections delete their selected text instead.
  */
-export function applyDeleteHardLineForwardToSelections<LAnnotation>(
-  textDocument: TextDocument<LAnnotation>,
+export function applyDeleteHardLineForwardToSelections<
+  EType extends EditorType,
+  LAnnotation,
+>(
+  textDocument: TextDocument<EType, LAnnotation>,
   selections: EditorSelection[],
-  lineAnnotations?: DiffLineAnnotation<LAnnotation>[]
+  lineAnnotations?: EditorLineAnnotation<EType, LAnnotation>[]
 ): {
   nextSelections: EditorSelection[];
   change?: TextDocumentChange;
@@ -1084,11 +1108,14 @@ export function applyDeleteHardLineForwardToSelections<LAnnotation>(
  * Deletes from each selection back to the start of its soft (visual) line.
  * Non-collapsed selections delete their selected text instead.
  */
-export function applyDeleteSoftLineBackwardToSelections<LAnnotation>(
-  textDocument: TextDocument<LAnnotation>,
+export function applyDeleteSoftLineBackwardToSelections<
+  EType extends EditorType,
+  LAnnotation,
+>(
+  textDocument: TextDocument<EType, LAnnotation>,
   selections: EditorSelection[],
   getSoftLineStart?: (line: number, character: number) => number,
-  lineAnnotations?: DiffLineAnnotation<LAnnotation>[]
+  lineAnnotations?: EditorLineAnnotation<EType, LAnnotation>[]
 ): {
   nextSelections: EditorSelection[];
   change?: TextDocumentChange;
@@ -1137,10 +1164,13 @@ export function applyDeleteSoftLineBackwardToSelections<LAnnotation>(
  * Deletes the word or separator group immediately before each selection.
  * Non-collapsed selections delete their selected text instead.
  */
-export function applyDeleteWordBackwardToSelections<LAnnotation>(
-  textDocument: TextDocument<LAnnotation>,
+export function applyDeleteWordBackwardToSelections<
+  EType extends EditorType,
+  LAnnotation,
+>(
+  textDocument: TextDocument<EType, LAnnotation>,
   selections: EditorSelection[],
-  lineAnnotations?: DiffLineAnnotation<LAnnotation>[]
+  lineAnnotations?: EditorLineAnnotation<EType, LAnnotation>[]
 ): {
   nextSelections: EditorSelection[];
   change?: TextDocumentChange;
@@ -1169,7 +1199,7 @@ export function applyDeleteWordBackwardToSelections<LAnnotation>(
  * caret. Non-collapsed selections delete their selected text instead.
  */
 export function resolveDeleteCharacterRange(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selection: EditorSelection,
   forward: boolean
 ): [start: Position, end: Position] {
@@ -1237,11 +1267,14 @@ export function resolveDeleteCharacterRange(
 /**
  * Deletes one grapheme (or selected text) at each selection.
  */
-export function applyDeleteCharacterToSelections<LAnnotation>(
-  textDocument: TextDocument<LAnnotation>,
+export function applyDeleteCharacterToSelections<
+  EType extends EditorType,
+  LAnnotation,
+>(
+  textDocument: TextDocument<EType, LAnnotation>,
   selections: EditorSelection[],
   forward: boolean,
-  lineAnnotations?: DiffLineAnnotation<LAnnotation>[],
+  lineAnnotations?: EditorLineAnnotation<EType, LAnnotation>[],
   tabSize = 2
 ): {
   nextSelections: EditorSelection[];
@@ -1357,7 +1390,7 @@ export function comparePosition(a: Position, b: Position): number {
  * Creates a selection from anchor and focus offsets.
  */
 export function createSelectionFromAnchorAndFocusOffsets(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   anchorOffset: number,
   focusOffset: number
 ): EditorSelection {
@@ -1384,7 +1417,7 @@ export function createSelectionFromAnchorAndFocusOffsets(
  * the caret past it; an offset strictly before an edit is only shifted by the
  * net length change of the edits that precede it.
  */
-function remapOffsetThroughEdits(
+export function remapOffsetThroughEdits(
   offset: number,
   edits: readonly ResolvedTextEdit[]
 ): number {
@@ -1412,7 +1445,7 @@ function remapOffsetThroughEdits(
  * direction is preserved by remapping each edge and re-deriving anchor/focus.
  */
 export function remapSelectionsAfterEdits(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selections: readonly EditorSelection[],
   selectionOffsets: ReadonlyArray<readonly [number, number]>,
   edits: readonly ResolvedTextEdit[]
@@ -1666,7 +1699,7 @@ export function shiftSelectionLines(
  * Finds the next matching word and updates the selections.
  */
 export function findNextMatch(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selections: EditorSelection[]
 ): EditorSelection[] | undefined {
   if (selections.length === 0) {
@@ -1719,7 +1752,7 @@ export function findNextMatch(
  * Get the full selection of the document.
  */
 export function getDocumentFullSelection(
-  textDocument: TextDocument<unknown>
+  textDocument: TextDocument
 ): EditorSelection {
   const lastLine = textDocument.lineCount - 1;
   const lastCharacter = textDocument.getLineLength(lastLine);
@@ -1734,7 +1767,7 @@ export function getDocumentFullSelection(
  * Get the boundary selection of the document.
  */
 export function getDocumentBoundarySelection(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   atEnd: boolean,
   trimmedEndNewLine?: boolean
 ): EditorSelection {
@@ -1763,7 +1796,7 @@ interface ClipboardRegion {
 
 /** Resolves the document offset range one selection contributes to a copy. */
 function resolveClipboardRegion(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selection: EditorSelection
 ): ClipboardRegion {
   if (isCollapsedSelection(selection)) {
@@ -1790,7 +1823,7 @@ function resolveClipboardRegion(
  * trailing break to include. A ranged selection contributes the selected text.
  */
 function resolveClipboardRegions(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selections: EditorSelection[]
 ): ClipboardRegion[] {
   return selections
@@ -1806,7 +1839,7 @@ function resolveClipboardRegions(
  * the pairing needed to paste the values into another set of selections.
  */
 export function getSelectionClipboardTexts(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selections: EditorSelection[]
 ): string[] {
   const regions = resolveClipboardRegions(textDocument, selections);
@@ -1821,7 +1854,7 @@ export function getSelectionClipboardTexts(
  * contiguous in the document.
  */
 export function getSelectionText(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selections: EditorSelection[]
 ): string {
   const regions = resolveClipboardRegions(textDocument, selections);
@@ -1859,7 +1892,7 @@ interface SelectionCut {
 // collapsed caret removes its whole logical line, while a ranged selection
 // removes only the selected text.
 function resolveSelectionCutEdit(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selection: EditorSelection
 ): ResolvedTextEdit {
   if (isCollapsedSelection(selection)) {
@@ -1880,7 +1913,7 @@ function resolveSelectionCutEdit(
 // their trailing line break; the final line deletes the preceding break so
 // no empty line is left behind.
 function resolveCollapsedSelectionCutEdit(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selection: EditorSelection
 ): ResolvedTextEdit {
   const line = selection.start.line;
@@ -1962,7 +1995,7 @@ function mapCutSelectionOffsets(
 // so cut stays in sync with copy, while the deletions are computed per
 // selection and merged so overlapping cuts delete their shared text once.
 export function resolveSelectionCut(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selections: EditorSelection[]
 ): {
   text: string;
@@ -2062,7 +2095,7 @@ export function getSelectionAnchor(
  * Expands a zero-width selection to the word-like segment that contains the caret.
  */
 export function expandCollapsedSelectionToWord(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selection: EditorSelection
 ): EditorSelection {
   const { line, character } = selection.start;
@@ -2115,7 +2148,7 @@ function expandCollapsedLineWord(
 
 // Resolves the range removed by deleteWordBackward for one selection.
 function resolveDeleteWordBackwardRange(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selection: EditorSelection
 ): [start: Position, end: Position] {
   if (!isCollapsedSelection(selection)) {
@@ -2139,12 +2172,7 @@ function resolveDeleteWordBackwardRange(
   let match: number | undefined;
   while (pos > 0) {
     const prev = findClusterBreak(lineText, pos, false, graphemeStarts);
-    const nextChar = lineText.slice(prev, pos);
-    const nextMatch = !/\S/.test(nextChar)
-      ? 0
-      : /\p{Alphabetic}|\p{Number}|_/u.test(nextChar)
-        ? 1
-        : 2;
+    const nextMatch = getWordCharKind(lineText.slice(prev, pos));
     if (match !== undefined && nextMatch !== match) {
       break;
     }
@@ -2157,6 +2185,55 @@ function resolveDeleteWordBackwardRange(
     { line, character: pos },
     { line, character: head },
   ];
+}
+
+// Groups text for word motion and deletion: 0 is whitespace, 1 is word
+// characters, 2 is punctuation and symbols.
+function getWordCharKind(text: string): 0 | 1 | 2 {
+  return !/\S/.test(text)
+    ? 0
+    : /\p{Alphabetic}|\p{Number}|_/u.test(text)
+      ? 1
+      : 2;
+}
+
+// Finds where Ctrl+Arrow word motion stops on one line: past any whitespace,
+// then past one run of word characters or one run of punctuation. Steps by
+// whole graphemes so the caret never lands inside an emoji, and only visits
+// the graphemes it crosses, so long lines stay cheap.
+function findWordBoundary(
+  lineText: string,
+  character: number,
+  forward: boolean
+): number {
+  const segments = getGraphemeSegmenter()?.segment(lineText);
+  let pos = character;
+  let kind = 0;
+  while (forward ? pos < lineText.length : pos > 0) {
+    let text: string;
+    let next: number;
+    const segment = segments?.containing(forward ? pos : pos - 1);
+    if (segment !== undefined) {
+      text = segment.segment;
+      next = forward ? segment.index + text.length : segment.index;
+    } else {
+      // Degraded path for engines lacking Intl.Segmenter: step by code point.
+      const start = forward
+        ? pos
+        : (lineText.codePointAt(pos - 2) ?? 0) > 0xffff
+          ? pos - 2
+          : pos - 1;
+      text = String.fromCodePoint(lineText.codePointAt(start) ?? 0);
+      next = forward ? pos + text.length : start;
+    }
+    const nextKind = getWordCharKind(text);
+    if (kind !== 0 && nextKind !== kind) {
+      break;
+    }
+    kind = nextKind;
+    pos = next;
+  }
+  return pos;
 }
 
 function findClusterBreak(
@@ -2213,7 +2290,7 @@ function getLineGraphemeStarts(lineText: string): number[] {
 // code unit keeps the caret from landing inside an emoji or other multi-unit
 // character. Crossing a line boundary is left to the caller.
 function stepCharacterByGrapheme(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   line: number,
   character: number,
   forward: boolean
@@ -2264,7 +2341,7 @@ function stepCharacterByGrapheme(
 }
 
 function getSelectionAnchorAndFocusOffsets(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selection: EditorSelection
 ): [anchorOffset: number, focusOffset: number] {
   const isBackward = selection.direction === DirectionBackward;
@@ -2276,7 +2353,7 @@ function getSelectionAnchorAndFocusOffsets(
 
 // Resolves the range removed by deleteHardLineForward for one selection.
 function resolveDeleteHardLineForwardRange(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   selection: EditorSelection
 ): Range {
   if (!isCollapsedSelection(selection)) {
@@ -2305,7 +2382,7 @@ function resolveDeleteHardLineForwardRange(
 
 // When the user inserts a lone line break, copy the current line's indentation onto the new line.
 function expandSingleNewlineInsert(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   insertText: string,
   insertStartOffset: number
 ): string {
@@ -2333,7 +2410,7 @@ function getLeadingSpaces(text: string): number {
 }
 
 function createSelectionsFromOffsetPairs(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   offsetPairs: readonly [anchorOffset: number, focusOffset: number][]
 ): EditorSelection[] {
   const normalizedOffsets: number[] = [];
@@ -2362,7 +2439,7 @@ function createSelectionsFromOffsetPairs(
 // Expands a backspace over leading spaces into one soft-tab width so mixed hard/soft indentation
 // behaves like the explicit outdent command.
 function normalizeLeadingIndentForChange(
-  textDocument: TextDocument<unknown>,
+  textDocument: TextDocument,
   change: ResolvedTextEdit,
   tabSize: number
 ): ResolvedTextEdit {

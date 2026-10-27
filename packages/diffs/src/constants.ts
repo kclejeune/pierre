@@ -1,5 +1,6 @@
 import type {
   CodeViewLayout,
+  HighlighterTypes,
   HunkExpansionRegion,
   RenderRange,
   SmoothScrollSettings,
@@ -28,10 +29,6 @@ export const HUNK_HEADER: RegExp =
   /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: (.*))?/m;
 export const SPLIT_WITH_NEWLINES: RegExp = /(?<=\n)/;
 export const FILENAME_HEADER_REGEX: RegExp = /^(---|\+\+\+)\s+([^\t\r\n]+)/;
-export const FILENAME_HEADER_REGEX_GIT: RegExp =
-  /^(---|\+\+\+)\s+[ab]\/([^\t\r\n]+)/;
-export const ALTERNATE_FILE_NAMES_GIT: RegExp =
-  /^diff --git (?:"a\/(.+?)"|a\/(.+?)) (?:"b\/(.+?)"|b\/(.+?))$/;
 export const INDEX_LINE_METADATA: RegExp =
   /^index ([0-9a-f]+)\.\.([0-9a-f]+)(?: (\d+))?$/i;
 
@@ -49,6 +46,9 @@ export const DEFAULT_THEMES: ThemesType = {
   dark: 'pierre-dark',
   light: 'pierre-light',
 };
+
+// The highlighter type used when no request names one and none is active yet.
+export const DEFAULT_HIGHLIGHTER: HighlighterTypes = 'shiki-js';
 
 export const THEME_CSS_ATTRIBUTE = 'data-theme-css';
 export const UNSAFE_CSS_ATTRIBUTE = 'data-unsafe-css';
@@ -96,6 +96,8 @@ export const DEFAULT_RENDER_RANGE: RenderRange = {
   bufferBefore: 0,
   bufferAfter: 0,
 };
+
+export const EMPTY_LINE_ANNOTATIONS: never[] = Object.freeze([]) as never[];
 
 export const EMPTY_RENDER_RANGE: RenderRange = {
   startingLine: 0,

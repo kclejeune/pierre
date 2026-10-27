@@ -1,5 +1,4 @@
 import type { ElementContent, Element as HASTElement, Properties } from 'hast';
-import { toHtml } from 'hast-util-to-html';
 
 import {
   DEFAULT_COLLAPSED_CONTEXT_THRESHOLD,
@@ -8,10 +7,12 @@ import {
   DEFAULT_THEMES,
   DEFAULT_TOKENIZE_MAX_LENGTH,
 } from '../constants';
+import type { TextDocument } from '../editor/textDocument';
 import { areLanguagesAttached } from '../highlighter/languages/areLanguagesAttached';
 import {
   getHighlighterIfLoaded,
   getSharedHighlighter,
+  HighlighterDisposedError,
 } from '../highlighter/shared_highlighter';
 import { areThemesAttached } from '../highlighter/themes/areThemesAttached';
 import type {
@@ -24,7 +25,6 @@ import type {
   CustomPreProperties,
   DiffLineAnnotation,
   DiffsHighlighter,
-  DiffsTextDocument,
   ExpansionDirections,
   FileDiffMetadata,
   FileHeaderRenderMode,
@@ -69,6 +69,7 @@ import {
   createGutterWrapper,
   createHastElement,
 } from '../utils/hast_utils';
+import { hastToHtml } from '../utils/hastToHtml';
 import {
   FILE_ANNOTATION_HUNK_INDEX,
   FILE_ANNOTATION_LINE_INDEX,
@@ -80,6 +81,7 @@ import { isDiffPlainText } from '../utils/isDiffPlainText';
 import type { DiffLineMetadata } from '../utils/iterateOverDiff';
 import { iterateOverDiff } from '../utils/iterateOverDiff';
 import { renderDiffWithHighlighter } from '../utils/renderDiffWithHighlighter';
+import { resolvePreferredHighlighter } from '../utils/resolvePreferredHighlighter';
 import {
   recomputeDiffHunksForEdit,
   recomputeEmptyDocumentDiff,
@@ -88,7 +90,8 @@ import {
   updateDiffHunks,
 } from '../utils/updateDiffHunks';
 import { getTrailingContextRangeSize } from '../utils/virtualDiffLayout';
-import { logUnlessCanceled, type WorkerPoolManager } from '../worker';
+import type { WorkerPoolManager } from '../worker';
+import { isHandledWorkerPoolError, logUnlessCanceled } from '../worker/errors';
 
 interface PushLineWithAnnotation {
   diffStyle: 'unified' | 'split';
@@ -238,7 +241,6 @@ let instanceId = -1;
 export class DiffHunksRenderer<LAnnotation = undefined> {
   readonly __id: string = `diff-hunks-renderer:${++instanceId}`;
 
-  private highlighter: DiffsHighlighter | undefined;
   // The latest diff requested by the component. The render cache may
   // intentionally keep displaying an older highlighted diff while this one
   // is highlighted in the background.
@@ -249,7 +251,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
   private deletionAnnotations: AnnotationLineMap<LAnnotation> = {};
   private additionAnnotations: AnnotationLineMap<LAnnotation> = {};
 
-  private computedLang: SupportedLanguages = 'text';
+  private computedLangs: SupportedLanguages[] = ['text'];
   private renderCache: DiffRenderCache | undefined;
   // Completed background work waits here until the next render can update its
   // DOM and layout together.
@@ -273,15 +275,10 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
     ) => string = getLineAnnotationName,
     private onRenderUpdate?: () => unknown,
     private workerManager?: WorkerPoolManager | undefined
-  ) {
-    if (workerManager?.isWorkingPool() !== true) {
-      this.highlighter = areThemesAttached(options.theme ?? DEFAULT_THEMES)
-        ? getHighlighterIfLoaded()
-        : undefined;
-    }
-  }
+  ) {}
 
   public cleanUp(): void {
+    this.endEditSession();
     this.recycle();
     this.expandedHunks.clear();
     this.workerManager = undefined;
@@ -289,13 +286,21 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
   }
 
   public recycle(): void {
-    this.highlighter = undefined;
     this.diff = undefined;
-    this.clearRenderCache();
+    if (this.editSessionActive) {
+      // The editor keeps its document and undo history while offscreen. Its
+      // private highlight result belongs to that session and can resume too.
+      if (this.renderCache != null) {
+        this.renderCache.renderRange = undefined;
+      }
+      this.pendingHighlightResult = undefined;
+      this.pendingStructuralRows = undefined;
+    } else {
+      this.clearRenderCache();
+    }
     this.additionAnnotations = {};
     this.deletionAnnotations = {};
     this.workerManager?.cleanUpTasks(this);
-    this.endEditSession();
   }
 
   /**
@@ -308,36 +313,36 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
    * empty additions document gets one row for the editor's caret.
    */
   public beginEditSession(
-    diff?: FileDiffMetadata,
+    diff: FileDiffMetadata,
     externalDiff?: FileDiffMetadata
   ): void {
-    const { editSessionActive: wasAlreadyActive, renderCache } = this;
+    const { editSessionActive: wasAlreadyActive } = this;
     this.editSessionActive = true;
     if (!wasAlreadyActive) {
       this.pendingHighlightResult = undefined;
     }
-    if (diff != null) {
-      this.diff = diff;
-    }
-
-    const currentDiff = diff ?? this.diffCache;
+    this.diff = diff;
+    // A replacement creates a new session diff. The old session's result
+    // cannot become the new one's private editor markup.
     if (
-      currentDiff != null &&
-      !currentDiff.isPartial &&
-      currentDiff.additionLines.length === 0
+      wasAlreadyActive &&
+      this.renderCache != null &&
+      this.renderCache.diff !== diff
     ) {
+      this.clearRenderCache();
+    }
+    const { renderCache } = this;
+
+    if (!diff.isPartial && diff.additionLines.length === 0) {
       Object.assign(
-        currentDiff,
-        recomputeEmptyDocumentDiff(currentDiff, this.options.parseDiffOptions)
+        diff,
+        recomputeEmptyDocumentDiff(diff, this.options.parseDiffOptions)
       );
-      this.markEditSessionPass(currentDiff);
+      this.markEditSessionPass(diff);
       this.clearRenderCache();
       return;
     }
 
-    if (diff == null) {
-      return;
-    }
     if (renderCache == null) {
       return;
     }
@@ -386,6 +391,9 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
   public endEditSession(): void {
     this.editSessionActive = false;
     this.pendingHighlightResult = undefined;
+    if (this.diff == null) {
+      this.clearRenderCache();
+    }
   }
 
   /**
@@ -435,7 +443,12 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
             workerManager.getDiffResultCache(diff)
           );
         })
-        .catch((error: unknown) => this.onHighlightError(error));
+        .catch((error: unknown) => {
+          // A canceled prime leaves the current result in place.
+          if (!isHandledWorkerPoolError(error)) {
+            this.onHighlightError(error);
+          }
+        });
     }
     return this.asyncHighlight(diff)
       .then((fresh) => this.applyRefreshedResult(diff, fresh))
@@ -564,7 +577,9 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
   public updateRenderCache(
     dirtyLines: Map<number, Array<HighlightedToken>>,
     themeType: 'dark' | 'light',
-    lineCountChangeInFlight = false
+    lineCountChangeInFlight = false,
+    changedDocumentLines?: ReadonlyMap<number, string>,
+    documentLineCount?: number
   ): boolean {
     this.pendingStructuralRows = undefined;
     const { renderCache } = this;
@@ -587,6 +602,40 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
     // has shifted the old data into its authoritative positions.
     const changedAdditionLines: number[] = [];
     const previousAdditionLines = new Map<number, string>();
+    // Source edits must reach the session diff independently of highlighting.
+    // The parsed diff omits the final empty editor row. Once that row has
+    // text, include it in the file; leave it out while it is still empty.
+    if (pendingStructuralRows == null && changedDocumentLines != null) {
+      const additionLineCount = diff.additionLines.length;
+      const canAppendFinalRow = canAppendFinalDocumentRow(
+        diff.additionLines,
+        documentLineCount
+      );
+      for (const [line, text] of changedDocumentLines) {
+        if (
+          line < 0 ||
+          line > additionLineCount ||
+          (line === additionLineCount && (text === '' || !canAppendFinalRow))
+        ) {
+          continue;
+        }
+        const previous = diff.additionLines[line] ?? '';
+        if (previous !== text) {
+          diff.additionLines[line] = text;
+          diff.additionCharacterCount += text.length - previous.length;
+          changedAdditionLines.push(line);
+          previousAdditionLines.set(line, previous);
+          // A newly revealed row must show current text even before the
+          // tokenizer supplies its colors.
+          if (!dirtyLines.has(line)) {
+            hastLines[line] = createPlainAdditionLineElement(
+              line,
+              cleanLastNewline(text)
+            );
+          }
+        }
+      }
+    }
     for (const [line, tokens] of dirtyLines) {
       const prev = hastLines[line] as HASTElement | undefined;
       const prevProps = prev?.properties ?? {};
@@ -597,8 +646,14 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
       // The host text document can expose one extra trailing empty line when
       // the file ends with a newline. Deferred tokenization must not grow
       // additionLines from that mismatch or hunk trailing context desyncs.
-      if (pendingStructuralRows == null && canSyncDiffLine) {
-        diff.additionLines[line] = applyLineTextWithNewline(prevLine, lineText);
+      if (
+        pendingStructuralRows == null &&
+        canSyncDiffLine &&
+        changedDocumentLines?.has(line) !== true
+      ) {
+        const nextLine = applyLineTextWithNewline(prevLine, lineText);
+        diff.additionLines[line] = nextLine;
+        diff.additionCharacterCount += nextLine.length - prevLine.length;
         if (prevText !== lineText) {
           changedAdditionLines.push(line);
           previousAdditionLines.set(line, prevLine);
@@ -660,6 +715,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
             recomputeTopAlignedAdditionDiff(
               diff,
               diff.additionLines,
+              diff.additionCharacterCount,
               this.options.parseDiffOptions
             )
           );
@@ -700,17 +756,18 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
     }
   }
 
-  // Normally triggered by the host when the document line count changes.
-  public applyDocumentChange(textDocument: DiffsTextDocument): void {
+  // Rebuild the session diff from the document even without a highlighted
+  // result; suspended programmatic edits still need current hunks on return.
+  public applyDocumentChange(
+    textDocument: TextDocument<'file-diff', LAnnotation>
+  ): void {
     const { pendingStructuralRows, renderCache } = this;
     this.pendingStructuralRows = undefined;
-    if (renderCache == null) {
+    const diff = this.diff ?? renderCache?.diff;
+    if (diff == null) {
       return;
     }
-    const { diff, result } = renderCache;
-    if (result == null) {
-      return;
-    }
+    const result = renderCache?.result;
     if (diff.isPartial) {
       throw new Error('Could not apply document change for partial diff');
     }
@@ -720,16 +777,17 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
     // Reading line-by-line also preserves blank documents and the final
     // editable empty row after a trailing line break.
     const { additionLines: previousAdditionLines } = diff;
-    diff.additionLines = getEditorDocumentLines(
-      textDocument,
-      previousAdditionLines
-    );
-    result.code.additionLines = realignAdditionHastLines(
-      previousAdditionLines,
-      diff.additionLines,
-      result.code.additionLines,
-      textDocument
-    );
+    const { lines, characterCount } = getEditorDocumentLines(textDocument);
+    diff.additionLines = lines;
+    diff.additionCharacterCount = characterCount;
+    if (result != null) {
+      result.code.additionLines = realignAdditionHastLines(
+        previousAdditionLines,
+        diff.additionLines,
+        result.code.additionLines,
+        textDocument
+      );
+    }
     // An empty document splits into zero addition lines, which would recompute
     // to a diff with no editable rows and leave the attached host with no
     // line element for its caret (the additions column vanishes in split;
@@ -739,12 +797,14 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
         diff,
         recomputeEmptyDocumentDiff(diff, this.options.parseDiffOptions)
       );
-      result.code.additionLines[0] = createPlainAdditionLineElement(
-        0,
-        textDocument.getLineText(0)
-      );
+      if (result != null) {
+        result.code.additionLines[0] = createPlainAdditionLineElement(
+          0,
+          textDocument.getLineText(0)
+        );
+      }
     } else if (this.editSessionActive) {
-      this.applySessionDocumentChange(diff);
+      this.applySessionDocumentChange(diff, previousAdditionLines);
     } else {
       Object.assign(
         diff,
@@ -752,7 +812,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
       );
     }
 
-    if (pendingStructuralRows != null) {
+    if (pendingStructuralRows != null && result != null) {
       for (const [line, row] of pendingStructuralRows) {
         if (line < result.code.additionLines.length) {
           result.code.additionLines[line] = row;
@@ -760,22 +820,38 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
       }
     }
 
-    renderCache.isDirty = true;
+    if (renderCache != null) {
+      renderCache.isDirty = true;
+    }
   }
 
   // Session-mode counterpart of the line-count recompute: derive canonical
   // old/current pairing and rebuild the old-side region skeleton from it.
-  private applySessionDocumentChange(diff: FileDiffMetadata): void {
+  private applySessionDocumentChange(
+    diff: FileDiffMetadata,
+    previousAdditionLines: readonly string[]
+  ): void {
     const { parseDiffOptions } = this.options;
     const rawLines = diff.additionLines;
     if (shouldTopAlignAdditionRecompute(diff, rawLines)) {
       this.applyRecomputePreservingSessionType(
         diff,
-        recomputeTopAlignedAdditionDiff(diff, rawLines, parseDiffOptions)
+        recomputeTopAlignedAdditionDiff(
+          diff,
+          rawLines,
+          diff.additionCharacterCount,
+          parseDiffOptions
+        )
       );
       return;
     }
-    this.applyExpansionRemap(rebuildSessionHunks(diff, parseDiffOptions));
+    this.applyExpansionRemap(
+      rebuildSessionHunks(
+        diff,
+        parseDiffOptions,
+        (index) => previousAdditionLines[index]
+      )
+    );
   }
 
   // Empty-document and top-aligned recomputes rebuild the complete diff. While
@@ -892,16 +968,16 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
     };
   }
 
-  public async initializeHighlighter(): Promise<DiffsHighlighter> {
-    this.highlighter = await getSharedHighlighter(
-      getHighlighterOptions(this.computedLang, {
+  public initializeHighlighter(): Promise<DiffsHighlighter> {
+    return getSharedHighlighter(
+      getHighlighterOptions(this.computedLangs, {
         theme: this.getLocalHighlightTheme(),
-        preferredHighlighter:
-          this.workerManager?.getPreferredHighlighter() ??
-          this.options.preferredHighlighter,
+        preferredHighlighter: resolvePreferredHighlighter(
+          this.workerManager,
+          this.options
+        ),
       })
     );
-    return this.highlighter;
   }
 
   public hydrate(diff: FileDiffMetadata | undefined): void {
@@ -923,19 +999,45 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
       result: massiveDiff ? undefined : cache?.result,
       renderRange: undefined,
     };
-    if (
-      !this.editSessionActive &&
-      this.workerManager?.isWorkingPool() === true
-    ) {
+    const workerManager = this.getHighlightWorkerManager(diff);
+    if (workerManager != null) {
       if (this.renderCache.result == null && !massiveDiff) {
         // We should only kick off a preload of the AST if we have a WorkerPool
-        this.workerManager.highlightDiffAST(this, this.diff);
+        workerManager.highlightDiffAST(this, this.diff);
       }
     }
     // Lets attempt to get the highlighter/languages ready immediately
-    else if (this.highlighter == null) {
-      this.computedLang = diff.lang ?? getFiletypeFromFileName(diff.name);
-      void this.initializeHighlighter();
+    else if (
+      getHighlighterIfLoaded({ theme: this.getLocalHighlightTheme() }) == null
+    ) {
+      this.computedLangs = getDiffLanguages(diff);
+      void this.initializeHighlighter().catch((error: unknown) => {
+        if (!(error instanceof HighlighterDisposedError)) {
+          this.onHighlightError(error);
+        }
+      });
+    }
+  }
+
+  // Returns the pool when there's a valid worker AND we should use it
+  private getHighlightWorkerManager(
+    diff: FileDiffMetadata
+  ): WorkerPoolManager | undefined {
+    const { editSessionActive, workerManager } = this;
+    return !editSessionActive &&
+      workerManager?.isWorkingPool() === true &&
+      !workerManager.shouldHighlightOnMainThread(diff)
+      ? workerManager
+      : undefined;
+  }
+
+  private cacheHighlightResult(
+    diff: FileDiffMetadata,
+    renderResult: RenderDiffResult
+  ): void {
+    const { editSessionActive, workerManager } = this;
+    if (!editSessionActive && workerManager?.isWorkingPool() === true) {
+      workerManager.setDiffResultCache(diff.cacheKey, renderResult);
     }
   }
 
@@ -1042,8 +1144,9 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
     if (forcePlainText) {
       return (
         (renderCache.result == null && renderCache.hydrated !== true) ||
-        this.workerManager?.isWorkingPool() === true ||
-        (this.highlighter != null && areThemesAttached(options.theme))
+        (this.workerManager?.isWorkingPool() === true &&
+          !this.workerManager.shouldHighlightOnMainThread(diff)) ||
+        getHighlighterIfLoaded({ theme: options.theme }) != null
       );
     }
     // Hydration has highlighted DOM without a local AST. It is still active
@@ -1053,14 +1156,11 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
       return true;
     }
 
-    if (
-      !this.editSessionActive &&
-      this.workerManager?.isWorkingPool() === true
-    ) {
+    if (this.getHighlightWorkerManager(diff) != null) {
       return !renderCache.highlighted;
     }
 
-    return this.highlighter != null && areThemesAttached(options.theme);
+    return getHighlighterIfLoaded({ theme: options.theme }) != null;
   }
 
   public renderDiff(
@@ -1104,10 +1204,8 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
       this.renderCache.renderRange,
       renderRange
     );
-    if (
-      !this.editSessionActive &&
-      this.workerManager?.isWorkingPool() === true
-    ) {
+    const workerManager = this.getHighlightWorkerManager(diff);
+    if (workerManager != null) {
       // Hydration has highlighted DOM but no local AST. Keep that DOM until
       // its corresponding worker result is ready.
       const preserveHydratedContent =
@@ -1132,7 +1230,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
           newRenderRange ||
           forceHighlight
         ) {
-          this.renderCache.result = this.workerManager.getPlainDiffAST(
+          this.renderCache.result = workerManager.getPlainDiffAST(
             diff,
             renderRange.startingLine,
             renderRange.totalLines,
@@ -1155,23 +1253,22 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
         hasContent &&
         (!this.renderCache.highlighted || forceHighlight)
       ) {
-        this.workerManager.highlightDiffAST(this, diff);
+        workerManager.highlightDiffAST(this, diff);
       }
     } else {
-      this.computedLang = diff.lang ?? getFiletypeFromFileName(diff.name);
+      this.computedLangs = getDiffLanguages(diff);
+      const highlighter = getHighlighterIfLoaded();
       const hasThemes =
-        this.highlighter != null && areThemesAttached(options.theme);
+        highlighter != null && areThemesAttached(options.theme, highlighter);
       const hasLangs =
-        this.highlighter != null && areLanguagesAttached(this.computedLang);
+        highlighter != null &&
+        areLanguagesAttached(this.computedLangs, highlighter);
       const canHighlight = !forcePlainText && hasLangs;
+      const lazyLineAST = Number.isFinite(renderRange.totalLines);
 
-      // If we have any semblance of a highlighter with the correct theme(s)
-      // attached, we can kick off some form of rendering.  If we don't have
-      // the correct language, then we can render plain text and after kick off
-      // an async job to get the highlighted AST
       if (
         canRenderDiff &&
-        this.highlighter != null &&
+        highlighter != null &&
         hasThemes &&
         (forceHighlight ||
           forcePlainText ||
@@ -1180,8 +1277,9 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
       ) {
         const { result, options } = this.renderDiffWithHighlighter(
           diff,
-          this.highlighter,
-          forcePlainText || !hasLangs
+          highlighter,
+          forcePlainText || !hasLangs,
+          lazyLineAST
         );
         this.renderCache = {
           diff,
@@ -1190,15 +1288,24 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
           result,
           renderRange: undefined,
         };
+        if (canHighlight) {
+          this.cacheHighlightResult(diff, { result, options });
+        }
       }
 
-      // If we get in here it means we'll have to kick off an async highlight
-      // process which will involve initializing the highlighter with new themes
-      // and languages
       if (!hasThemes || (!forcePlainText && !hasLangs)) {
-        void this.asyncHighlight(diff).then(({ result, options }) => {
-          this.applyHighlightResult(diff, result, options, !forcePlainText);
-        });
+        void this.asyncHighlight(diff, lazyLineAST)
+          .then(({ result, options }) => {
+            if (!forcePlainText) {
+              this.cacheHighlightResult(diff, { result, options });
+            }
+            this.applyHighlightResult(diff, result, options, !forcePlainText);
+          })
+          .catch((error: unknown) => {
+            if (!(error instanceof HighlighterDisposedError)) {
+              this.onHighlightError(error);
+            }
+          });
       }
     }
     return this.renderCache.result != null
@@ -1215,7 +1322,10 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
     renderRange: RenderRange = DEFAULT_RENDER_RANGE
   ): Promise<HunksRenderResult> {
     this.diff = diff;
-    const { result } = await this.asyncHighlight(diff);
+    const { result } = await this.asyncHighlight(
+      diff,
+      Number.isFinite(renderRange.totalLines)
+    );
     return this.processDiffResult(diff, renderRange, result);
   }
 
@@ -1239,39 +1349,43 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
   }
 
   private async asyncHighlight(
-    diff: FileDiffMetadata
+    diff: FileDiffMetadata,
+    lazyLineAST = false
   ): Promise<RenderDiffResult> {
     const forcePlainText = isDiffMassive(diff, this.getTokenizeMaxLength());
-    this.computedLang = forcePlainText
-      ? 'text'
-      : (diff.lang ?? getFiletypeFromFileName(diff.name));
+    this.computedLangs = forcePlainText ? ['text'] : getDiffLanguages(diff);
+    let highlighter = getHighlighterIfLoaded();
     const hasThemes =
-      this.highlighter != null &&
-      areThemesAttached(this.getLocalHighlightTheme());
+      highlighter != null &&
+      areThemesAttached(this.getLocalHighlightTheme(), highlighter);
     const hasLangs =
       forcePlainText ||
-      (this.highlighter != null && areLanguagesAttached(this.computedLang));
+      (highlighter != null &&
+        areLanguagesAttached(this.computedLangs, highlighter));
     // If we don't have the required langs or themes, then we need to
     // initialize the highlighter to load the appropriate languages and themes
-    if (this.highlighter == null || !hasThemes || !hasLangs) {
-      this.highlighter = await this.initializeHighlighter();
+    if (highlighter == null || !hasThemes || !hasLangs) {
+      highlighter = await this.initializeHighlighter();
     }
     return this.renderDiffWithHighlighter(
       diff,
-      this.highlighter,
-      forcePlainText
+      highlighter,
+      forcePlainText,
+      lazyLineAST
     );
   }
 
   private renderDiffWithHighlighter(
     diff: FileDiffMetadata,
     highlighter: DiffsHighlighter,
-    forcePlainText = false
+    forcePlainText = false,
+    lazyLineAST = false
   ): RenderDiffResult {
     const { options } = this.getRenderOptions(diff);
     const { collapsedContextThreshold } = this.getOptionsWithDefaults();
     const result = renderDiffWithHighlighter(diff, highlighter, options, {
       forcePlainText,
+      lazyLineAST,
       expandedHunks: forcePlainText ? true : undefined,
       collapsedContextThreshold,
     });
@@ -1865,7 +1979,10 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
               }
             }
           }
-          if (noEOFCRAddition) {
+          if (
+            noEOFCRAddition &&
+            !(unified && noEOFCRDeletion && type !== 'change')
+          ) {
             const noEOFType =
               type === 'context' || type === 'context-expanded'
                 ? type
@@ -2060,7 +2177,7 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
     result: HunksRenderResult,
     tempChildren: ElementContent[] = []
   ): string {
-    return toHtml(this.renderFullAST(result, tempChildren));
+    return hastToHtml(this.renderFullAST(result, tempChildren));
   }
 
   public renderPartialHTML(
@@ -2068,9 +2185,9 @@ export class DiffHunksRenderer<LAnnotation = undefined> {
     columnType?: 'unified' | 'deletions' | 'additions'
   ): string {
     if (columnType == null) {
-      return toHtml(children);
+      return hastToHtml(children);
     }
-    return toHtml(
+    return hastToHtml(
       createHastElement({
         tagName: 'code',
         children,
@@ -2521,11 +2638,11 @@ function contentLineCount(lines: string[]): number {
 // `nextLines` is editor-shaped, and comparing the raw tails would mismatch on
 // the representational trailing `''`, zero out the suffix, and plain-fill
 // every line below the tokenizer's render window.
-function realignAdditionHastLines(
+function realignAdditionHastLines<LAnnotation>(
   previousLines: string[],
   nextLines: string[],
   hastLines: ElementContent[],
-  textDocument: DiffsTextDocument
+  textDocument: TextDocument<'file-diff', LAnnotation>
 ): ElementContent[] {
   const previousContentLength = contentLineCount(previousLines);
   const nextContentLength = contentLineCount(nextLines);
@@ -2567,6 +2684,21 @@ function realignAdditionHastLines(
   return realigned;
 }
 
+// The editor shows one empty row after a final `\n` that the parsed diff has
+// no entry for. Text typed there is real file content only when that row is
+// the document's single extra line. A lone `\r` also starts an editor line but
+// not a diff line, so any other count means the coordinates disagree and the
+// row cannot be appended safely.
+function canAppendFinalDocumentRow(
+  additionLines: readonly string[],
+  documentLineCount: number | undefined
+): boolean {
+  return (
+    documentLineCount === additionLines.length + 1 &&
+    additionLines.at(-1)?.endsWith('\n') === true
+  );
+}
+
 function createPlainAdditionLineElement(
   lineIndex: number,
   lineText: string,
@@ -2599,40 +2731,32 @@ function createPlainAdditionLineElement(
   };
 }
 
-function getEditorDocumentLines(
-  textDocument: DiffsTextDocument,
-  previousLines: string[]
-): string[] {
+// Reads every document line (with its line break) plus their total character
+// count, so callers can replace `additionLines` and its count in one pass.
+function getEditorDocumentLines<LAnnotation>(
+  textDocument: TextDocument<'file-diff', LAnnotation>
+): { lines: string[]; characterCount: number } {
   const lines: string[] = [];
-  const fallbackLineBreak = getFallbackLineBreak(previousLines);
+  let characterCount = 0;
   for (let line = 0; line < textDocument.lineCount; line++) {
-    const lineText = textDocument.getLineText(line, true);
-    lines.push(
-      line < textDocument.lineCount - 1 && !hasLineBreakSuffix(lineText)
-        ? lineText + fallbackLineBreak
-        : lineText
-    );
+    const text = textDocument.getLineText(line, true);
+    lines.push(text);
+    characterCount += text.length;
   }
-  return lines;
+  return { lines, characterCount };
 }
 
-function hasLineBreakSuffix(line: string): boolean {
-  return line.endsWith('\n') || line.endsWith('\r');
-}
-
-function getFallbackLineBreak(lines: string[]): string {
-  for (const line of lines) {
-    if (line.endsWith('\r\n')) {
-      return '\r\n';
-    }
-    if (line.endsWith('\n')) {
-      return '\n';
-    }
-    if (line.endsWith('\r')) {
-      return '\r';
-    }
+// Renames can supply 2 different languages, so lets go ahead and figure out
+// the required languages
+function getDiffLanguages(diff: FileDiffMetadata): SupportedLanguages[] {
+  if (diff.lang != null) {
+    return [diff.lang];
   }
-  return '\n';
+  const deletionLang = getFiletypeFromFileName(diff.prevName ?? diff.name);
+  const additionLang = getFiletypeFromFileName(diff.name);
+  return deletionLang === additionLang
+    ? [additionLang]
+    : [deletionLang, additionLang];
 }
 
 function isDiffMassive(

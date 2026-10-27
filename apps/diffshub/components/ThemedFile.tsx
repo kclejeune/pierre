@@ -4,39 +4,45 @@ import { File, type FileProps } from '@pierre/diffs/react';
 import { useMemo } from 'react';
 
 import { useDiffThemeProps } from './useDiffThemeProps';
+import { useHighlightTheme } from './useHighlightTheme';
 import { useWorkerDiffTheme } from './useWorkerDiffTheme';
+import { getPreferredHighlighter } from '@/lib/preferredHighlighter';
 import type { DiffThemeInput } from '@/lib/theme/diffThemeProps';
 
 interface ThemedFileProps<
   LAnnotation = undefined,
-> extends FileProps<LAnnotation> {
+  Caret = undefined,
+> extends FileProps<LAnnotation, Caret> {
   // Names-now override (omitted => follow the provider/source).
   theme?: DiffThemeInput;
 }
 
-// Sugar over useDiffThemeProps: applies the active theme names + themeType to
-// the React <File> options and keeps the worker pool in step when present.
-export function ThemedFile<LAnnotation = undefined>({
-  disableWorkerPool = false,
+// Sugar over useDiffThemeProps for the React <File>, matching ThemedCodeView:
+// renders with the highlights css-variables theme (palette applied through
+// the style), and keeps the shared worker pool on that same theme pair.
+export function ThemedFile<LAnnotation = undefined, Caret = undefined>({
   options,
+  style,
   theme,
   ...props
-}: ThemedFileProps<LAnnotation>) {
+}: ThemedFileProps<LAnnotation, Caret>) {
   const diffTheme = useDiffThemeProps(theme);
-  useWorkerDiffTheme(diffTheme.theme, disableWorkerPool);
+  const highlightTheme = useHighlightTheme(diffTheme.theme);
+  useWorkerDiffTheme(highlightTheme.theme);
   const themedOptions = useMemo(
     () => ({
       ...options,
-      theme: diffTheme.theme,
+      preferredHighlighter: getPreferredHighlighter(),
+      theme: highlightTheme.theme,
       themeType: options?.themeType ?? diffTheme.themeType,
     }),
-    [diffTheme, options]
+    [highlightTheme.theme, diffTheme.themeType, options]
   );
   return (
-    <File<LAnnotation>
+    <File<LAnnotation, Caret>
       {...props}
-      disableWorkerPool={disableWorkerPool}
       options={themedOptions}
+      style={{ ...highlightTheme.style, ...style }}
     />
   );
 }

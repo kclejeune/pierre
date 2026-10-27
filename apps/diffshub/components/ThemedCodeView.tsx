@@ -8,44 +8,49 @@ import {
 import { type Ref, useMemo } from 'react';
 
 import { useDiffThemeProps } from './useDiffThemeProps';
+import { useHighlightTheme } from './useHighlightTheme';
 import { useWorkerDiffTheme } from './useWorkerDiffTheme';
+import { getPreferredHighlighter } from '@/lib/preferredHighlighter';
 import type { DiffThemeInput } from '@/lib/theme/diffThemeProps';
 
-type ThemedCodeViewComponent = <LAnnotation = undefined>(
-  props: CodeViewProps<LAnnotation> & {
-    ref?: Ref<CodeViewHandle<LAnnotation>>;
+type ThemedCodeViewComponent = <LAnnotation = undefined, Caret = undefined>(
+  props: CodeViewProps<LAnnotation, Caret> & {
+    ref?: Ref<CodeViewHandle<LAnnotation, Caret>>;
     theme?: DiffThemeInput;
   }
 ) => React.JSX.Element;
 
 export const ThemedCodeView: ThemedCodeViewComponent = <
   LAnnotation = undefined,
+  Caret = undefined,
 >({
-  disableWorkerPool = false,
   options,
   ref,
   theme,
+  style,
   ...props
-}: CodeViewProps<LAnnotation> & {
-  ref?: Ref<CodeViewHandle<LAnnotation>>;
+}: CodeViewProps<LAnnotation, Caret> & {
+  ref?: Ref<CodeViewHandle<LAnnotation, Caret>>;
   theme?: DiffThemeInput;
 }): React.JSX.Element => {
   const diffTheme = useDiffThemeProps(theme);
-  useWorkerDiffTheme(diffTheme.theme, disableWorkerPool);
+  const highlightTheme = useHighlightTheme(diffTheme.theme);
+  useWorkerDiffTheme(highlightTheme.theme);
   const themedOptions = useMemo(
     () => ({
       ...options,
-      theme: diffTheme.theme,
+      preferredHighlighter: getPreferredHighlighter(),
+      theme: highlightTheme.theme,
       themeType: options?.themeType ?? diffTheme.themeType,
     }),
-    [diffTheme, options]
+    [highlightTheme.theme, diffTheme.themeType, options]
   );
   return (
-    <CodeView<LAnnotation>
+    <CodeView<LAnnotation, Caret>
       {...props}
       ref={ref}
-      disableWorkerPool={disableWorkerPool}
       options={themedOptions}
+      style={{ ...highlightTheme.style, ...style }}
     />
   );
 };

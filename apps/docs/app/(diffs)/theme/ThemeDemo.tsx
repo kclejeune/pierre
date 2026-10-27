@@ -13,10 +13,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useTheme } from '@/components/theme-provider';
 import { ButtonGroup, ButtonGroupItem } from '@/components/ui/button-group';
+import { getPreferredHighlighter } from '@/lib/preferredHighlighter';
+import { useOnValueChange } from '@/lib/useOnValueChange';
 import { cn } from '@/lib/utils';
 
-// Preload themes at module level for earliest possible start
+// Preload themes at module level for earliest possible start. The server keeps
+// its default highlighter; the browser names the docs backend so this preload
+// can't claim the shared highlighter for shiki-js.
 void preloadHighlighter({
+  preferredHighlighter:
+    typeof window !== 'undefined' ? getPreferredHighlighter() : undefined,
   themes: [
     'pierre-dark',
     'pierre-dark-soft',
@@ -311,9 +317,12 @@ interface WorkingFile {
 
 export function ThemeDemo() {
   const { resolvedColorScheme } = useTheme();
-  const [colorMode, setColorMode] = useState<'light' | 'dark'>('dark');
+  // Seed from the resolved scheme when it is already known (a fresh client
+  // mount); the change tracking below covers hydration and later flips.
+  const [colorMode, setColorMode] = useState<'light' | 'dark'>(
+    () => resolvedColorScheme ?? 'dark'
+  );
   const [activeTab, setActiveTab] = useState<TabId>('typescript');
-  const [mounted, setMounted] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -348,13 +357,17 @@ export function ThemeDemo() {
     [workingFiles]
   );
 
-  // Sync with system theme on mount
-  useEffect(() => {
-    setMounted(true);
-    if (resolvedColorScheme === 'light' || resolvedColorScheme === 'dark') {
-      setColorMode(resolvedColorScheme);
-    }
-  }, [resolvedColorScheme]);
+  // Seeded with the current scheme: the useState initializer above already
+  // covers a mount that knows it, so only later changes need to run.
+  useOnValueChange(
+    resolvedColorScheme,
+    (scheme) => {
+      if (scheme === 'light' || scheme === 'dark') {
+        setColorMode(scheme);
+      }
+    },
+    resolvedColorScheme
+  );
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -460,7 +473,7 @@ export function ThemeDemo() {
     );
   };
 
-  if (!mounted) {
+  if (resolvedColorScheme == null) {
     return (
       <div className="aspect-[16/10] w-full animate-pulse rounded-lg bg-neutral-200 dark:bg-neutral-800" />
     );

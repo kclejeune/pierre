@@ -8,10 +8,17 @@ import {
   type FileDiffOptions,
   type FileEditCompleteEvent,
   type FileOptions,
+  type HighlighterTypes,
   type LineAnnotation,
   type SelectedLineRange,
 } from '@pierre/diffs';
-import type { Editor, EditorOptions } from '@pierre/diffs/edit';
+import type {
+  Editor,
+  EditorOptions,
+  EditorType,
+  EditPredictProvider,
+  EditPredictResponse,
+} from '@pierre/diffs/edit';
 import {
   type CodeViewReactOptions,
   File,
@@ -21,6 +28,8 @@ import {
 } from '@pierre/diffs/react';
 import type { PreloadFileDiffResult } from '@pierre/diffs/ssr';
 import {
+  IconBrandGithub,
+  IconBrush,
   IconCheck,
   IconChevronSm,
   IconCiWarning,
@@ -40,14 +49,24 @@ import {
   IconLink,
   IconListOrdered,
   IconParagraph,
+  IconSparkle,
   IconSymbolDiffstat,
   IconWordWrap,
   IconXSquircle,
 } from '@pierre/icons';
 import { useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { toast } from 'sonner';
 
+import { CodestralIcon } from '../_edit/CodestralIcon';
 import type { PlaygroundAnnotationMetadata } from './constants';
 import {
   CODE_VIEW_ITEMS,
@@ -65,14 +84,21 @@ import {
 import { EditSessionButtons } from './PlaygroundEditButtons';
 import { PlaygroundVirtualizerElementView } from './PlaygroundVirtualizerElementView';
 import { PlaygroundVirtualizerView } from './PlaygroundVirtualizerView';
+import {
+  PlaygroundHighlighterReadyContext,
+  PlaygroundWorkerPool,
+} from './PlaygroundWorkerPool';
 import type {
   HunkSeparatorValue,
   LineHoverHighlight,
+  PlaygroundLineDiffType,
+  PlaygroundUrlState,
   ViewMode,
 } from './searchParams';
 import {
   DARK_THEMES,
   DEFAULTS,
+  HIGHLIGHTERS,
   LIGHT_THEMES,
   parsePlaygroundSearchParams,
 } from './searchParams';
@@ -87,9 +113,16 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ToggleSwitch } from '@/components/ui/toggle-switch';
 
+const HIGHLIGHTER_LABELS: Record<HighlighterTypes, string> = {
+  'shiki-js': 'Shiki JS',
+  'shiki-wasm': 'Shiki WASM',
+  highlights: 'Highlights',
+};
+
 const LINE_DIFF_OPTIONS = [
   { value: 'word-alt', label: 'Word-Alt' },
   { value: 'word', label: 'Word' },
+  { value: 'word-line', label: 'Word-Line' },
   { value: 'char', label: 'Character' },
   { value: 'none', label: 'None' },
 ] as const;
@@ -121,6 +154,28 @@ const EMPTY_ANNOTATIONS: DiffLineAnnotation<PlaygroundAnnotationMetadata>[] =
 const EMPTY_FILE_ANNOTATIONS: LineAnnotation<PlaygroundAnnotationMetadata>[] =
   [];
 
+type PredictionStatus =
+  | 'idle'
+  | 'waiting'
+  | 'predicting'
+  | 'ready'
+  | 'empty'
+  | 'error';
+
+const PREDICTION_STATUS_TEXT: Record<PredictionStatus, React.ReactNode> = {
+  idle: null,
+  waiting: 'Codestral ready.',
+  predicting: 'Predicting…',
+  ready: (
+    <>
+      Prediction ready — press <kbd>Tab</kbd> to accept or <kbd>Esc</kbd> to
+      dismiss.
+    </>
+  ),
+  empty: 'No suggestion returned. Keep editing to try again.',
+  error: 'Prediction unavailable. Check the demo service and try again.',
+};
+
 function isDirectView(viewMode: ViewMode): boolean {
   return viewMode === 'diff' || viewMode === 'file';
 }
@@ -133,7 +188,7 @@ function isDirectView(viewMode: ViewMode): boolean {
 // this as their options prop: it carries no callback keys, so it also spreads
 // cleanly into the plain-file FileOptions their README component uses.
 export type SharedRenderOptions = Pick<
-  FileDiffOptions<undefined>,
+  FileDiffOptions<undefined, undefined>,
   | 'diffStyle'
   | 'diffIndicators'
   | 'lineDiffType'
@@ -143,6 +198,7 @@ export type SharedRenderOptions = Pick<
   | 'overflow'
   | 'themeType'
   | 'theme'
+  | 'preferredHighlighter'
 > & {
   // The full `hunkSeparators` type includes an LAnnotation-typed render
   // callback; the playground only uses the string presets, so narrow it here to
@@ -151,10 +207,15 @@ export type SharedRenderOptions = Pick<
 };
 
 interface PlaygroundClientProps {
-  prerenderedDiff: PreloadFileDiffResult<PlaygroundAnnotationMetadata>;
+  prerenderedDiff: PreloadFileDiffResult<
+    PlaygroundAnnotationMetadata,
+    undefined
+  >;
 }
 
 interface PlaygroundControlsContentProps {
+  highlighter: HighlighterTypes;
+  setHighlighter: (value: HighlighterTypes) => void;
   viewMode: ViewMode;
   setViewMode: (v: ViewMode) => void;
   diffStyle: 'split' | 'unified';
@@ -167,8 +228,8 @@ interface PlaygroundControlsContentProps {
   setSelectedDarkTheme: (v: (typeof DARK_THEMES)[number]) => void;
   diffIndicators: DiffIndicators;
   setDiffIndicators: (v: DiffIndicators) => void;
-  lineDiffType: 'word-alt' | 'word' | 'char' | 'none';
-  setLineDiffType: (v: 'word-alt' | 'word' | 'char' | 'none') => void;
+  lineDiffType: PlaygroundLineDiffType;
+  setLineDiffType: (v: PlaygroundLineDiffType) => void;
   lineHoverHighlight: LineHoverHighlight;
   setLineHoverHighlight: (v: LineHoverHighlight) => void;
   hunkSeparators: HunkSeparatorValue;
@@ -185,6 +246,8 @@ interface PlaygroundControlsContentProps {
   setEnableGutterUtility: (v: boolean) => void;
   showAnnotations: boolean;
   setShowAnnotations: (v: boolean) => void;
+  editPredictionEnabled: boolean;
+  setEditPredictionEnabled: (v: boolean) => void;
   editing: boolean;
   showMarkers: boolean;
   setShowMarkers: (v: boolean) => void;
@@ -198,6 +261,8 @@ interface PlaygroundControlsContentProps {
 }
 
 function PlaygroundControlsContent({
+  highlighter,
+  setHighlighter,
   viewMode,
   setViewMode,
   diffStyle,
@@ -228,6 +293,8 @@ function PlaygroundControlsContent({
   setEnableGutterUtility,
   showAnnotations,
   setShowAnnotations,
+  editPredictionEnabled,
+  setEditPredictionEnabled,
   editing,
   showMarkers,
   setShowMarkers,
@@ -288,6 +355,37 @@ function PlaygroundControlsContent({
               >
                 {option.label}
                 {viewMode === option.value && <IconCheck className="ml-auto" />}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <div className="bg-border h-6 w-px" />
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              aria-label="Highlighter"
+              className="justify-start px-3"
+            >
+              <IconBrush aria-hidden="true" />
+              {HIGHLIGHTER_LABELS[highlighter]}
+              <IconChevronSm className="text-muted-foreground ml-auto" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            className={dropdownContentClassName}
+          >
+            {HIGHLIGHTERS.map((value) => (
+              <DropdownMenuItem
+                key={value}
+                selected={highlighter === value}
+                onClick={() => setHighlighter(value)}
+              >
+                {HIGHLIGHTER_LABELS[value]}
+                {highlighter === value && <IconCheck className="ml-auto" />}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
@@ -408,37 +506,6 @@ function PlaygroundControlsContent({
           </ButtonGroupItem>
         </ButtonGroup>
 
-        <div className="bg-border h-6 w-px" />
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="justify-start px-3">
-              <IconCodeStyleInline />
-              {LINE_DIFF_OPTIONS.find((opt) => opt.value === lineDiffType)
-                ?.label ?? lineDiffType}
-              <IconChevronSm className="text-muted-foreground ml-auto" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="start"
-            scrollSelectedIntoView
-            className={dropdownContentClassName}
-          >
-            {LINE_DIFF_OPTIONS.map((option) => (
-              <DropdownMenuItem
-                key={option.value}
-                onClick={() => setLineDiffType(option.value)}
-                selected={lineDiffType === option.value}
-              >
-                {option.label}
-                {lineDiffType === option.value && (
-                  <IconCheck className="ml-auto" />
-                )}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
         {!hideShare && (
           <>
             <div className="bg-border h-6 w-px xl:hidden" />
@@ -483,6 +550,13 @@ function PlaygroundControlsContent({
           onCheckedChange={setShowAnnotations}
         />
 
+        <ToggleButton
+          icon={<IconSparkle />}
+          label="Tab completion"
+          checked={editPredictionEnabled}
+          onCheckedChange={setEditPredictionEnabled}
+        />
+
         {/* Markers use the direct view's active edit-session editor. */}
         {isDirectView(viewMode) && (
           <ToggleButton
@@ -496,6 +570,37 @@ function PlaygroundControlsContent({
             title={!editing ? 'Start editing to show lint markers' : undefined}
           />
         )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="justify-start px-3">
+              <IconCodeStyleInline />
+              {LINE_DIFF_OPTIONS.find((opt) => opt.value === lineDiffType)
+                ?.label ?? lineDiffType}
+              <IconChevronSm className="text-muted-foreground ml-auto" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            scrollSelectedIntoView
+            className={dropdownContentClassName}
+          >
+            {LINE_DIFF_OPTIONS.map((option) => (
+              <DropdownMenuItem
+                key={option.value}
+                onClick={() => setLineDiffType(option.value)}
+                selected={lineDiffType === option.value}
+              >
+                {option.label}
+                {lineDiffType === option.value && (
+                  <IconCheck className="ml-auto" />
+                )}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -526,9 +631,6 @@ function PlaygroundControlsContent({
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-3">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="justify-start px-3">
@@ -630,18 +732,40 @@ function PlaygroundControlsContent({
 
 export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
   const searchParams = useSearchParams();
+  const [urlState] = useState(() =>
+    parsePlaygroundSearchParams((key) => searchParams.get(key))
+  );
+  const [highlighter, setHighlighter] = useState<HighlighterTypes>(
+    urlState.highlighter
+  );
+  return (
+    <PlaygroundWorkerPool highlighter={highlighter}>
+      <PlaygroundContent
+        prerenderedDiff={prerenderedDiff}
+        urlState={urlState}
+        highlighter={highlighter}
+        setHighlighter={setHighlighter}
+      />
+    </PlaygroundWorkerPool>
+  );
+}
+
+function PlaygroundContent({
+  prerenderedDiff,
+  urlState,
+  highlighter,
+  setHighlighter,
+}: PlaygroundClientProps & {
+  urlState: PlaygroundUrlState;
+  highlighter: HighlighterTypes;
+  setHighlighter: (value: HighlighterTypes) => void;
+}) {
+  const highlighterReady = useContext(PlaygroundHighlighterReadyContext);
 
   // The app-wide color scheme resolved by @pierre/theming (the shared theme
   // controller). The diff's "system" mode must follow this so the editor stays
   // in sync with the rest of the app. See `effectiveColorMode`.
   const { resolvedColorScheme } = useTheme();
-
-  // One-time parse of the querystring with the same parser the server used to
-  // build the prerendered payload, so the first client render agrees with the
-  // prerendered markup.
-  const [urlState] = useState(() =>
-    parsePlaygroundSearchParams((key) => searchParams.get(key))
-  );
 
   const [viewMode, setViewMode] = useState<ViewMode>(urlState.viewMode);
   const [diffStyle, setDiffStyle] = useState(urlState.diffStyle);
@@ -676,6 +800,16 @@ export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
   );
   const [edit, setEdit] = useState(urlState.edit);
   const [showMarkers, setShowMarkers] = useState(urlState.showMarkers);
+  const editPredictionEnabledRef = useRef(urlState.editPrediction);
+  const [editPredictionEnabled, setEditPredictionEnabled] = useState(
+    urlState.editPrediction
+  );
+  const codestralEnabledRef = useRef(false);
+  const [codestralEnabled, setCodestralEnabled] = useState(false);
+  const [authenticating, setAuthenticating] = useState(false);
+  const [githubAuthenticated, setGithubAuthenticated] = useState(false);
+  const [predictionStatus, setPredictionStatus] =
+    useState<PredictionStatus>('idle');
   const [selectedRange, setSelectedRange] = useState<SelectedLineRange | null>(
     urlState.selectedRange
   );
@@ -696,15 +830,148 @@ export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
       ? 'select'
       : 'none';
 
-  const editorRef = useRef<Editor<PlaygroundAnnotationMetadata> | null>(null);
-  const editorOptions = useMemo<EditorOptions<PlaygroundAnnotationMetadata>>(
+  const handleEditPredictionEnabledChange = useCallback((enabled: boolean) => {
+    editPredictionEnabledRef.current = enabled;
+    setEditPredictionEnabled(enabled);
+    setPredictionStatus(
+      enabled && codestralEnabledRef.current ? 'waiting' : 'idle'
+    );
+  }, []);
+
+  const redirectToGithubAuth = useCallback(() => {
+    const returnUrl = new URL(window.location.href);
+    returnUrl.searchParams.set('predict', '1');
+    const returnTo = `${returnUrl.pathname}${returnUrl.search}${returnUrl.hash}`;
+    window.location.assign(
+      `/edit/auth?returnTo=${encodeURIComponent(returnTo)}`
+    );
+  }, []);
+
+  const predictionProvider = useMemo<EditPredictProvider>(
     () => ({
+      async predict(request, { signal }) {
+        if (!editPredictionEnabledRef.current || !codestralEnabledRef.current) {
+          const prefix = request.excerptText.slice(
+            0,
+            request.cursorOffsetInExcerpt
+          );
+          const lines = prefix.split(request.eol);
+          return {
+            edits: [],
+            newCursor: {
+              line: request.excerptStartLine + lines.length - 1,
+              character: lines.at(-1)?.length ?? 0,
+            },
+          };
+        }
+
+        setPredictionStatus('predicting');
+        try {
+          const response = await fetch('/edit/predict', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(request),
+            signal,
+          });
+          if (response.status === 401) {
+            setGithubAuthenticated(false);
+            redirectToGithubAuth();
+            throw new Error('GitHub sign-in required');
+          }
+          if (!response.ok) {
+            throw new Error('Edit prediction request failed');
+          }
+          const prediction = (await response.json()) as EditPredictResponse;
+          if (!signal.aborted) {
+            setPredictionStatus(
+              prediction.edits.length === 0 ? 'empty' : 'ready'
+            );
+          }
+          return prediction;
+        } catch (error) {
+          if (!signal.aborted) {
+            setPredictionStatus('error');
+          }
+          throw error;
+        }
+      },
+    }),
+    [redirectToGithubAuth]
+  );
+
+  const editPrediction = useMemo(
+    () => ({ mode: 'eager' as const, provider: predictionProvider }),
+    [predictionProvider]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    void fetch('/edit/auth', {
+      method: 'HEAD',
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+      .then((response) => {
+        if (!controller.signal.aborted) {
+          setGithubAuthenticated(response.status === 204);
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setGithubAuthenticated(false);
+        }
+      });
+
+    return () => controller.abort();
+  }, []);
+
+  const tryCodestral = useCallback(async () => {
+    setAuthenticating(true);
+    try {
+      const response = await fetch('/edit/auth', {
+        method: 'HEAD',
+        cache: 'no-store',
+      });
+      if (response.status === 401) {
+        setGithubAuthenticated(false);
+        redirectToGithubAuth();
+        return;
+      }
+      if (!response.ok) {
+        setPredictionStatus('error');
+        return;
+      }
+      setGithubAuthenticated(true);
+      codestralEnabledRef.current = true;
+      setCodestralEnabled(true);
+      setPredictionStatus('waiting');
+    } catch {
+      setPredictionStatus('error');
+    } finally {
+      setAuthenticating(false);
+    }
+  }, [redirectToGithubAuth]);
+
+  const predictionStatusText = authenticating
+    ? 'Checking GitHub sign-in…'
+    : PREDICTION_STATUS_TEXT[predictionStatus];
+
+  const editorRef = useRef<Editor<
+    EditorType,
+    PlaygroundAnnotationMetadata
+  > | null>(null);
+  const editorOptions = useMemo<
+    EditorOptions<EditorType, PlaygroundAnnotationMetadata, undefined>
+  >(
+    () => ({
+      editPrediction,
       onAttach(editor) {
         editorRef.current = editor;
         editor.focus({ lineNumber: 'first-visible', preventScroll: true });
       },
     }),
-    []
+    [editPrediction]
   );
 
   // The file/diff the direct views show: the fixtures until a session is
@@ -718,7 +985,7 @@ export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
   const cancelledEdit = useRef(false);
   const savedVersionRef = useRef(0);
   const handleFileEditComplete = useCallback(
-    (event: FileEditCompleteEvent<PlaygroundAnnotationMetadata>) => {
+    (event: FileEditCompleteEvent<PlaygroundAnnotationMetadata, undefined>) => {
       if (cancelledEdit.current) {
         cancelledEdit.current = false;
         return 'reject';
@@ -736,7 +1003,9 @@ export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
     []
   );
   const handleDiffEditComplete = useCallback(
-    (event: FileDiffEditCompleteEvent<PlaygroundAnnotationMetadata>) => {
+    (
+      event: FileDiffEditCompleteEvent<PlaygroundAnnotationMetadata, undefined>
+    ) => {
       if (cancelledEdit.current) {
         cancelledEdit.current = false;
         return 'reject';
@@ -802,6 +1071,9 @@ export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
   const buildUrl = useCallback(() => {
     const params = new URLSearchParams();
 
+    if (highlighter !== DEFAULTS.highlighter)
+      params.set('highlighter', highlighter);
+
     // Only add non-default values to keep URL clean
     if (viewMode !== DEFAULTS.viewMode) params.set('view', viewMode);
     if (diffStyle !== DEFAULTS.diffStyle) params.set('layout', diffStyle);
@@ -832,6 +1104,8 @@ export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
       params.set('gutter', enableGutterUtility ? '1' : '0');
     if (showAnnotations !== DEFAULTS.annotations)
       params.set('annot', showAnnotations ? '1' : '0');
+    if (editPredictionEnabled !== DEFAULTS.editPrediction)
+      params.set('predict', editPredictionEnabled ? '1' : '0');
     if (edit && isDirectView(viewMode)) params.set('edit', 'edit');
     if (showMarkers !== DEFAULTS.markers)
       params.set('markers', showMarkers ? '1' : '0');
@@ -850,6 +1124,7 @@ export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
       ? `/playground?${queryString}`
       : '/playground';
   }, [
+    highlighter,
     viewMode,
     diffStyle,
     colorMode,
@@ -866,6 +1141,7 @@ export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
     enableLineSelection,
     enableGutterUtility,
     showAnnotations,
+    editPredictionEnabled,
     edit,
     showMarkers,
     committedSelectedRange,
@@ -1035,11 +1311,16 @@ export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
   const [usePrerenderedHTML, setUsePrerenderedHTML] = useState(
     () => viewMode === 'diff'
   );
-  if (usePrerenderedHTML && viewMode !== 'diff') {
+  if (
+    usePrerenderedHTML &&
+    (viewMode !== 'diff' || highlighter !== urlState.highlighter)
+  ) {
     setUsePrerenderedHTML(false);
   }
 
   const controlsContentProps = {
+    highlighter,
+    setHighlighter,
     viewMode,
     setViewMode: setViewModeAndResetEditor,
     diffStyle,
@@ -1070,6 +1351,8 @@ export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
     setEnableGutterUtility,
     showAnnotations,
     setShowAnnotations,
+    editPredictionEnabled,
+    setEditPredictionEnabled: handleEditPredictionEnabledChange,
     editing: edit,
     showMarkers,
     setShowMarkers,
@@ -1093,6 +1376,7 @@ export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
   // edit-specific options are layered on per component below.
   const renderOptions = useMemo<SharedRenderOptions>(
     () => ({
+      preferredHighlighter: highlighter,
       diffStyle,
       diffIndicators,
       lineDiffType,
@@ -1105,6 +1389,7 @@ export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
       theme: { dark: selectedDarkTheme, light: selectedLightTheme },
     }),
     [
+      highlighter,
       diffStyle,
       diffIndicators,
       lineDiffType,
@@ -1135,7 +1420,7 @@ export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
   // CodeView adds its own layout/sticky-header options on top of the shared
   // rendering options; its scrollbar styling mirrors the direct views.
   const codeViewOptions = useMemo<
-    CodeViewReactOptions<PlaygroundAnnotationMetadata>
+    CodeViewReactOptions<PlaygroundAnnotationMetadata, undefined>
   >(
     () => ({
       ...renderOptions,
@@ -1219,7 +1504,9 @@ export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
     ]
   );
 
-  const fileOptions = useMemo<FileOptions<PlaygroundAnnotationMetadata>>(
+  const fileOptions = useMemo<
+    FileOptions<PlaygroundAnnotationMetadata, undefined>
+  >(
     () => ({
       ...renderOptions,
       unsafeCSS: ITEM_UNSAFE_CSS,
@@ -1333,34 +1620,75 @@ export function PlaygroundClient({ prerenderedDiff }: PlaygroundClientProps) {
           </div>
         </div>
       </div>
-      {viewMode === 'diff' ? (
-        fileDiff
-      ) : viewMode === 'file' ? (
-        file
-      ) : viewMode === 'virtualizer' ? (
-        <PlaygroundVirtualizerView
-          diffs={VIRTUALIZER_FILE_DIFFS}
-          options={renderOptions}
-          enableLineSelection={enableLineSelection}
-          enableGutterComments={enableGutterUtility}
-          showAnnotations={showAnnotations}
-        />
-      ) : viewMode === 'virtualizer-element' ? (
-        <PlaygroundVirtualizerElementView
-          diffs={VIRTUALIZER_FILE_DIFFS}
-          options={renderOptions}
-          enableLineSelection={enableLineSelection}
-          enableGutterComments={enableGutterUtility}
-          showAnnotations={showAnnotations}
-        />
-      ) : (
-        <PlaygroundCodeView
-          items={CODE_VIEW_ITEMS}
-          options={codeViewOptions}
-          enableLineSelection={enableLineSelection}
-          enableGutterComments={enableGutterUtility}
-          showAnnotations={showAnnotations}
-        />
+      {editPredictionEnabled && (
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-muted-foreground text-xs">
+            Connect Codestral, then edit a file and pause after typing to
+            preview a prediction. Press <kbd>Tab</kbd> to accept or{' '}
+            <kbd>Esc</kbd> to dismiss.
+          </p>
+          <div className="flex basis-full items-center justify-start gap-3 md:ml-auto md:basis-auto md:justify-end">
+            {(authenticating || predictionStatus !== 'idle') && (
+              <span
+                className="text-muted-foreground text-xs"
+                role="status"
+                aria-live="polite"
+              >
+                {predictionStatusText}
+              </span>
+            )}
+            {!codestralEnabled && (
+              <Button
+                variant="outline"
+                onClick={() => void tryCodestral()}
+                disabled={authenticating}
+              >
+                {githubAuthenticated ? <CodestralIcon /> : <IconBrandGithub />}
+                {githubAuthenticated
+                  ? 'Continue with Codestral'
+                  : 'Connect GitHub'}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+      {highlighterReady && (
+        <Fragment
+          key={`${highlighter}:${workerPool == null ? 'main' : 'workers'}`}
+        >
+          {viewMode === 'diff' ? (
+            fileDiff
+          ) : viewMode === 'file' ? (
+            file
+          ) : viewMode === 'virtualizer' ? (
+            <PlaygroundVirtualizerView
+              diffs={VIRTUALIZER_FILE_DIFFS}
+              options={renderOptions}
+              enableLineSelection={enableLineSelection}
+              enableGutterComments={enableGutterUtility}
+              showAnnotations={showAnnotations}
+              editPrediction={editPrediction}
+            />
+          ) : viewMode === 'virtualizer-element' ? (
+            <PlaygroundVirtualizerElementView
+              diffs={VIRTUALIZER_FILE_DIFFS}
+              options={renderOptions}
+              enableLineSelection={enableLineSelection}
+              enableGutterComments={enableGutterUtility}
+              showAnnotations={showAnnotations}
+              editPrediction={editPrediction}
+            />
+          ) : (
+            <PlaygroundCodeView
+              items={CODE_VIEW_ITEMS}
+              options={codeViewOptions}
+              enableLineSelection={enableLineSelection}
+              enableGutterComments={enableGutterUtility}
+              showAnnotations={showAnnotations}
+              editPrediction={editPrediction}
+            />
+          )}
+        </Fragment>
       )}
     </div>
   );

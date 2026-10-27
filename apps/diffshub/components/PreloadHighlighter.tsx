@@ -1,15 +1,19 @@
 'use client';
-import { preloadHighlighter } from '@pierre/diffs';
+import { canUseWASM, preloadHighlighter } from '@pierre/diffs';
 import { useEffect } from 'react';
 
 import { docsThemeCatalog } from '@/components/themeCatalog';
-import { getPreferredHighlighter } from '@/lib/getPreferredHighlighter';
+import { HIGHLIGHT_THEME_NAME } from '@/lib/theme/highlightTheme';
 
 export function PreloadHighlighter() {
   useEffect(() => {
+    if (!canUseWASM()) {
+      return;
+    }
     void preloadHighlighter({
       themes: [
         ...new Set([
+          HIGHLIGHT_THEME_NAME,
           'pierre-dark',
           'pierre-dark-soft',
           'pierre-light',
@@ -19,7 +23,7 @@ export function PreloadHighlighter() {
         ]),
       ],
       langs: ['zig', 'rust', 'typescript', 'tsx', 'bash'],
-      preferredHighlighter: getPreferredHighlighter(),
+      preferredHighlighter: 'highlights',
     });
   }, []);
   return null;

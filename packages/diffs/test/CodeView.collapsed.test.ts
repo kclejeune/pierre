@@ -46,11 +46,11 @@ function hasRenderedCode(item: { element: HTMLElement }): boolean {
 }
 
 function getRenderedFile(instance: object): FileContents | undefined {
-  return Reflect.get(instance, 'renderedFile') as FileContents | undefined;
+  return Reflect.get(instance, 'file') as FileContents | undefined;
 }
 
 function getRenderedDiff(instance: object): FileDiffMetadata | undefined {
-  return Reflect.get(instance, 'renderedDiff') as FileDiffMetadata | undefined;
+  return Reflect.get(instance, 'fileDiff') as FileDiffMetadata | undefined;
 }
 
 describe('CodeView item collapsed state', () => {
@@ -114,7 +114,7 @@ describe('CodeView item collapsed state', () => {
   test('collapses an item when its versioned snapshot changes', async () => {
     const { cleanup } = installDom();
     const viewer = new CodeView();
-    const item: CodeViewItem = {
+    const item: CodeViewItem<undefined> = {
       id: 'file:example.txt',
       type: 'file',
       file: makeFile('example.txt'),
@@ -148,7 +148,7 @@ describe('CodeView item collapsed state', () => {
   test('ignores same-version collapsed changes', async () => {
     const { cleanup } = installDom();
     const viewer = new CodeView();
-    const item: CodeViewItem = {
+    const item: CodeViewItem<undefined> = {
       id: 'file:example.txt',
       type: 'file',
       file: makeFile('example.txt'),
@@ -173,7 +173,7 @@ describe('CodeView item collapsed state', () => {
   test('updates one item without changing item order', async () => {
     const { cleanup } = installDom();
     const viewer = new CodeView();
-    const items: CodeViewItem[] = [
+    const items: CodeViewItem<undefined>[] = [
       {
         id: 'file:first.txt',
         type: 'file',
@@ -225,12 +225,15 @@ describe('CodeView item collapsed state', () => {
   test('keeps rendering after many collapsed items shrink the layout', async () => {
     const { cleanup } = installDom();
     const viewer = new CodeView();
-    const items: CodeViewItem[] = Array.from({ length: 40 }, (_, index) => ({
-      id: `file:${index}`,
-      type: 'file',
-      file: makeFile(`example-${index}.txt`, 30),
-      version: 0,
-    }));
+    const items: CodeViewItem<undefined>[] = Array.from(
+      { length: 40 },
+      (_, index) => ({
+        id: `file:${index}`,
+        type: 'file',
+        file: makeFile(`example-${index}.txt`, 30),
+        version: 0,
+      })
+    );
     try {
       const root = createRoot();
       viewer.setup(root);

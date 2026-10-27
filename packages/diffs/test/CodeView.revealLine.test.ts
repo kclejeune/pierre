@@ -74,7 +74,7 @@ describe('CodeView.revealLine', () => {
       newFile: FileContents;
     }>();
     let loadCount = 0;
-    const item: CodeViewItem = {
+    const item: CodeViewItem<undefined> = {
       id: 'diff:reveal.ts',
       type: 'diff',
       fileDiff: partial,
@@ -114,7 +114,7 @@ describe('CodeView.revealLine', () => {
   test('reports false for lines it cannot reveal without a loader', async () => {
     const { cleanup } = installDom();
     const { partial } = createPartialChange();
-    const item: CodeViewItem = {
+    const item: CodeViewItem<undefined> = {
       id: 'diff:reveal.ts',
       type: 'diff',
       fileDiff: partial,

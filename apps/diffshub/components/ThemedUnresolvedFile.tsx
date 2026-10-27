@@ -2,10 +2,12 @@
 
 import { type FileContents, UnresolvedFile } from '@pierre/diffs';
 import { useWorkerPool } from '@pierre/diffs/react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 import { useDiffThemeProps } from './useDiffThemeProps';
+import { useHighlightTheme } from './useHighlightTheme';
 import { useWorkerDiffTheme } from './useWorkerDiffTheme';
+import { getPreferredHighlighter } from '@/lib/preferredHighlighter';
 
 interface ThemedUnresolvedFileProps {
   className?: string;
@@ -29,8 +31,15 @@ export function ThemedUnresolvedFile({
   file,
   onMergeConflictResolve,
 }: ThemedUnresolvedFileProps) {
-  const diffTheme = useDiffThemeProps();
-  useWorkerDiffTheme(diffTheme.theme, false);
+  const baseTheme = useDiffThemeProps();
+  // Render with the highlights css-variables theme like ThemedCodeView, so
+  // this surface and the viewer agree on the shared worker pool's theme.
+  const highlightTheme = useHighlightTheme(baseTheme.theme);
+  const diffTheme = useMemo(
+    () => ({ theme: highlightTheme.theme, themeType: baseTheme.themeType }),
+    [highlightTheme.theme, baseTheme.themeType]
+  );
+  useWorkerDiffTheme(diffTheme.theme);
   const poolManager = useWorkerPool();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<UnresolvedFile<undefined> | null>(null);
@@ -50,6 +59,7 @@ export function ThemedUnresolvedFile({
       {
         mergeConflictActionsType: 'default',
         onMergeConflictResolve: (updated) => resolveRef.current(updated),
+        preferredHighlighter: getPreferredHighlighter(),
         theme: themeRef.current.theme,
         themeType: themeRef.current.themeType,
       },
@@ -83,5 +93,11 @@ export function ThemedUnresolvedFile({
     instance.rerender();
   }, [diffTheme]);
 
-  return <div ref={containerRef} className={className} />;
+  return (
+    <div
+      ref={containerRef}
+      className={className}
+      style={highlightTheme.style}
+    />
+  );
 }

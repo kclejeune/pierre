@@ -47,6 +47,7 @@ const DIFFS_SECTIONS = [
   'Installation',
   'BuildWithAgents',
   'CoreTypes',
+  'Highlighters',
   'ReactAPI',
   'VanillaAPI',
   'CodeView',
@@ -59,6 +60,7 @@ const DIFFS_SECTIONS = [
   'TokenHooks',
   'WorkerPool',
   'SSR',
+  'HighlightsHighlighter',
 ] as const;
 
 const TREES_SECTIONS = [
@@ -91,6 +93,8 @@ const SECTION_DESCRIPTIONS: Record<string, Record<string, string>> = {
       'The diffs agent skill, a paste-ready prompt for agents without skill support, and the plain-text docs',
     CoreTypes:
       'FileContents, FileDiffMetadata, and creating diffs from files or patches',
+    Highlighters:
+      'Choosing Shiki or Highlights for components, SSR, and worker pools',
     ReactAPI:
       'React components for CodeView, diffs, files, UnresolvedFile, EditProvider, and shared props',
     VanillaAPI:
@@ -111,6 +115,8 @@ const SECTION_DESCRIPTIONS: Record<string, Record<string, string>> = {
     WorkerPool:
       'Off-main-thread syntax highlighting with configurable worker pools',
     SSR: 'Server-side rendering with preload functions for instant first paint',
+    HighlightsHighlighter:
+      'Highlights APIs, themes, languages, streaming, and incremental editing',
   },
   trees: {
     Overview:
@@ -356,7 +362,7 @@ function hasFileContents(
   if (typeof value !== 'object' || value === null || !('file' in value)) {
     return false;
   }
-  const file = (value as { file: unknown }).file;
+  const file = value.file;
   if (typeof file !== 'object' || file === null) return false;
   const f = file as { name?: unknown; contents?: unknown };
   return typeof f.contents === 'string' && typeof f.name === 'string';
@@ -371,7 +377,6 @@ const LABEL_OVERRIDES: Record<string, string> = {
   SSR_USAGE_CLIENT: 'Client Component',
   THEMING_REGISTER_THEME: 'Registering Custom Themes',
   THEMING_USE_IN_COMPONENT: 'Using Custom Themes in Components',
-  WORKER_POOL_USAGE: 'Basic Usage',
 };
 
 const LABEL_PREFIXES_TO_STRIP = [
@@ -382,6 +387,7 @@ const LABEL_PREFIXES_TO_STRIP = [
   'SSR_',
   'STYLING_CODE_',
   'THEMING_',
+  'HIGHLIGHTS_',
   'VIRTUALIZATION_',
   'OVERVIEW_',
   'TREES_',

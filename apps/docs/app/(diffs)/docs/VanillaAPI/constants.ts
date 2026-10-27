@@ -8,11 +8,13 @@ const options = {
   unsafeCSS: CustomScrollbarCSS,
 } as const;
 
-export const VANILLA_API_POST_RENDER_LIFECYCLE: PreloadFileOptions<undefined> =
-  {
-    file: {
-      name: 'post_render_lifecycle.ts',
-      contents: `import { FileDiff } from '@pierre/diffs';
+export const VANILLA_API_POST_RENDER_LIFECYCLE: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
+  file: {
+    name: 'post_render_lifecycle.ts',
+    contents: `import { FileDiff } from '@pierre/diffs';
 
 const cleanupByNode = new WeakMap<HTMLElement, () => void>();
 
@@ -60,15 +62,18 @@ const instance = new FileDiff({
 function containsSelectionNode(root: Node, node: Node | null) {
   return node != null && root.contains(node);
 }`,
-    },
-    options,
-  };
+  },
+  options,
+};
 
 // =============================================================================
 // COMPONENT EXAMPLES (short, focused on usage)
 // =============================================================================
 
-export const VANILLA_API_FILE_DIFF_EXAMPLE: PreloadFileOptions<undefined> = {
+export const VANILLA_API_FILE_DIFF_EXAMPLE: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'file_diff_example.ts',
     contents: `import { FileDiff, type FileContents } from '@pierre/diffs';
@@ -109,7 +114,10 @@ instance.cleanUp();`,
   options,
 };
 
-export const VANILLA_API_LOAD_DIFF_FILES: PreloadFileOptions<undefined> = {
+export const VANILLA_API_LOAD_DIFF_FILES: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'load_diff_files.ts',
     contents: `import {
@@ -141,7 +149,10 @@ instance.render({
   options,
 };
 
-export const VANILLA_API_FILE_EXAMPLE: PreloadFileOptions<undefined> = {
+export const VANILLA_API_FILE_EXAMPLE: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'file_example.ts',
     contents: `import { File, type FileContents } from '@pierre/diffs';
@@ -178,11 +189,13 @@ instance.cleanUp();`,
   options,
 };
 
-export const VANILLA_API_UNRESOLVED_FILE_EXAMPLE: PreloadFileOptions<undefined> =
-  {
-    file: {
-      name: 'unresolved_file_example.ts',
-      contents: `import {
+export const VANILLA_API_UNRESOLVED_FILE_EXAMPLE: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
+  file: {
+    name: 'unresolved_file_example.ts',
+    contents: `import {
   UnresolvedFile,
   resolveMergeConflict,
   type FileContents,
@@ -220,11 +233,14 @@ const instance = new UnresolvedFile({
 });
 
 instance.render({ file, containerWrapper: container });`,
-    },
-    options,
-  };
+  },
+  options,
+};
 
-export const VANILLA_API_CODE_VIEW_EXAMPLE: PreloadFileOptions<undefined> = {
+export const VANILLA_API_CODE_VIEW_EXAMPLE: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'code_view_example.ts',
     contents: `import {
@@ -309,7 +325,10 @@ window.addEventListener('beforeunload', () => {
 // FILEDIFF PROPS
 // =============================================================================
 
-export const VANILLA_API_FILE_DIFF_PROPS: PreloadFileOptions<undefined> = {
+export const VANILLA_API_FILE_DIFF_PROPS: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'file_diff_props.ts',
     contents: `import {
@@ -356,9 +375,10 @@ const instance = new FileDiff<ThreadMetadata>({
   // 'dark' or 'light' - forces specific theme
   themeType: 'system',
 
-  // Choose the Shiki engine:
+  // Choose the highlighter backend:
   // 'shiki-js' (default) - JavaScript regex engine
   // 'shiki-wasm' - WASM Oniguruma engine
+  // 'highlights' - bundled WASM lexers
   preferredHighlighter: 'shiki-js',
 
   // ─────────────────────────────────────────────────────────────
@@ -421,6 +441,7 @@ const instance = new FileDiff<ThreadMetadata>({
 
   // Highlight changed portions within modified lines:
   // 'word-alt' (default) - word boundaries, minimizes single-char gaps
+  // 'word-line' - one highlight from the first changed word to the last
   // 'word' - word boundaries
   // 'char' - character-level granularity
   // 'none' - disable inline highlighting
@@ -589,6 +610,8 @@ const instance = new FileDiff<ThreadMetadata>({
 
   // Render annotations on specific lines. Use lineNumber: 0 for a file-level
   // annotation above the first hunk separator or diff row.
+  // The second argument is the FileDiffMetadata displayed with this
+  // annotation.
   renderAnnotation(annotation) {
     const element = document.createElement('div');
     element.textContent = annotation.metadata.threadId;
@@ -627,6 +650,9 @@ instance.render({
   // not omit only one side.
   oldFile: { name: 'file.ts', contents: '...' },
   newFile: { name: 'file.ts', contents: '...' },
+  // Annotations passed with a new diff appear when that diff renders, which
+  // can wait for syntax highlighting. Until then the previous diff keeps its
+  // annotations.
   lineAnnotations,
   containerWrapper: document.body,
 });
@@ -670,10 +696,11 @@ instance.cleanUp();`,
 // FILE PROPS
 // =============================================================================
 
-export const VANILLA_API_FILE_PROPS: PreloadFileOptions<undefined> = {
-  file: {
-    name: 'file_props.ts',
-    contents: `import {
+export const VANILLA_API_FILE_PROPS: PreloadFileOptions<undefined, undefined> =
+  {
+    file: {
+      name: 'file_props.ts',
+      contents: `import {
   File,
   type LineAnnotation,
   type TokenEventBase,
@@ -711,9 +738,10 @@ const instance = new File<CommentMetadata>({
   // 'dark' or 'light' - forces specific theme
   themeType: 'system',
 
-  // Choose the Shiki engine:
+  // Choose the highlighter backend:
   // 'shiki-js' (default) - JavaScript regex engine
   // 'shiki-wasm' - WASM Oniguruma engine
+  // 'highlights' - bundled WASM lexers
   preferredHighlighter: 'shiki-js',
 
   // ─────────────────────────────────────────────────────────────
@@ -874,6 +902,7 @@ const instance = new File<CommentMetadata>({
   // Render annotations on specific lines. Use lineNumber: 0 for a file-level
   // annotation above the first file line.
   // Note: File uses LineAnnotation (no 'side' property)
+  // The second argument is the FileContents displayed with this annotation.
   renderAnnotation(annotation) {
     const element = document.createElement('div');
     element.textContent = annotation.metadata.commentId;
@@ -907,6 +936,9 @@ const instance = new File<CommentMetadata>({
 // Render the file
 instance.render({
   file: { name: 'example.ts', contents: '...' },
+  // Annotations passed with a new file appear when that file renders, which
+  // can wait for syntax highlighting. Until then the previous file keeps its
+  // annotations.
   lineAnnotations,
   containerWrapper: document.body,
 });
@@ -931,15 +963,18 @@ instance.setThemeType('dark'); // 'dark' | 'light' | 'system'
 
 // Clean up (removes DOM, event listeners, clears state)
 instance.cleanUp();`,
-  },
-  options,
-};
+    },
+    options,
+  };
 
 // =============================================================================
 // CUSTOM HUNK SEPARATORS
 // =============================================================================
 
-export const VANILLA_API_CUSTOM_HUNK_FILE: PreloadFileOptions<undefined> = {
+export const VANILLA_API_CUSTOM_HUNK_FILE: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'hunks_example.ts',
     contents: `import { FileDiff } from '@pierre/diffs';
@@ -1010,7 +1045,10 @@ const instance3 = new FileDiff({
 // RENDERERS (low-level)
 // =============================================================================
 
-export const VANILLA_API_HUNKS_RENDERER_FILE: PreloadFileOptions<undefined> = {
+export const VANILLA_API_HUNKS_RENDERER_FILE: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'hunks_renderer_file.ts',
     contents: `import {
@@ -1061,11 +1099,13 @@ const fullAST = instance.renderFullAST(result);`,
   options,
 };
 
-export const VANILLA_API_HUNKS_RENDERER_PATCH_FILE: PreloadFileOptions<undefined> =
-  {
-    file: {
-      name: 'hunks_renderer_patch.ts',
-      contents: `import {
+export const VANILLA_API_HUNKS_RENDERER_PATCH_FILE: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
+  file: {
+    name: 'hunks_renderer_patch.ts',
+    contents: `import {
   DiffHunksRenderer,
   type FileDiffMetadata,
   type HunksRenderResult,
@@ -1137,11 +1177,14 @@ for (const patch of patches) {
     const fullAST = instance.renderFullAST(result);
   }
 }`,
-    },
-    options,
-  };
+  },
+  options,
+};
 
-export const VANILLA_API_FILE_RENDERER: PreloadFileOptions<undefined> = {
+export const VANILLA_API_FILE_RENDERER: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'file_renderer.ts',
     contents: `import {

@@ -32,14 +32,15 @@ import { ReviewSubmitControl } from './ReviewSubmitControl';
 import { ThemeSourceProvider } from './ThemeSourceProvider';
 import { useDiffSearchController } from './useDiffSearchController';
 import { useDiffSearchUI } from './useDiffSearchUI';
+import { useGitHubDiffFileLoader } from './useGitHubDiffFileLoader';
 import { useGitHubToken } from './useGitHubToken';
-import { useIsWorkerPoolReadyOrDisabled } from './useIsWorkerPoolReadyOrDisabled';
+import { useIsHydrated } from './useIsHydrated';
 import { usePatchLoader } from './usePatchLoader';
 import { usePendingReviewComments } from './usePendingReviewComments';
 import { usePullEditSession } from './usePullEditSession';
 import { usePullInfo } from './usePullInfo';
 import { usePullReviewThreads } from './usePullReviewThreads';
-import { useThemeCycle } from './useThemeCycle';
+import { useStressTest } from './useStressTest';
 import {
   docsThemeCatalog,
   themeController,
@@ -56,7 +57,6 @@ import {
   loadDisplaySettings,
   saveDisplaySettings,
 } from '@/lib/displaySettings';
-import { createGitHubDiffFileLoader } from '@/lib/githubDiffFileLoader';
 import { parseGitHubDiffSource } from '@/lib/githubDiffSource';
 import { incrementItemVersion } from '@/lib/incrementItemVersion';
 import { isDiffItem } from '@/lib/isDiffItem';
@@ -128,7 +128,6 @@ function ReviewUIInner({
   path,
   returnToPullPath,
 }: ReviewUIProps) {
-  const isWorkerPoolReadyOrDisable = useIsWorkerPoolReadyOrDisabled();
   const [diffStyle, setDiffStyle] = useState<'split' | 'unified'>('split');
   // The user's explicit split/unified pick. The live diffStyle is viewport-
   // managed (mobile always renders unified), so only this preference — not
@@ -167,15 +166,13 @@ function ReviewUIInner({
     token: githubToken,
     tokenVersion: githubTokenVersion,
   } = useGitHubToken();
-  const githubTokenRef = useRef(githubToken);
-  const githubTokenVersionRef = useRef(githubTokenVersion);
-  useEffect(() => {
-    githubTokenRef.current = githubToken;
-  }, [githubToken]);
-  useEffect(() => {
-    githubTokenVersionRef.current = githubTokenVersion;
-  }, [githubTokenVersion]);
-  const getGitHubToken = useCallback(() => githubTokenRef.current, []);
+  const { getGitHubToken, loadDiffFiles } = useGitHubDiffFileLoader({
+    domain,
+    hasGitHubToken,
+    path,
+    token: githubToken,
+    tokenVersion: githubTokenVersion,
+  });
   // All theming state — color mode and the light/dark theme-name picks — lives
   // in the single @pierre/theming controller (the same instance the app-wide
   // ThemeProvider is bound to). Reading it here means picking Auto/Light/Dark
@@ -187,14 +184,11 @@ function ReviewUIInner({
   // on the client, so useSyncExternalStore would surface them on the very first
   // client render — but the server rendered the defaults. Gate every
   // theme-derived value (rendered into inline chrome styles + the CodeView
-  // themeType) behind a client-mounted flag so the first client render matches
+  // themeType) behind a hydration snapshot so the first client render matches
   // the SSR markup, then flips to the user's selection. This also keeps the
-  // long-lived WorkerPool and the CodeView from mounting against the default
-  // palette before the persisted values apply.
-  const [themesHydrated, setThemesHydrated] = useState(false);
-  useEffect(() => {
-    setThemesHydrated(true);
-  }, []);
+  // CodeView from mounting against the default palette before the persisted
+  // values apply.
+  const themesHydrated = useIsHydrated();
 
   const colorMode: ColorMode = themesHydrated ? themeState.mode : 'system';
   const appResolvedTheme = themesHydrated
@@ -215,11 +209,12 @@ function ReviewUIInner({
   const setDarkThemeName = useCallback((name: DarkThemeName) => {
     themeController.setThemeNameForScheme('dark', name);
   }, []);
-  // The cycle button in the System Monitor sweeps through every Shiki
-  // theme so reviewers can preview the full set without manually picking
-  // each one. The hook captures the user's current pick when cycling
-  // starts so the visible theme anchors the rotation.
-  const themeCycle = useThemeCycle({
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const viewerRef = useRef<CodeViewHandle<CommentMetadata, undefined> | null>(
+    null
+  );
+  const stressTest = useStressTest({
+    viewerRef,
     lightThemeName,
     darkThemeName,
     resolvedThemeMode: appResolvedTheme,
@@ -228,8 +223,6 @@ function ReviewUIInner({
     setColorMode,
   });
 
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const viewerRef = useRef<CodeViewHandle<CommentMetadata> | null>(null);
   // GitHub-instance sources (pull, commit, compare) drive review threads,
   // pinning, and the edit flows; arbitrary-domain patch URLs get none of
   // these.
@@ -269,16 +262,6 @@ function ReviewUIInner({
       recordRecentDiff({ path });
     }
   }, [domain, path]);
-  const loadDiffFiles = useMemo(
-    () =>
-      domain == null && hasGitHubToken
-        ? createGitHubDiffFileLoader(path, {
-            getAuthVersion: () => githubTokenVersionRef.current,
-            getToken: () => githubTokenRef.current,
-          })
-        : undefined,
-    [domain, hasGitHubToken, path]
-  );
   const handlePatchLoadStart = useCallback(() => {
     setFileTreeOverlayOpen(false);
   }, []);
@@ -641,12 +624,12 @@ function ReviewUIInner({
   // updates in place. New comments append — the list is sorted by creation
   // time, and a fresh comment is always newest.
   const requireDiscussionContext = useCallback(() => {
-    const token = githubTokenRef.current;
+    const token = getGitHubToken();
     if (pullRequest == null || token === '') {
       throw new Error('Commenting requires signing in or saving a token.');
     }
     return { pullRequest, token };
-  }, [pullRequest]);
+  }, [getGitHubToken, pullRequest]);
   const handleDiscussionPost = useCallback(
     async (body: string) => {
       const context = requireDiscussionContext();
@@ -764,7 +747,7 @@ function ReviewUIInner({
   }, [editSession.dirtyFiles.length, pendingReviewComments.size]);
   const handleSubmitReview = useCallback(
     async (event: PullReviewEvent, body: string) => {
-      const token = githubTokenRef.current;
+      const token = getGitHubToken();
       if (pullRequest == null || token === '') {
         throw new Error(
           'Submitting a review requires signing in or saving a token.'
@@ -841,6 +824,7 @@ function ReviewUIInner({
     },
     [
       clearPendingReviewComments,
+      getGitHubToken,
       handleCommentDeleted,
       pendingReviewComments,
       pullHeadSha,
@@ -895,7 +879,6 @@ function ReviewUIInner({
   // are still at their `DEFAULT_*_THEME` initial values and tokenize the
   // first batch of files against the wrong palette.
   const viewerAvailable =
-    isWorkerPoolReadyOrDisable &&
     themesHydrated &&
     (loadState === 'ready' ||
       (loadState === 'streaming' && initialItems.length > 0));
@@ -1002,8 +985,7 @@ function ReviewUIInner({
               scrollRef={scrollRef}
               source={treeSource}
               streaming={loadState === 'streaming'}
-              themeCycle={themeCycle}
-              viewerRef={viewerRef}
+              stressTest={stressTest}
               onSelectItem={handleSelectTreeItem}
             />
             <DiffsHubViewer

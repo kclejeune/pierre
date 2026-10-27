@@ -17,10 +17,15 @@ import {
   type DiffUrlSuggestion,
   useDiffUrlSuggestions,
 } from './useDiffUrlSuggestions';
+import { useResettableState } from './useResettableState';
 import { Button } from '@/components/Button';
 import { useGitHubEnvironment } from '@/components/GitHubEnvironmentProvider';
 import { cn } from '@/lib/cn';
 import { getPatchViewerHref } from '@/lib/getPatchViewerHref';
+
+// The only validation message the form shows. The error popover keeps rendering
+// it while fading out, after `validationError` has already been cleared.
+const INVALID_URL_MESSAGE = 'Please enter a valid URL';
 
 interface DiffUrlFormProps {
   className?: string;
@@ -56,7 +61,7 @@ export function DiffUrlForm({
   const router = useRouter();
   const { host: githubHost, webURL: githubWebURL } = useGitHubEnvironment();
   const [isPending, startTransition] = useTransition();
-  const [url, setURL] = useState(initialUrl);
+  const [url, setURL] = useResettableState(initialUrl);
   const [validationError, setValidationError] = useState<string | null>(null);
   // Keeps the error popover mounted while it fades out after the error clears.
   const [errorVisible, setErrorVisible] = useState(false);
@@ -134,10 +139,6 @@ export function DiffUrlForm({
   );
 
   useEffect(() => {
-    setURL(initialUrl);
-  }, [initialUrl]);
-
-  useEffect(() => {
     onUrlChange?.(url);
   }, [onUrlChange, url]);
 
@@ -148,7 +149,7 @@ export function DiffUrlForm({
       const normalizedURL = url.trim();
       const viewerHref = getPatchViewerHref(normalizedURL, githubHost);
       if (viewerHref == null) {
-        setValidationError('Please enter a valid URL');
+        setValidationError(INVALID_URL_MESSAGE);
         setErrorVisible(true);
         return;
       }
@@ -315,7 +316,7 @@ export function DiffUrlForm({
             }}
           >
             <div className="bg-foreground absolute -top-1 left-3 size-2.5 rotate-45 rounded-[2px]" />
-            Please enter a valid URL
+            {INVALID_URL_MESSAGE}
           </div>,
           document.body
         )}

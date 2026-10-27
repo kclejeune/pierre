@@ -17,12 +17,19 @@ import {
 } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 
-import type { EditorChangeEvent, EditorOptions } from '../edit';
+import type {
+  Editor,
+  EditorChangeEvent,
+  EditorOptions,
+  EditorType,
+} from '../edit';
 import {
   areOptionsEqual,
   CodeView as CodeViewClass,
   type CodeViewCoordinator,
   type CodeViewCreateEditorOptions,
+  type CodeViewDiffItem,
+  type CodeViewFileItem,
   type CodeViewItem,
   type CodeViewItemEditCompleteEventMap,
   type CodeViewItemEditCompleteHandler,
@@ -30,17 +37,17 @@ import {
   type CodeViewMode,
   type CodeViewModeItemMap,
   type CodeViewOptions,
-  type CodeViewRenderedItem,
   type CodeViewScrollTarget,
   type CodeViewSlotSnapshot,
   type DiffLineAnnotation,
-  type DiffsEditor,
-  type EditorDocumentKind,
+  type FileContents,
+  type FileDiffMetadata,
   type GetHoveredLineResult,
   type LineAnnotation,
 } from '../index';
-import { areManagedSnapshotsEqual } from '../utils/areManagedSnapshotsEqual';
+import { getCodeViewItemRenderData } from '../utils/getCodeViewItemRenderData';
 import { useCreateEditor } from './EditContext';
+import { assignRef } from './utils/assignRef';
 import { renderDiffChildren } from './utils/renderDiffChildren';
 import { renderFileChildren } from './utils/renderFileChildren';
 import { useStableCallback } from './utils/useStableCallback';
@@ -55,27 +62,49 @@ type CodeViewGutterUtilityGetter =
   | (() => GetHoveredLineResult<'file'> | undefined)
   | (() => GetHoveredLineResult<'diff'> | undefined);
 
-export type CodeViewReactOptions<LAnnotation = undefined> = Omit<
-  CodeViewOptions<LAnnotation>,
+export type CodeViewAnnotationArgs<LAnnotation> =
+  | [
+      annotation: LineAnnotation<LAnnotation>,
+      file: FileContents,
+      item: CodeViewFileItem<LAnnotation>,
+    ]
+  | [
+      annotation: DiffLineAnnotation<LAnnotation>,
+      fileDiff: FileDiffMetadata,
+      item: CodeViewDiffItem<LAnnotation>,
+    ];
+
+export type CodeViewReactOptions<LAnnotation, Caret> = Omit<
+  CodeViewOptions<LAnnotation, Caret>,
   'controlledSelection' | 'createEditor' | 'onSelectedLinesChange'
 >;
 
-interface CodeViewBaseProps<LAnnotation> {
-  options?: CodeViewReactOptions<LAnnotation>;
+interface CodeViewBaseProps<LAnnotation, Caret> {
+  options?: CodeViewReactOptions<LAnnotation, Caret>;
   /**
    * Creation-time options passed to the nearest EditProvider factory.
    * CodeView supplies its item-specific change callback.
    */
-  editorOptions?: Omit<EditorOptions<LAnnotation>, 'onChange'>;
+  editorOptions?: Omit<
+    EditorOptions<EditorType, LAnnotation, Caret>,
+    'onChange'
+  >;
   /** Resolve an in-memory retention key for an item's draft and undo history. */
   getEditStateKey?(item: CodeViewItem<LAnnotation>): string | undefined;
   className?: string;
   style?: CSSProperties;
+  /**
+   * Ref to the scroll container element. A callback ref follows the React 18
+   * protocol: it is called with the element on mount and with `null` on
+   * unmount. A cleanup function returned from the callback (the React 19
+   * form) is ignored, so release resources on the `null` call or use a ref
+   * object.
+   */
   containerRef?: Ref<HTMLDivElement>;
   disableWorkerPool?: boolean;
   selectedLines?: CodeViewLineSelection | null;
   onSelectedLinesChange?(selection: CodeViewLineSelection | null): void;
-  onScroll?(scrollTop: number, viewer: CodeViewClass<LAnnotation>): void;
+  onScroll?(scrollTop: number, viewer: CodeViewClass<LAnnotation, Caret>): void;
   /** Render a non-virtualized node at the very start of the scroll content,
    * before the first item. Always rendered; scrolls with the content. */
   renderCodeViewHeader?(): ReactNode;
@@ -88,7 +117,7 @@ interface CodeViewBaseProps<LAnnotation> {
    * which can create update loops.
    */
   onItemEditChange?(
-    event: EditorChangeEvent<LAnnotation, 'file' | 'diff'>,
+    event: EditorChangeEvent<EditorType, LAnnotation, Caret>,
     item: CodeViewItem<LAnnotation>
   ): void;
   /**
@@ -102,15 +131,12 @@ interface CodeViewBaseProps<LAnnotation> {
    * puts the same `nextItem` into its state — or `'reject'` to revert. The event
    * is frozen; re-key the accepted value in place before accepting.
    */
-  onItemEditComplete?: CodeViewItemEditCompleteHandler<LAnnotation>;
+  onItemEditComplete?: CodeViewItemEditCompleteHandler<LAnnotation, Caret>;
   renderCustomHeader?(item: CodeViewItem<LAnnotation>): ReactNode;
   renderHeaderPrefix?(item: CodeViewItem<LAnnotation>): ReactNode;
   renderHeaderFilenameSuffix?(item: CodeViewItem<LAnnotation>): ReactNode;
   renderHeaderMetadata?(item: CodeViewItem<LAnnotation>): ReactNode;
-  renderAnnotation?(
-    annotation: LineAnnotation<LAnnotation> | DiffLineAnnotation<LAnnotation>,
-    item: CodeViewItem<LAnnotation>
-  ): ReactNode;
+  renderAnnotation?(...args: CodeViewAnnotationArgs<LAnnotation>): ReactNode;
   renderGutterUtility?(
     getHoveredLine: CodeViewGutterUtilityGetter,
     item: CodeViewItem<LAnnotation>
@@ -119,25 +145,27 @@ interface CodeViewBaseProps<LAnnotation> {
 
 export interface ControlledCodeViewProps<
   LAnnotation,
-> extends CodeViewBaseProps<LAnnotation> {
+  Caret,
+> extends CodeViewBaseProps<LAnnotation, Caret> {
   items: readonly CodeViewItem<LAnnotation>[];
   initialItems?: never;
 }
 
 export interface UncontrolledCodeViewProps<
   LAnnotation,
-> extends CodeViewBaseProps<LAnnotation> {
+  Caret,
+> extends CodeViewBaseProps<LAnnotation, Caret> {
   // Seeds the imperative CodeView instance once. Later item changes should go
   // through the ref API instead of being reconciled from React props.
   initialItems?: readonly CodeViewItem<LAnnotation>[];
   items?: never;
 }
 
-export type CodeViewProps<LAnnotation = undefined> =
-  | ControlledCodeViewProps<LAnnotation>
-  | UncontrolledCodeViewProps<LAnnotation>;
+export type CodeViewProps<LAnnotation, Caret> =
+  | ControlledCodeViewProps<LAnnotation, Caret>
+  | UncontrolledCodeViewProps<LAnnotation, Caret>;
 
-export interface CodeViewHandle<LAnnotation> {
+export interface CodeViewHandle<LAnnotation, Caret> {
   addItems(items: readonly CodeViewItem<LAnnotation>[]): void;
   getItem(id: string): CodeViewItem<LAnnotation> | undefined;
   removeItem(id: string): boolean;
@@ -147,38 +175,51 @@ export interface CodeViewHandle<LAnnotation> {
   setSelectedLines(selection: CodeViewLineSelection | null): void;
   getSelectedLines(): CodeViewLineSelection | null;
   clearSelectedLines(): void;
-  getEditor(id: string): DiffsEditor<LAnnotation> | undefined;
-  getInstance(): CodeViewClass<LAnnotation> | undefined;
+  getEditor(
+    id: string
+  ):
+    | Editor<'file', LAnnotation, Caret>
+    | Editor<'file-diff', LAnnotation, Caret>
+    | undefined;
+  getInstance(): CodeViewClass<LAnnotation, Caret> | undefined;
 }
 
-type CodeViewComponent = <LAnnotation = undefined>(
-  props: CodeViewProps<LAnnotation> & {
-    ref?: React.Ref<CodeViewHandle<LAnnotation>>;
+type CodeViewComponent = <LAnnotation = undefined, Caret = undefined>(
+  props: CodeViewProps<LAnnotation, Caret> & {
+    ref?: React.Ref<CodeViewHandle<LAnnotation, Caret>>;
   }
 ) => React.JSX.Element;
 
-type SlotPortalsComponent = <LAnnotation = undefined>(
-  props: SlotPortalsProps<LAnnotation>
+type SlotPortalsComponent = <LAnnotation, Caret>(
+  props: SlotPortalsProps<LAnnotation, Caret>
 ) => React.JSX.Element;
 
-interface ManagedContentStore<LAnnotation> {
-  getSnapshot(): CodeViewSlotSnapshot<LAnnotation> | undefined;
-  publish(snapshot: CodeViewSlotSnapshot<LAnnotation> | undefined): void;
+type DiffItemSlotsComponent = <LAnnotation, Caret>(
+  props: DiffItemSlotsProps<LAnnotation, Caret>
+) => ReactNode;
+
+type FileItemSlotsComponent = <LAnnotation, Caret>(
+  props: FileItemSlotsProps<LAnnotation, Caret>
+) => ReactNode;
+
+interface ManagedContentStore<LAnnotation, Caret> {
+  getSnapshot(): CodeViewSlotSnapshot<LAnnotation, Caret> | undefined;
+  publish(snapshot: CodeViewSlotSnapshot<LAnnotation, Caret> | undefined): void;
   subscribe(listener: () => void): () => void;
 }
 
-interface CachedDataRef<LAnnotation> {
-  instance: CodeViewClass<LAnnotation> | undefined;
+interface CachedDataRef<LAnnotation, Caret> {
+  instance: CodeViewClass<LAnnotation, Caret> | undefined;
   items: readonly CodeViewItem<LAnnotation>[] | undefined;
   controlled: boolean;
-  managedOptions: CodeViewOptions<LAnnotation> | undefined;
+  managedOptions: CodeViewOptions<LAnnotation, Caret> | undefined;
   disableFlushSync: boolean;
-  slotCoordinator: CodeViewCoordinator<LAnnotation> | undefined;
+  slotCoordinator: CodeViewCoordinator<LAnnotation, Caret> | undefined;
 }
 
-function createDefaultCache<LAnnotation>(
+function createDefaultCache<LAnnotation, Caret>(
   controlled: boolean
-): CachedDataRef<LAnnotation> {
+): CachedDataRef<LAnnotation, Caret> {
   return {
     instance: undefined,
     items: undefined,
@@ -189,9 +230,9 @@ function createDefaultCache<LAnnotation>(
   };
 }
 
-function CodeViewInner<LAnnotation = undefined>(
-  props: CodeViewProps<LAnnotation>,
-  ref: React.ForwardedRef<CodeViewHandle<LAnnotation>>
+function CodeViewInner<LAnnotation = undefined, Caret = undefined>(
+  props: CodeViewProps<LAnnotation, Caret>,
+  ref: React.ForwardedRef<CodeViewHandle<LAnnotation, Caret>>
 ): React.JSX.Element {
   const {
     className,
@@ -218,10 +259,10 @@ function CodeViewInner<LAnnotation = undefined>(
     style,
   } = props;
   const controlled = controlledItems !== undefined;
-  const contextCreateEditor = useCreateEditor<LAnnotation>();
+  const contextCreateEditor = useCreateEditor<LAnnotation, Caret>();
   const poolManager = useContext(WorkerPoolContext);
-  const cachedDataRef = useRef<CachedDataRef<LAnnotation>>(
-    createDefaultCache<LAnnotation>(controlled)
+  const cachedDataRef = useRef<CachedDataRef<LAnnotation, Caret>>(
+    createDefaultCache<LAnnotation, Caret>(controlled)
   );
   const hasCustomHeader = renderCustomHeader != null;
   const hasAnnotationRenderer = renderAnnotation != null;
@@ -245,34 +286,30 @@ function CodeViewInner<LAnnotation = undefined>(
   // Keep the adapter stable so provider and editor-option changes affect the
   // next item edit session without forcing CodeView to reconcile active editors.
   const createEditor = useStableCallback(
-    (
-      documentKind: EditorDocumentKind,
-      options: CodeViewCreateEditorOptions<LAnnotation>,
+    <EType extends EditorType>(
+      editorType: EType,
+      options: CodeViewCreateEditorOptions<EType, LAnnotation, Caret>,
       editStateKey?: string
-    ): DiffsEditor<LAnnotation> => {
+    ): Editor<EType, LAnnotation, Caret> => {
       if (contextCreateEditor == null) {
         throw new Error('CodeView: EditContext is not attached');
       }
 
+      const resolvedOptions = {
+        ...editorOptions,
+        ...options,
+      } as EditorOptions<EType, LAnnotation, Caret>;
       const editor = contextCreateEditor(
-        documentKind,
-        {
-          ...editorOptions,
-          ...options,
-        },
+        editorType,
+        resolvedOptions,
         editStateKey
       );
-      if (editor == null) {
-        throw new Error(
-          'CodeView: EditProvider.createEditor must return an editor instance'
-        );
-      }
       return editor;
     }
   );
   const emitItemEditChange = useStableCallback(
     (
-      event: EditorChangeEvent<LAnnotation, 'file' | 'diff'>,
+      event: EditorChangeEvent<EditorType, LAnnotation, Caret>,
       item: CodeViewItem<LAnnotation>
     ) => {
       onItemEditChange?.(event, item);
@@ -280,7 +317,7 @@ function CodeViewInner<LAnnotation = undefined>(
   );
   const emitItemEditComplete = useStableCallback(
     <TMode extends CodeViewMode>(
-      event: CodeViewItemEditCompleteEventMap<LAnnotation>[TMode],
+      event: CodeViewItemEditCompleteEventMap<LAnnotation, Caret>[TMode],
       item: CodeViewModeItemMap<LAnnotation>[TMode],
       nextItem: CodeViewModeItemMap<LAnnotation>[TMode]
     ) => onItemEditComplete?.(event, item, nextItem) ?? 'reject'
@@ -323,8 +360,8 @@ function CodeViewInner<LAnnotation = undefined>(
     ]
   );
 
-  const [slotContentStore] = useState<ManagedContentStore<LAnnotation>>(() =>
-    createSlotContentStore()
+  const [slotContentStore] = useState<ManagedContentStore<LAnnotation, Caret>>(
+    () => createSlotContentStore()
   );
   const [, forceUpdate] = useState<unknown>({});
 
@@ -339,7 +376,9 @@ function CodeViewInner<LAnnotation = undefined>(
     ) {
       cachedDataRef.current.instance.cleanUp();
       slotContentStore.publish(undefined);
-      cachedDataRef.current = createDefaultCache<LAnnotation>(controlled);
+      cachedDataRef.current = createDefaultCache<LAnnotation, Caret>(
+        controlled
+      );
     }
 
     // If our node matches the existing node then we should not attempt to
@@ -350,7 +389,7 @@ function CodeViewInner<LAnnotation = undefined>(
       node != null &&
       node !== cachedDataRef.current.instance?.getContainerElement()
     ) {
-      cachedDataRef.current.instance = new CodeViewClass<LAnnotation>(
+      cachedDataRef.current.instance = new CodeViewClass<LAnnotation, Caret>(
         managedOptions,
         !disableWorkerPool ? poolManager : undefined,
         true
@@ -358,15 +397,11 @@ function CodeViewInner<LAnnotation = undefined>(
       cachedDataRef.current.instance.setup(node);
     }
 
-    if (typeof containerRef === 'function') {
-      containerRef(node);
-    } else if (containerRef != null) {
-      containerRef.current = node;
-    }
+    assignRef(containerRef, node);
   });
 
   const onSnapshotChange = useStableCallback(
-    (snapshot: CodeViewSlotSnapshot<LAnnotation> | undefined) => {
+    (snapshot: CodeViewSlotSnapshot<LAnnotation, Caret> | undefined) => {
       if (cachedDataRef.current.disableFlushSync) {
         slotContentStore.publish(snapshot);
       } else {
@@ -377,7 +412,7 @@ function CodeViewInner<LAnnotation = undefined>(
     }
   );
 
-  const slotCoordinator: CodeViewCoordinator<LAnnotation> | undefined =
+  const slotCoordinator: CodeViewCoordinator<LAnnotation, Caret> | undefined =
     useMemo(() => {
       // A coordinator is needed whenever React portals anything — per-item
       // slots and codeview header and footer
@@ -502,7 +537,7 @@ function CodeViewInner<LAnnotation = undefined>(
   // Setup the ref handler
   useImperativeHandle(
     ref,
-    (): CodeViewHandle<LAnnotation> => ({
+    (): CodeViewHandle<LAnnotation, Caret> => ({
       addItems(items) {
         const { controlled, instance } = cachedDataRef.current;
         assertUncontrolledCodeViewAction(controlled, 'addItems');
@@ -627,7 +662,7 @@ function CodeViewInner<LAnnotation = undefined>(
     <>
       <div ref={nodeRef} className={className} style={style} />
       {(hasRenderers || hasCodeViewHeader || hasCodeViewFooter) && (
-        <SlotPortals<LAnnotation>
+        <SlotPortals<LAnnotation, Caret>
           managedContentStore={slotContentStore}
           renderCustomHeader={renderCustomHeader}
           renderHeaderPrefix={renderHeaderPrefix}
@@ -697,10 +732,11 @@ function assertUncontrolledCodeViewAction(
   );
 }
 
-function createSlotContentStore<
+function createSlotContentStore<LAnnotation, Caret>(): ManagedContentStore<
   LAnnotation,
->(): ManagedContentStore<LAnnotation> {
-  let snapshot: CodeViewSlotSnapshot<LAnnotation> | undefined;
+  Caret
+> {
+  let snapshot: CodeViewSlotSnapshot<LAnnotation, Caret> | undefined;
   const listeners = new Set<() => void>();
 
   return {
@@ -708,7 +744,7 @@ function createSlotContentStore<
       return snapshot;
     },
     publish(nextSnapshot) {
-      if (areManagedSnapshotsEqual(snapshot, nextSnapshot)) {
+      if (snapshot === nextSnapshot) {
         return;
       }
 
@@ -726,21 +762,21 @@ function createSlotContentStore<
   };
 }
 
-interface CreateManagedCodeViewOptionsProps<LAnnotation> {
-  options: CodeViewReactOptions<LAnnotation> | undefined;
+interface CreateManagedCodeViewOptionsProps<LAnnotation, Caret> {
+  options: CodeViewReactOptions<LAnnotation, Caret> | undefined;
   hasCustomHeader: boolean;
   hasGutterRenderer: boolean;
   hasCodeViewHeader: boolean;
   hasCodeViewFooter: boolean;
   onSelectedLinesChange?(selection: CodeViewLineSelection | null): void;
   controlledSelection: boolean;
-  getEditStateKey: CodeViewOptions<LAnnotation>['getEditStateKey'];
-  createEditor: CodeViewOptions<LAnnotation>['createEditor'];
-  onItemEditChange: CodeViewOptions<LAnnotation>['onItemEditChange'];
-  onItemEditComplete: CodeViewOptions<LAnnotation>['onItemEditComplete'];
+  getEditStateKey: CodeViewOptions<LAnnotation, Caret>['getEditStateKey'];
+  createEditor: CodeViewOptions<LAnnotation, Caret>['createEditor'];
+  onItemEditChange: CodeViewOptions<LAnnotation, Caret>['onItemEditChange'];
+  onItemEditComplete: CodeViewOptions<LAnnotation, Caret>['onItemEditComplete'];
 }
 
-function createManagedCodeViewOptions<LAnnotation>({
+function createManagedCodeViewOptions<LAnnotation, Caret>({
   options,
   hasCustomHeader,
   hasGutterRenderer,
@@ -752,8 +788,11 @@ function createManagedCodeViewOptions<LAnnotation>({
   createEditor,
   onItemEditChange,
   onItemEditComplete,
-}: CreateManagedCodeViewOptionsProps<LAnnotation>): CodeViewOptions<LAnnotation> {
-  const managedOptions: CodeViewOptions<LAnnotation> = {
+}: CreateManagedCodeViewOptionsProps<LAnnotation, Caret>): CodeViewOptions<
+  LAnnotation,
+  Caret
+> {
+  const managedOptions: CodeViewOptions<LAnnotation, Caret> = {
     ...options,
     controlledSelection,
     onSelectedLinesChange,
@@ -801,29 +840,88 @@ function createManagedCodeViewOptions<LAnnotation>({
   return managedOptions;
 }
 
-interface RenderCodeViewItemChildrenProps<LAnnotation> {
-  renderedItem: CodeViewRenderedItem<LAnnotation>;
-  renderCustomHeader: CodeViewBaseProps<LAnnotation>['renderCustomHeader'];
-  renderHeaderPrefix: CodeViewBaseProps<LAnnotation>['renderHeaderPrefix'];
-  renderHeaderFilenameSuffix: CodeViewBaseProps<LAnnotation>['renderHeaderFilenameSuffix'];
-  renderHeaderMetadata: CodeViewBaseProps<LAnnotation>['renderHeaderMetadata'];
-  renderAnnotation: CodeViewBaseProps<LAnnotation>['renderAnnotation'];
-  renderGutterUtility: CodeViewBaseProps<LAnnotation>['renderGutterUtility'];
+interface CodeViewItemRenderers<LAnnotation, Caret> {
+  renderCustomHeader: CodeViewBaseProps<
+    LAnnotation,
+    Caret
+  >['renderCustomHeader'];
+  renderHeaderPrefix: CodeViewBaseProps<
+    LAnnotation,
+    Caret
+  >['renderHeaderPrefix'];
+  renderHeaderFilenameSuffix: CodeViewBaseProps<
+    LAnnotation,
+    Caret
+  >['renderHeaderFilenameSuffix'];
+  renderHeaderMetadata: CodeViewBaseProps<
+    LAnnotation,
+    Caret
+  >['renderHeaderMetadata'];
+  renderAnnotation: CodeViewBaseProps<LAnnotation, Caret>['renderAnnotation'];
+  renderGutterUtility: CodeViewBaseProps<
+    LAnnotation,
+    Caret
+  >['renderGutterUtility'];
 }
 
-interface SlotPortalsProps<LAnnotation> {
-  managedContentStore: ManagedContentStore<LAnnotation>;
-  renderCustomHeader: CodeViewBaseProps<LAnnotation>['renderCustomHeader'];
-  renderHeaderPrefix: CodeViewBaseProps<LAnnotation>['renderHeaderPrefix'];
-  renderHeaderFilenameSuffix: CodeViewBaseProps<LAnnotation>['renderHeaderFilenameSuffix'];
-  renderHeaderMetadata: CodeViewBaseProps<LAnnotation>['renderHeaderMetadata'];
-  renderAnnotation: CodeViewBaseProps<LAnnotation>['renderAnnotation'];
-  renderGutterUtility: CodeViewBaseProps<LAnnotation>['renderGutterUtility'];
-  renderCodeViewHeader: CodeViewBaseProps<LAnnotation>['renderCodeViewHeader'];
-  renderCodeViewFooter: CodeViewBaseProps<LAnnotation>['renderCodeViewFooter'];
+interface DiffItemSlotsProps<LAnnotation, Caret> extends CodeViewItemRenderers<
+  LAnnotation,
+  Caret
+> {
+  version: number;
+  item: CodeViewDiffItem<LAnnotation>;
+  fileDiff: FileDiffMetadata;
+  lineAnnotations: DiffLineAnnotation<LAnnotation>[];
+  getHoveredLine(): GetHoveredLineResult<'diff'> | undefined;
+  getAnnotationSlotName(annotation: DiffLineAnnotation<LAnnotation>): string;
 }
 
-const SlotPortals = memo(function SlotPortals<LAnnotation>({
+interface FileItemSlotsProps<LAnnotation, Caret> extends CodeViewItemRenderers<
+  LAnnotation,
+  Caret
+> {
+  version: number;
+  item: CodeViewFileItem<LAnnotation>;
+  file: FileContents;
+  lineAnnotations: LineAnnotation<LAnnotation>[];
+  getHoveredLine(): GetHoveredLineResult<'file'> | undefined;
+  getAnnotationSlotName(annotation: LineAnnotation<LAnnotation>): string;
+}
+
+interface SlotPortalsProps<LAnnotation, Caret> {
+  managedContentStore: ManagedContentStore<LAnnotation, Caret>;
+  renderCustomHeader: CodeViewBaseProps<
+    LAnnotation,
+    Caret
+  >['renderCustomHeader'];
+  renderHeaderPrefix: CodeViewBaseProps<
+    LAnnotation,
+    Caret
+  >['renderHeaderPrefix'];
+  renderHeaderFilenameSuffix: CodeViewBaseProps<
+    LAnnotation,
+    Caret
+  >['renderHeaderFilenameSuffix'];
+  renderHeaderMetadata: CodeViewBaseProps<
+    LAnnotation,
+    Caret
+  >['renderHeaderMetadata'];
+  renderAnnotation: CodeViewBaseProps<LAnnotation, Caret>['renderAnnotation'];
+  renderGutterUtility: CodeViewBaseProps<
+    LAnnotation,
+    Caret
+  >['renderGutterUtility'];
+  renderCodeViewHeader: CodeViewBaseProps<
+    LAnnotation,
+    Caret
+  >['renderCodeViewHeader'];
+  renderCodeViewFooter: CodeViewBaseProps<
+    LAnnotation,
+    Caret
+  >['renderCodeViewFooter'];
+}
+
+const SlotPortals = memo(function SlotPortals<LAnnotation, Caret>({
   managedContentStore,
   renderCustomHeader,
   renderHeaderPrefix,
@@ -833,7 +931,7 @@ const SlotPortals = memo(function SlotPortals<LAnnotation>({
   renderGutterUtility,
   renderCodeViewHeader,
   renderCodeViewFooter,
-}: SlotPortalsProps<LAnnotation>) {
+}: SlotPortalsProps<LAnnotation, Caret>) {
   'use no memo';
   const subscribe = useStableCallback((listener: () => void) =>
     managedContentStore.subscribe(listener)
@@ -842,28 +940,46 @@ const SlotPortals = memo(function SlotPortals<LAnnotation>({
     managedContentStore.getSnapshot()
   );
   const snapshot = useSyncExternalStore<
-    CodeViewSlotSnapshot<LAnnotation> | undefined
+    CodeViewSlotSnapshot<LAnnotation, Caret> | undefined
   >(subscribe, getSnapshot, getSnapshot);
-  let itemKeys = '';
-  for (const item of snapshot?.items ?? []) {
-    itemKeys += `${item.id}:${item.version}:${item.type}`;
-  }
   // NOTE(amadeus): And just like that, the react compiler do be failing us
   // lol... we need to pre-render everything for items, headers and footers to
   // not trigger needless renders while scrolling
   const renderedItems = useMemo(
     () => {
+      const renderers = {
+        renderCustomHeader,
+        renderHeaderPrefix,
+        renderHeaderFilenameSuffix,
+        renderHeaderMetadata,
+        renderAnnotation,
+        renderGutterUtility,
+      };
       return snapshot?.items?.map((renderedItem) =>
         createPortal(
-          renderCodeViewItemChildren({
-            renderedItem,
-            renderCustomHeader,
-            renderHeaderPrefix,
-            renderHeaderFilenameSuffix,
-            renderHeaderMetadata,
-            renderAnnotation,
-            renderGutterUtility,
-          }),
+          renderedItem.type === 'diff' ? (
+            <DiffItemSlots
+              version={renderedItem.version ?? 0}
+              item={renderedItem.item}
+              getHoveredLine={renderedItem.instance.getHoveredLine}
+              getAnnotationSlotName={
+                renderedItem.instance.getAnnotationSlotName
+              }
+              {...getCodeViewItemRenderData(renderedItem)}
+              {...renderers}
+            />
+          ) : (
+            <FileItemSlots
+              version={renderedItem.version ?? 0}
+              item={renderedItem.item}
+              getHoveredLine={renderedItem.instance.getHoveredLine}
+              getAnnotationSlotName={
+                renderedItem.instance.getAnnotationSlotName
+              }
+              {...getCodeViewItemRenderData(renderedItem)}
+              {...renderers}
+            />
+          ),
           renderedItem.element,
           renderedItem.id
         )
@@ -877,7 +993,7 @@ const SlotPortals = memo(function SlotPortals<LAnnotation>({
       renderHeaderMetadata,
       renderAnnotation,
       renderGutterUtility,
-      itemKeys,
+      snapshot?.items,
     ]
   );
   const renderedHeader = useMemo(() => {
@@ -899,73 +1015,90 @@ const SlotPortals = memo(function SlotPortals<LAnnotation>({
   );
 }) as SlotPortalsComponent;
 
-function renderCodeViewItemChildren<LAnnotation>({
-  renderedItem,
+// Each item's slot content is its own memoized component, so republishing the
+// slot snapshot only rerenders items whose displayed data changed. An item in
+// an edit session keeps the same data while the editor moves its rows.
+const DiffItemSlots = memo(function DiffItemSlots<LAnnotation, Caret>({
+  item,
+  fileDiff,
+  lineAnnotations,
+  getHoveredLine,
+  getAnnotationSlotName,
   renderCustomHeader,
   renderHeaderPrefix,
   renderHeaderFilenameSuffix,
   renderHeaderMetadata,
   renderAnnotation,
   renderGutterUtility,
-}: RenderCodeViewItemChildrenProps<LAnnotation>): ReactNode {
-  if (renderedItem.type === 'diff') {
-    const { item, instance } = renderedItem;
-    return renderDiffChildren({
-      fileDiff: item.fileDiff,
-      renderCustomHeader:
-        renderCustomHeader != null ? () => renderCustomHeader(item) : undefined,
-      renderHeaderPrefix:
-        renderHeaderPrefix != null ? () => renderHeaderPrefix(item) : undefined,
-      renderHeaderFilenameSuffix:
-        renderHeaderFilenameSuffix != null
-          ? () => renderHeaderFilenameSuffix(item)
-          : undefined,
-      renderHeaderMetadata:
-        renderHeaderMetadata != null
-          ? () => renderHeaderMetadata(item)
-          : undefined,
-      renderAnnotation:
-        renderAnnotation != null
-          ? (annotation) => renderAnnotation(annotation, item)
-          : undefined,
-      lineAnnotations: item.annotations,
-      renderGutterUtility:
-        renderGutterUtility != null
-          ? (getHoveredLine) => renderGutterUtility(getHoveredLine, item)
-          : undefined,
-      getHoveredLine: instance.getHoveredLine,
-      getAnnotationSlotName: instance.getAnnotationSlotName,
-    });
-  } else {
-    const { item, instance } = renderedItem;
-    return renderFileChildren({
-      file: item.file,
-      renderCustomHeader:
-        renderCustomHeader != null ? () => renderCustomHeader(item) : undefined,
-      renderHeaderPrefix:
-        renderHeaderPrefix != null ? () => renderHeaderPrefix(item) : undefined,
-      renderHeaderFilenameSuffix:
-        renderHeaderFilenameSuffix != null
-          ? () => renderHeaderFilenameSuffix(item)
-          : undefined,
-      renderHeaderMetadata:
-        renderHeaderMetadata != null
-          ? () => renderHeaderMetadata(item)
-          : undefined,
-      renderAnnotation:
-        renderAnnotation != null
-          ? (annotation) => renderAnnotation(annotation, item)
-          : undefined,
-      lineAnnotations: item.annotations,
-      renderGutterUtility:
-        renderGutterUtility != null
-          ? (getHoveredLine) => renderGutterUtility(getHoveredLine, item)
-          : undefined,
-      getHoveredLine: instance.getHoveredLine,
-      getAnnotationSlotName: instance.getAnnotationSlotName,
-    });
-  }
-}
+}: DiffItemSlotsProps<LAnnotation, Caret>): ReactNode {
+  return renderDiffChildren({
+    fileDiff,
+    renderCustomHeader:
+      renderCustomHeader != null ? () => renderCustomHeader(item) : undefined,
+    renderHeaderPrefix:
+      renderHeaderPrefix != null ? () => renderHeaderPrefix(item) : undefined,
+    renderHeaderFilenameSuffix:
+      renderHeaderFilenameSuffix != null
+        ? () => renderHeaderFilenameSuffix(item)
+        : undefined,
+    renderHeaderMetadata:
+      renderHeaderMetadata != null
+        ? () => renderHeaderMetadata(item)
+        : undefined,
+    renderAnnotation:
+      renderAnnotation != null
+        ? (annotation, fileDiff) => renderAnnotation(annotation, fileDiff, item)
+        : undefined,
+    lineAnnotations,
+    renderGutterUtility:
+      renderGutterUtility != null
+        ? (getHoveredLine) => renderGutterUtility(getHoveredLine, item)
+        : undefined,
+    getHoveredLine,
+    getAnnotationSlotName,
+  });
+}) as DiffItemSlotsComponent;
+
+const FileItemSlots = memo(function FileItemSlots<LAnnotation, Caret>({
+  item,
+  file,
+  lineAnnotations,
+  getHoveredLine,
+  getAnnotationSlotName,
+  renderCustomHeader,
+  renderHeaderPrefix,
+  renderHeaderFilenameSuffix,
+  renderHeaderMetadata,
+  renderAnnotation,
+  renderGutterUtility,
+}: FileItemSlotsProps<LAnnotation, Caret>): ReactNode {
+  return renderFileChildren({
+    file,
+    renderCustomHeader:
+      renderCustomHeader != null ? () => renderCustomHeader(item) : undefined,
+    renderHeaderPrefix:
+      renderHeaderPrefix != null ? () => renderHeaderPrefix(item) : undefined,
+    renderHeaderFilenameSuffix:
+      renderHeaderFilenameSuffix != null
+        ? () => renderHeaderFilenameSuffix(item)
+        : undefined,
+    renderHeaderMetadata:
+      renderHeaderMetadata != null
+        ? () => renderHeaderMetadata(item)
+        : undefined,
+    renderAnnotation:
+      renderAnnotation != null
+        ? (annotation, file) => renderAnnotation(annotation, file, item)
+        : undefined,
+    lineAnnotations,
+    renderGutterUtility:
+      renderGutterUtility != null
+        ? (getHoveredLine) => renderGutterUtility(getHoveredLine, item)
+        : undefined,
+    getHoveredLine,
+    getAnnotationSlotName,
+  });
+}) as FileItemSlotsComponent;
 
 function noopRender() {
   return undefined;

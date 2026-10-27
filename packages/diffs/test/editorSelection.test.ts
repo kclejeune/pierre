@@ -41,13 +41,13 @@ import {
 } from '../src/editor/selection';
 import { DirectionBackward } from '../src/editor/selection';
 import { TextDocument } from '../src/editor/textDocument';
-import { disposeHighlighter } from '../src/highlighter/shared_highlighter';
 import type {
   EditorSelection,
-  FileContents,
   ResolvedTextEdit,
   SelectionDirection,
-} from '../src/types';
+} from '../src/editor/types';
+import { disposeHighlighter } from '../src/highlighter/shared_highlighter';
+import type { FileContents } from '../src/types';
 import { installDom, wait } from './domHarness';
 
 afterAll(async () => {
@@ -83,7 +83,7 @@ function composedRange(
     endContainer,
     endOffset,
     collapsed: startContainer === endContainer && startOffset === endOffset,
-  } as StaticRange;
+  };
 }
 
 function editorSelection(
@@ -1719,6 +1719,188 @@ describe('mapSelectionRangeMove', () => {
         mapSelectionShift(textDocument, selections, 'right')
       )
     ).toEqual([createSelection(0, 1, 0, 6, DirectionForward)]);
+  });
+});
+
+describe('word movement', () => {
+  // Collects the caret column after each word move on a one-line document.
+  function wordStops(
+    text: string,
+    character: number,
+    shortcut: 'wordLeft' | 'wordRight',
+    count: number
+  ): number[] {
+    const textDocument = new TextDocument('inmemory://1', text);
+    let selections = [createSelection(0, character, 0, character)];
+    const stops: number[] = [];
+    for (let index = 0; index < count; index++) {
+      selections = mapCursorMove(textDocument, selections, shortcut);
+      stops.push(selections[0].start.character);
+    }
+    return stops;
+  }
+
+  test('stops at word ends and punctuation runs', () => {
+    expect(wordStops('alpha beta.gamma', 0, 'wordRight', 5)).toEqual([
+      5, 10, 11, 16, 16,
+    ]);
+    expect(wordStops('alpha beta.gamma', 16, 'wordLeft', 5)).toEqual([
+      11, 10, 6, 0, 0,
+    ]);
+    expect(wordStops('foo->bar();', 0, 'wordRight', 4)).toEqual([3, 5, 8, 11]);
+    expect(wordStops('foo->bar();', 11, 'wordLeft', 4)).toEqual([8, 5, 3, 0]);
+  });
+
+  test('skips whitespace runs and finishes words from inside', () => {
+    expect(wordStops('foo   bar', 3, 'wordRight', 1)).toEqual([9]);
+    expect(wordStops('foo   bar', 6, 'wordLeft', 1)).toEqual([0]);
+    expect(wordStops('\tsnake_case42 x', 3, 'wordRight', 1)).toEqual([13]);
+    expect(wordStops('\tsnake_case42 x', 8, 'wordLeft', 1)).toEqual([1]);
+  });
+
+  test('keeps graphemes whole', () => {
+    // A combining accent and emoji with skin-tone modifiers.
+    expect(wordStops('cafe\u0301 ok', 0, 'wordRight', 1)).toEqual([5]);
+    expect(wordStops('cafe\u0301 ok', 5, 'wordLeft', 1)).toEqual([0]);
+    expect(wordStops('x 👍🏽👍🏽 y', 1, 'wordRight', 2)).toEqual([10, 12]);
+    expect(wordStops('x 👍🏽👍🏽 y', 10, 'wordLeft', 1)).toEqual([2]);
+  });
+
+  test('crosses line boundaries and empty lines', () => {
+    const textDocument = new TextDocument('inmemory://1', 'ab\n\ncd');
+
+    expect(
+      mapCursorMove(textDocument, [createSelection(0, 2, 0, 2)], 'wordRight')
+    ).toEqual([createSelection(1, 0, 1, 0)]);
+    expect(
+      mapCursorMove(textDocument, [createSelection(1, 0, 1, 0)], 'wordRight')
+    ).toEqual([createSelection(2, 0, 2, 0)]);
+    expect(
+      mapCursorMove(textDocument, [createSelection(2, 0, 2, 0)], 'wordLeft')
+    ).toEqual([createSelection(1, 0, 1, 0)]);
+    expect(
+      mapCursorMove(textDocument, [createSelection(1, 0, 1, 0)], 'wordLeft')
+    ).toEqual([createSelection(0, 2, 0, 2)]);
+    expect(
+      mapCursorMove(textDocument, [createSelection(0, 0, 0, 0)], 'wordLeft')
+    ).toEqual([createSelection(0, 0, 0, 0)]);
+    expect(
+      mapCursorMove(textDocument, [createSelection(2, 2, 2, 2)], 'wordRight')
+    ).toEqual([createSelection(2, 2, 2, 2)]);
+  });
+
+  test('skips collapsed lines and stays put when nothing renders', () => {
+    const textDocument = new TextDocument('inmemory://1', 'ab\ncd\nef');
+    const skipMiddle: CursorMoveOptions = {
+      resolveRenderableLine: (line, direction) =>
+        line === 1 ? (direction === 'down' ? 2 : 0) : line,
+    };
+    const nothingRenders: CursorMoveOptions = {
+      resolveRenderableLine: () => undefined,
+    };
+
+    expect(
+      mapCursorMove(
+        textDocument,
+        [createSelection(0, 2, 0, 2)],
+        'wordRight',
+        skipMiddle
+      )
+    ).toEqual([createSelection(2, 0, 2, 0)]);
+    expect(
+      mapCursorMove(
+        textDocument,
+        [createSelection(2, 0, 2, 0)],
+        'wordLeft',
+        skipMiddle
+      )
+    ).toEqual([createSelection(0, 2, 0, 2)]);
+    expect(
+      mapCursorMove(
+        textDocument,
+        [createSelection(0, 2, 0, 2)],
+        'wordRight',
+        nothingRenders
+      )
+    ).toEqual([createSelection(0, 2, 0, 2)]);
+  });
+
+  test('ignores visual wraps', () => {
+    const textDocument = new TextDocument(
+      'inmemory://1',
+      '0123456789 abcdefghij'
+    );
+    const wrapOptions: CursorMoveOptions = {
+      getSoftLineOffsets: () => new Uint32Array([0, 5, 15, 21]),
+    };
+
+    expect(
+      mapCursorMove(
+        textDocument,
+        [createSelection(0, 0, 0, 0)],
+        'wordRight',
+        wrapOptions
+      )
+    ).toEqual([createSelection(0, 10, 0, 10)]);
+    expect(
+      mapCursorMove(
+        textDocument,
+        [createSelection(0, 21, 0, 21)],
+        'wordLeft',
+        wrapOptions
+      )
+    ).toEqual([createSelection(0, 11, 0, 11)]);
+  });
+
+  test('moves every caret and collapses ranges to the edge it moves toward', () => {
+    const textDocument = new TextDocument(
+      'inmemory://1',
+      'alpha beta\ngamma delta'
+    );
+    const selections = [
+      createSelection(0, 0, 0, 0),
+      createSelection(1, 6, 1, 11, DirectionForward),
+    ];
+
+    expect(mapCursorMove(textDocument, selections, 'wordRight')).toEqual([
+      createSelection(0, 5, 0, 5),
+      createSelection(1, 11, 1, 11),
+    ]);
+    expect(mapCursorMove(textDocument, selections, 'wordLeft')).toEqual([
+      createSelection(0, 0, 0, 0),
+      createSelection(1, 6, 1, 6),
+    ]);
+  });
+
+  test('extends selections by word and crosses the anchor', () => {
+    const textDocument = new TextDocument('inmemory://1', 'alpha beta.gamma');
+    const extended = mapSelectionShift(
+      textDocument,
+      mapSelectionShift(
+        textDocument,
+        [createSelection(0, 0, 0, 0)],
+        'wordRight'
+      ),
+      'wordRight'
+    );
+    const shrunk = mapSelectionShift(
+      textDocument,
+      [createSelection(0, 0, 0, 6, DirectionBackward)],
+      'wordRight'
+    );
+
+    expect(extended).toEqual([createSelection(0, 0, 0, 10, DirectionForward)]);
+    expect(shrunk).toEqual([createSelection(0, 5, 0, 6, DirectionBackward)]);
+    expect(mapSelectionShift(textDocument, shrunk, 'wordRight')).toEqual([
+      createSelection(0, 6, 0, 10, DirectionForward),
+    ]);
+    expect(
+      mapSelectionShift(
+        textDocument,
+        [createSelection(0, 11, 0, 11)],
+        'wordLeft'
+      )
+    ).toEqual([createSelection(0, 10, 0, 11, DirectionBackward)]);
   });
 });
 
@@ -3903,7 +4085,7 @@ async function waitForEditableContent(
 interface EditorFixture {
   cleanup(): void;
   content: HTMLElement;
-  editor: Editor<undefined>;
+  editor: Editor<'file', undefined>;
 }
 
 async function createEditorFixture(contents: string): Promise<EditorFixture> {
@@ -3915,7 +4097,7 @@ async function createEditorFixture(contents: string): Promise<EditorFixture> {
     disableFileHeader: true,
     theme: DEFAULT_THEMES,
   });
-  const editor = new Editor<undefined>('file');
+  const editor = new Editor('file');
   const initialFile: FileContents = { name: 'selections.txt', contents };
 
   file.render({ file: initialFile, fileContainer, forceRender: true });
@@ -3932,6 +4114,79 @@ async function createEditorFixture(contents: string): Promise<EditorFixture> {
     editor,
   };
 }
+
+describe('Editor native text selection', () => {
+  test.each([
+    {
+      name: 'whole line',
+      initial: createSelection(2, 0, 3, 0),
+      backward: createSelection(1, 0, 3, 0, DirectionBackward),
+      forward: createSelection(2, 0, 4, 0, DirectionForward),
+    },
+    {
+      name: 'whole word',
+      initial: createSelection(2, 0, 2, 7),
+      backward: createSelection(1, 6, 2, 7, DirectionBackward),
+      forward: createSelection(2, 0, 3, 4, DirectionForward),
+    },
+    {
+      name: 'caret',
+      initial: createSelection(2, 3, 2, 3),
+      backward: createSelection(1, 6, 2, 3, DirectionBackward),
+      forward: createSelection(2, 3, 3, 4, DirectionForward),
+    },
+  ])(
+    'preserves the native range when dragging from a $name',
+    async ({ initial, backward, forward }) => {
+      const { cleanup, content, editor } = await createEditorFixture(
+        'before\nalpha bravo\ncharlie delta\necho foxtrot\nafter'
+      );
+      const originalGetSelection = document.getSelection.bind(document);
+      let nativeRange: StaticRange;
+
+      try {
+        content.dispatchEvent(new Event('focus'));
+        const lines = [...content.querySelectorAll<HTMLElement>('[data-line]')];
+        document.getSelection = (() => ({
+          getComposedRanges: () => [nativeRange],
+        })) as unknown as typeof document.getSelection;
+        content.dispatchEvent(
+          new PointerEvent('pointerdown', { pointerType: 'mouse' })
+        );
+
+        // Native word and line drags keep the initial range when changing
+        // direction. Exercise both reversals before releasing the pointer.
+        for (const selection of [initial, backward, forward, backward]) {
+          const [startContainer, startOffset] = getSelectionAnchor(
+            lines[selection.start.line],
+            selection.start.character
+          );
+          const [endContainer, endOffset] = getSelectionAnchor(
+            lines[selection.end.line],
+            selection.end.character
+          );
+          nativeRange = composedRange(
+            startContainer,
+            startOffset,
+            endContainer,
+            endOffset
+          );
+          document.dispatchEvent(new Event('selectionchange'));
+          expect(editor.getViewState().selections).toEqual([selection]);
+        }
+
+        document.dispatchEvent(
+          new PointerEvent('pointerup', { pointerType: 'mouse' })
+        );
+        document.dispatchEvent(new Event('selectionchange'));
+        expect(editor.getViewState().selections).toEqual([backward]);
+      } finally {
+        document.getSelection = originalGetSelection;
+        cleanup();
+      }
+    }
+  );
+});
 
 describe('Editor Alt-drag column selection', () => {
   test('normalizes short, empty, and Unicode lines independently', async () => {
@@ -4208,7 +4463,7 @@ function remapRange(
 // positions are never read by the remap (only its direction is), so a dummy
 // caret suffices; `target` must already reflect `edits`.
 function mapOffset(
-  target: TextDocument<unknown>,
+  target: TextDocument,
   offset: number,
   edits: readonly ResolvedTextEdit[]
 ): number {
@@ -4464,14 +4719,8 @@ describe('bidirectional round-trip through history inverse edits', () => {
   // being hand-built. The entry's inverseEdits are expressed in POST-edit
   // offsets, which is exactly the coordinate space the return leg needs.
   function buildHistoryEntry() {
-    const stack = new EditStack<unknown>();
-    const post = new TextDocument<unknown>(
-      'inmemory://1',
-      baseText,
-      'plain',
-      0,
-      stack
-    );
+    const stack = new EditStack<'file'>();
+    const post = new TextDocument('inmemory://1', baseText, 'plain', 0, stack);
     post.applyResolvedEdits(hunks, true);
     const entry = stack.peekUndo();
     if (entry === undefined) {

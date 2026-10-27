@@ -9,16 +9,20 @@ import { useFileDiffInstance } from './utils/useFileDiffInstance';
 
 export type { FileContents };
 
-interface MultiFileDiffBaseProps<
+interface MultiFileDiffBaseProps<LAnnotation, Caret> extends DiffBasePropsReact<
   LAnnotation,
-> extends DiffBasePropsReact<LAnnotation> {
+  Caret
+> {
   disableWorkerPool?: boolean;
 }
 
-export type MultiFileDiffProps<LAnnotation> =
-  MultiFileDiffBaseProps<LAnnotation> & DiffFileInput;
+export type MultiFileDiffProps<LAnnotation, Caret> = MultiFileDiffBaseProps<
+  LAnnotation,
+  Caret
+> &
+  DiffFileInput;
 
-export function MultiFileDiff<LAnnotation = undefined>({
+export function MultiFileDiff<LAnnotation = undefined, Caret = undefined>({
   oldFile,
   newFile,
   options,
@@ -40,25 +44,30 @@ export function MultiFileDiff<LAnnotation = undefined>({
   edit = false,
   onEditChange,
   onEditComplete,
-}: MultiFileDiffProps<LAnnotation>): React.JSX.Element {
-  const { fileDiff, ref, getHoveredLine, getAnnotationSlotName } =
-    useFileDiffInstance({
-      oldFile,
-      newFile,
-      options,
-      editorOptions,
-      editStateKey,
-      metrics,
-      lineAnnotations,
-      selectedLines,
-      prerenderedHTML,
-      hasGutterRenderUtility: renderGutterUtility != null,
-      hasCustomHeader: renderCustomHeader != null,
-      disableWorkerPool,
-      edit,
-      onEditChange,
-      onEditComplete,
-    });
+}: MultiFileDiffProps<LAnnotation, Caret>): React.JSX.Element {
+  const {
+    fileDiff,
+    ref,
+    getHoveredLine,
+    getAnnotationSlotName,
+    lineAnnotations: renderedAnnotations,
+  } = useFileDiffInstance({
+    oldFile,
+    newFile,
+    options,
+    editorOptions,
+    editStateKey,
+    metrics,
+    lineAnnotations,
+    selectedLines,
+    prerenderedHTML,
+    hasGutterRenderUtility: renderGutterUtility != null,
+    hasCustomHeader: renderCustomHeader != null,
+    disableWorkerPool,
+    edit,
+    onEditChange,
+    onEditComplete,
+  });
   const children = renderDiffChildren({
     fileDiff,
     renderCustomHeader,
@@ -66,7 +75,7 @@ export function MultiFileDiff<LAnnotation = undefined>({
     renderHeaderFilenameSuffix,
     renderHeaderMetadata,
     renderAnnotation,
-    lineAnnotations,
+    lineAnnotations: renderedAnnotations,
     renderGutterUtility,
     getHoveredLine,
     getAnnotationSlotName,

@@ -27,10 +27,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { HISTORY_DEMO_EDITS, HISTORY_DEMO_FILE } from './constants';
 import { Button } from '@/components/ui/button';
+import { getPreferredHighlighter } from '@/lib/preferredHighlighter';
 
 interface HistoryDemoProps {
   // Server-preloaded, highlighted File; hydrating from it avoids a highlight flash on load.
-  prerenderedFile: PreloadedFileResult<undefined>;
+  prerenderedFile: PreloadedFileResult<undefined, undefined>;
 }
 
 // Custom element the File renders into; its shadow DOM is open, so we can reach in.
@@ -83,9 +84,7 @@ const LANGUAGE = getFiletypeFromFileName(HISTORY_DEMO_FILE.name);
 // True once the shared main-thread highlighter has this file's grammar, which
 // is what the editor tokenizes edits with.
 function isLanguageReady(): boolean {
-  return (
-    getHighlighterIfLoaded()?.getLoadedLanguages().includes(LANGUAGE) ?? false
-  );
+  return getHighlighterIfLoaded({ lang: LANGUAGE }) != null;
 }
 
 function detectMac(): boolean {
@@ -137,8 +136,8 @@ export function HistoryDemo({ prerenderedFile }: HistoryDemoProps) {
   // mapping to the undo stack in that state, so we surface an off-track UI and a
   // Reset rather than letting the step count freeze at a stale value.
   const [diverged, setDiverged] = useState(false);
-  const editorRef = useRef<Editor<undefined> | null>(null);
-  const editorOptions = useMemo<EditorOptions<undefined>>(
+  const editorRef = useRef<Editor<'file'> | null>(null);
+  const editorOptions = useMemo<EditorOptions<'file', undefined, undefined>>(
     () => ({
       onAttach(editor) {
         editorRef.current = editor;
@@ -148,7 +147,7 @@ export function HistoryDemo({ prerenderedFile }: HistoryDemoProps) {
   );
 
   const handleEditChange = useCallback(
-    (event: EditorChangeEvent<undefined, 'file'>) => {
+    (event: EditorChangeEvent<'file', undefined, undefined>) => {
       const index = snapshotIndexFor(event.file.contents);
       if (index >= 0) {
         setApplied(index);
@@ -316,9 +315,9 @@ export function HistoryDemo({ prerenderedFile }: HistoryDemoProps) {
       // Warm the shared highlighter before polling so the editor tokenizer can
       // pick up the grammar synchronously once the component attaches.
       void preloadHighlighter({
+        preferredHighlighter: getPreferredHighlighter(),
         themes: [DEFAULT_THEMES.dark, DEFAULT_THEMES.light],
         langs: [LANGUAGE],
-        preferredHighlighter: 'shiki-wasm',
       })
         .catch(() => {})
         .finally(() => {

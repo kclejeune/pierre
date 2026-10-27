@@ -1,17 +1,18 @@
+import type { LanguageRegistration } from 'shiki';
+
 import type {
+  DiffsTheme,
   DiffsThemeNames,
   ExtensionFormatMap,
   FileContents,
   FileDiffMetadata,
   HighlighterTypes,
-  LanguageRegistration,
   LineDiffTypes,
   RenderDiffOptions,
   RenderFileOptions,
   SupportedLanguages,
   ThemedDiffResult,
   ThemedFileResult,
-  ThemeRegistrationResolved,
   ThemesType,
 } from '../types';
 
@@ -68,7 +69,7 @@ export interface InitializeWorkerRequest {
   id: WorkerRequestId;
   renderOptions: WorkerRenderingOptions;
   preferredHighlighter: HighlighterTypes;
-  resolvedThemes: ThemeRegistrationResolved[];
+  resolvedThemes: DiffsTheme[];
   resolvedLanguages?: ResolvedLanguage[];
   customExtensionsVersion?: number;
   customExtensionMap?: ExtensionFormatMap;
@@ -83,7 +84,7 @@ export interface SetRenderOptionsWorkerRequest {
   type: 'set-render-options';
   id: WorkerRequestId;
   renderOptions: WorkerRenderingOptions;
-  resolvedThemes: ThemeRegistrationResolved[];
+  resolvedThemes: DiffsTheme[];
 }
 
 export type SubmitRequest =
@@ -164,7 +165,33 @@ export interface WorkerPoolOptions {
    */
   workerInitializationTimeout?: number;
 
+  /**
+   * Called for each worker error instead of logging it with console.error.
+   * Call event.preventDefault() to prevent the browser from also reporting it
+   * as an uncaught error.
+   *
+   * Script load failures may provide a plain Event without message or error;
+   * uncaught exceptions provide an ErrorEvent. If initialization fails, the
+   * pool stops its workers and components highlight on the main thread.
+   *
+   * Several workers can report the same script load failure. Track errors in
+   * this callback if your application should report that failure only once.
+   */
+  onWorkerError?: (event: ErrorEvent | Event, worker: Worker) => void;
+
   totalASTLRUCacheSize?: number;
+
+  /**
+   * Files and diffs with at most this many characters highlight on the main
+   * thread instead of a worker. Small highlights finish faster than a worker
+   * round trip, so they render highlighted without a plain-text pass. Files
+   * count `contents`; diffs count both sides of the diff. Main-thread results
+   * share the pool's highlight cache, and priming the cache follows the same
+   * rule.
+   *
+   * When unset, every highlight uses a worker.
+   */
+  mainThreadMaxCharacters?: number;
 }
 
 export interface WorkerInitializationRenderOptions extends Partial<WorkerRenderingOptions> {

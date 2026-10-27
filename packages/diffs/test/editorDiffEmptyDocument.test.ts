@@ -7,6 +7,16 @@ import { disposeHighlighter } from '../src/highlighter/shared_highlighter';
 import type { FileContents, FileDiffMetadata } from '../src/types';
 import { installDom, wait } from './domHarness';
 
+class TestFileDiff extends FileDiff<undefined> {
+  getInputDiffForTest(): FileDiffMetadata | undefined {
+    return this.getInputDiff();
+  }
+
+  getRenderedDiffForTest(): FileDiffMetadata | undefined {
+    return this.getRenderedDiff();
+  }
+}
+
 afterAll(async () => {
   await disposeHighlighter();
 });
@@ -56,14 +66,14 @@ function countEditableLineEls(content: HTMLElement): number {
 function getEditSessionDiff(
   fileDiff: FileDiff<undefined>
 ): FileDiffMetadata | undefined {
-  return (fileDiff as unknown as { editSessionDiff?: FileDiffMetadata })
-    .editSessionDiff;
+  return (fileDiff as unknown as { editSession?: { diff: FileDiffMetadata } })
+    .editSession?.diff;
 }
 
 interface DiffEditorFixture {
   container: HTMLElement;
-  editor: Editor<undefined>;
-  fileDiff: FileDiff<undefined>;
+  editor: Editor<'file-diff', undefined>;
+  fileDiff: TestFileDiff;
   cleanup(): Promise<void>;
 }
 
@@ -76,14 +86,14 @@ async function createDiffEditorFixture(
   const container = document.createElement('div');
   document.body.appendChild(container);
 
-  const fileDiff = new FileDiff<undefined>({
+  const fileDiff = new TestFileDiff({
     disableFileHeader: true,
     theme: DEFAULT_THEMES,
     diffStyle,
   });
   const oldFile: FileContents = { name: 'edit.ts', contents: oldContents };
   const newFile: FileContents = { name: 'edit.ts', contents: newContents };
-  const editor = new Editor<undefined>('file-diff');
+  const editor = new Editor('file-diff');
 
   fileDiff.render({
     oldFile,
@@ -119,7 +129,10 @@ async function createDiffEditorFixture(
 
 // Replaces the whole document with `newText`, mirroring select-all then a
 // delete or paste.
-function replaceAll(editor: Editor<undefined>, newText: string): void {
+function replaceAll(
+  editor: Editor<'file-diff', undefined>,
+  newText: string
+): void {
   const lines = editor.getText().split('\n');
   const end = { line: lines.length - 1, character: lines.at(-1)!.length };
   editor.setSelections([
@@ -178,7 +191,16 @@ describe('diff editor: empty document', () => {
       );
 
       try {
+        expect(fixture.fileDiff.getInputDiffForTest()?.additionLines).toEqual(
+          []
+        );
         expect(fixture.fileDiff.fileDiff?.additionLines).toEqual([]);
+        expect(fixture.fileDiff.fileDiff).not.toBe(
+          getEditSessionDiff(fixture.fileDiff)
+        );
+        expect(fixture.fileDiff.getRenderedDiffForTest()).toBe(
+          getEditSessionDiff(fixture.fileDiff)
+        );
         expect(getEditSessionDiff(fixture.fileDiff)?.additionLines).toEqual([
           '',
         ]);

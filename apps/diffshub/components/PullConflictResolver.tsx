@@ -129,7 +129,7 @@ export function PullConflictResolver({
       new Map(
         conflicts.files.map((file) => [
           file.path,
-          { contents: file.markedContents, name: file.path } as FileContents,
+          { contents: file.markedContents, name: file.path },
         ])
       ),
     [conflicts.files]

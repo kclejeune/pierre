@@ -1,9 +1,9 @@
-import type { ResolvedTextEdit } from '../types';
 import { resolveFindAgainShortcut } from './command';
 import { buildSearchReplacementText } from './pieceTable';
 import { isPrimaryModifier } from './platform';
 import { getEditorIconSvg, type SVGSpriteNames } from './sprite';
 import type { TextDocument } from './textDocument';
+import type { ResolvedTextEdit } from './types';
 import { h } from './utils';
 
 export type MatchRange = [startOffset: number, endOffset: number];
@@ -19,7 +19,7 @@ export interface SearchParams {
 }
 
 export interface SearchPanelOptions {
-  textDocument: TextDocument<unknown>;
+  textDocument: TextDocument;
   containerElement: HTMLElement;
   defaultQuery: string;
   mode?: SearchPanelMode;
@@ -394,13 +394,34 @@ export class SearchPanelWidget {
       dataset: { searchClose: '' },
     });
 
+    // Opens and closes the replace row, so replace isn't hidden behind the
+    // cmd+opt+f shortcut. `aria-expanded` lets assistive tech announce the
+    // state and the stylesheet point the chevron down while the row is open.
+    const replaceToggleElement = iconButton({
+      icon: 'chevron',
+      label: 'Toggle Replace',
+      dataset: { replaceToggle: '' },
+      onClick: () => {
+        if (gridElement.dataset.mode === 'replace') {
+          applyMode('find');
+        } else {
+          applyMode('replace');
+          // Opening the row from here means a replacement comes next.
+          replaceInputElement.focus();
+        }
+      },
+    });
+    replaceToggleElement.ariaExpanded = String(mode === 'replace');
+
     // Cells are positioned by CSS grid-template-areas (see editor.css), so DOM
     // order here only drives tab/reading order, not layout. Keep the replace
     // input directly after the find input (and its toggles) so Tab walks
-    // find -> replace before reaching the nav arrows and close button.
+    // chevron -> find -> replace before reaching the nav arrows and close
+    // button.
     const gridElement = h('div', {
       dataset: { searchGrid: '', mode },
       children: [
+        replaceToggleElement,
         findInputBox,
         replaceInputBox,
         replaceActionsElement,
@@ -414,6 +435,7 @@ export class SearchPanelWidget {
     // hiding the replace cells, then returns focus to the find input.
     const applyMode = (next: SearchPanelMode) => {
       gridElement.dataset.mode = next;
+      replaceToggleElement.ariaExpanded = String(next === 'replace');
       this.#inputElement.focus();
       this.#inputElement.select();
     };

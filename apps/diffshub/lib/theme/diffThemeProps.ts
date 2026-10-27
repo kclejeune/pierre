@@ -6,9 +6,7 @@
 // branch for CSS/color-scheme. When diffs accepts resolved objects, this is the
 // only mapping that changes.
 import {
-  type DiffsThemeNames,
   registerCustomTheme,
-  type ThemeRegistrationResolved,
   type ThemesType,
   type ThemeTypes,
 } from '@pierre/diffs';
@@ -32,8 +30,8 @@ export function diffThemeProps(sel: ThemeNameSelection): {
 } {
   return {
     theme: {
-      dark: sel.darkThemeName as DiffsThemeNames,
-      light: sel.lightThemeName as DiffsThemeNames,
+      dark: sel.darkThemeName,
+      light: sel.lightThemeName,
     },
     themeType: sel.colorScheme,
   };
@@ -60,9 +58,7 @@ function nameForDiffThemeValue(value: DiffThemeValue): string {
   const name = requireThemeValueName(value);
   if (!seededDiffThemeNames.has(name)) {
     seededDiffThemeNames.add(name);
-    registerCustomTheme(name, () =>
-      Promise.resolve(value as ThemeRegistrationResolved)
-    );
+    registerCustomTheme(name, () => Promise.resolve(value));
   }
   return name;
 }

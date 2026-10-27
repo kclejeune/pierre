@@ -1,28 +1,30 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 
-import { disposeHighlighter, File, isFileAnnotationCollection } from '../src';
+import {
+  disposeHighlighter,
+  File,
+  getSharedHighlighter,
+  isFileAnnotationCollection,
+} from '../src';
 import type {
   FileEditCompleteEvent,
   FileEditCompleteHandler,
 } from '../src/components/File';
 import { Editor, type EditorOptions } from '../src/editor/editor';
 import { EditStateManager } from '../src/editor/EditStateManager';
-import type {
-  DiffsEditor,
-  EditorChangeEvent,
-  EditorViewState,
-  FileContents,
-  LineAnnotation,
-} from '../src/types';
+import { TextDocument } from '../src/editor/textDocument';
+import type { EditorChangeEvent, EditorViewState } from '../src/editor/types';
+import type { FileContents, LineAnnotation } from '../src/types';
 import { installDom, waitFor } from './domHarness';
+import { createEditorInstance } from './editorTestUtils';
 
 afterAll(async () => {
   await disposeHighlighter();
 });
 
 class TestFile extends File<undefined> {
-  getLatestFileForTest(): FileContents | undefined {
-    return this.getLatestFile();
+  getWorkingFileForTest(): FileContents | undefined {
+    return this.getWorkingFile();
   }
 
   getRenderedFileForTest(): FileContents | undefined {
@@ -33,7 +35,7 @@ class TestFile extends File<undefined> {
     return this.fileRenderer.fileCache;
   }
 
-  getExternalAnnotationsForTest(): LineAnnotation<undefined>[] {
+  getDisplayedAnnotationsForTest(): LineAnnotation<undefined>[] {
     return this.lineAnnotations;
   }
 
@@ -47,22 +49,6 @@ const EXTERNAL_FILE: FileContents = {
   contents: 'alpha\nbravo\n',
   cacheKey: 'external:file-v1',
 };
-
-function createEditorStub(
-  overrides: Partial<DiffsEditor<undefined>> = {}
-): DiffsEditor<undefined> {
-  return {
-    cleanUp() {},
-    edit: () => () => {},
-    __captureFocusForDOMReplacement() {},
-    __emitEditComplete() {},
-    __getDocumentContents: () => undefined,
-    __getDocumentSessionState: () => undefined,
-    __postponeBgTokenizeToNextFrame() {},
-    __syncRenderView() {},
-    ...overrides,
-  } as unknown as DiffsEditor<undefined>;
-}
 
 async function createFixture(options?: {
   lineAnnotations?: LineAnnotation<undefined>[];
@@ -79,7 +65,7 @@ async function createFixture(options?: {
     disableErrorHandling: true,
     disableFileHeader: true,
   });
-  const editor = new Editor<undefined>('file', {
+  const editor = new Editor('file', {
     onChange({ file, lineAnnotations }) {
       options?.onChange?.(
         file.contents,
@@ -115,7 +101,10 @@ async function createFixture(options?: {
   };
 }
 
-function replaceDocument(editor: Editor<undefined>, contents: string): void {
+function replaceDocument(
+  editor: Editor<'file', undefined>,
+  contents: string
+): void {
   editor.applyEdits([
     {
       range: {
@@ -145,11 +134,12 @@ describe('editing a File without changing its input', () => {
         instance.updateRenderCache(new Map([[0, [[0, '', 'edited']]]]), 'dark')
       ).toThrow('File.updateRenderCache: requires an active edit session');
       expect(() =>
-        instance.applyDocumentChange({
-          lineCount: 1,
-          getLineText: () => 'edited',
-          getText: () => 'edited',
-        })
+        instance.applyDocumentChange(
+          new TextDocument<'file', undefined>(
+            'inmemory://file-session',
+            'edited'
+          )
+        )
       ).toThrow('File.applyDocumentChange: requires an active edit session');
       expect(externalFile).toEqual(EXTERNAL_FILE);
     } finally {
@@ -174,7 +164,7 @@ describe('editing a File without changing its input', () => {
       });
       expect(() =>
         instance.__attachEditor(
-          createEditorStub({
+          createEditorInstance('file', {
             __getDocumentContents() {
               throw attachmentError;
             },
@@ -182,7 +172,7 @@ describe('editing a File without changing its input', () => {
         )
       ).toThrow(attachmentError);
 
-      const detach = instance.__attachEditor(createEditorStub());
+      const detach = instance.__attachEditor(createEditorInstance('file'));
       detach();
     } finally {
       instance.cleanUp();
@@ -193,7 +183,7 @@ describe('editing a File without changing its input', () => {
   test('attaching an editor creates a separate file without a cache key', async () => {
     const fixture = await createFixture();
     try {
-      const editSessionFile = fixture.instance.getLatestFileForTest();
+      const editSessionFile = fixture.instance.getWorkingFileForTest();
       expect(fixture.instance.file).toBe(fixture.externalFile);
       expect(editSessionFile).not.toBe(fixture.externalFile);
       expect(editSessionFile?.cacheKey).toBeUndefined();
@@ -237,12 +227,13 @@ describe('editing a File without changing its input', () => {
           '[data-line-annotation]'
         )
       ).not.toBeNull();
-      expect(fixture.instance.getLatestFileForTest()?.contents).toBe(
+      expect(fixture.instance.getWorkingFileForTest()?.contents).toBe(
         'edited\nbravo\ncharlie\n'
       );
       expect(fixture.instance.getRendererFileForTest()).toBe(
-        fixture.instance.getLatestFileForTest()
+        fixture.instance.getWorkingFileForTest()
       );
+      expect(fixture.instance.file).toBe(fixture.externalFile);
       expect(fixture.externalFile).toEqual(externalBefore);
     } finally {
       fixture.cleanup();
@@ -299,7 +290,7 @@ describe('editing a File without changing its input', () => {
     const fixture = await createFixture();
     try {
       replaceDocument(fixture.editor, 'edited\n');
-      const editSessionFile = fixture.instance.getLatestFileForTest();
+      const editSessionFile = fixture.instance.getWorkingFileForTest();
 
       fixture.instance.render({
         file: { ...fixture.externalFile },
@@ -308,7 +299,7 @@ describe('editing a File without changing its input', () => {
       });
 
       expect(fixture.instance.file).toBe(fixture.externalFile);
-      expect(fixture.instance.getLatestFileForTest()).toBe(editSessionFile);
+      expect(fixture.instance.getWorkingFileForTest()).toBe(editSessionFile);
       expect(fixture.editor.getText()).toBe('edited\n');
       expect(fixture.externalFile).toEqual(EXTERNAL_FILE);
     } finally {
@@ -341,8 +332,13 @@ describe('editing a File without changing its input', () => {
       });
 
       expect(fixture.instance.file).toBe(replacement);
-      expect(fixture.instance.getLatestFileForTest()).not.toBe(replacement);
-      expect(fixture.instance.getLatestFileForTest()?.cacheKey).toBeUndefined();
+      expect(fixture.instance.getRenderedFileForTest()).toBe(
+        fixture.instance.getWorkingFileForTest()
+      );
+      expect(fixture.instance.getWorkingFileForTest()).not.toBe(replacement);
+      expect(
+        fixture.instance.getWorkingFileForTest()?.cacheKey
+      ).toBeUndefined();
       expect(changes).toEqual(['bravo\n', 'charlie\n']);
 
       fixture.editor.undo();
@@ -356,7 +352,13 @@ describe('editing a File without changing its input', () => {
     }
   });
 
-  test('a file-name change that is replaced immediately does not clear undo history', async () => {
+  test('a file-name change replaced while its Shiki grammar loads does not clear undo history', async () => {
+    await disposeHighlighter();
+    await getSharedHighlighter({
+      preferredHighlighter: 'shiki-js',
+      themes: [],
+      langs: [],
+    });
     const changes: string[] = [];
     const fixture = await createFixture({
       onChange: (contents) => changes.push(contents),
@@ -438,10 +440,11 @@ describe('component onEditChange', () => {
     const fileContainer = document.createElement('div');
     document.body.appendChild(fileContainer);
     const externalFile = { ...EXTERNAL_FILE };
-    const editorEvents: EditorChangeEvent<undefined, 'file' | 'diff'>[] = [];
-    const componentEvents: EditorChangeEvent<undefined, 'file'>[] = [];
-    const editorCallbackEditors: DiffsEditor<undefined>[] = [];
-    const callbackEditors: DiffsEditor<undefined>[] = [];
+    const editorEvents: EditorChangeEvent<'file', undefined, undefined>[] = [];
+    const componentEvents: EditorChangeEvent<'file', undefined, undefined>[] =
+      [];
+    const editorCallbackEditors: Editor<'file'>[] = [];
+    const callbackEditors: Editor<'file'>[] = [];
     const instance = new TestFile({
       disableErrorHandling: true,
       disableFileHeader: true,
@@ -450,7 +453,7 @@ describe('component onEditChange', () => {
         callbackEditors.push(event.editor);
       },
     });
-    const editor = new Editor<undefined>('file', {
+    const editor = new Editor('file', {
       onChange: (event) => {
         editorEvents.push(event);
         editorCallbackEditors.push(event.editor);
@@ -506,14 +509,14 @@ describe('component onEditChange', () => {
     const fileContainer = document.createElement('div');
     document.body.appendChild(fileContainer);
     const externalFile = { ...EXTERNAL_FILE };
-    const firstEvents: EditorChangeEvent<undefined, 'file'>[] = [];
-    const secondEvents: EditorChangeEvent<undefined, 'file'>[] = [];
+    const firstEvents: EditorChangeEvent<'file', undefined, undefined>[] = [];
+    const secondEvents: EditorChangeEvent<'file', undefined, undefined>[] = [];
     const instance = new TestFile({
       disableErrorHandling: true,
       disableFileHeader: true,
       onEditChange: (event) => firstEvents.push(event),
     });
-    const editor = new Editor<undefined>('file');
+    const editor = new Editor('file');
     try {
       instance.render({ file: externalFile, fileContainer, forceRender: true });
       editor.edit(instance);
@@ -543,13 +546,13 @@ describe('component onEditChange', () => {
     const fileContainer = document.createElement('div');
     document.body.appendChild(fileContainer);
     const externalFile = { ...EXTERNAL_FILE };
-    const events: EditorChangeEvent<undefined, 'file'>[] = [];
+    const events: EditorChangeEvent<'file', undefined, undefined>[] = [];
     const instance = new TestFile({
       disableErrorHandling: true,
       disableFileHeader: true,
       onEditChange: (event) => events.push(event),
     });
-    const editor = new Editor<undefined>('file');
+    const editor = new Editor('file');
     try {
       instance.render({ file: externalFile, fileContainer, forceRender: true });
       editor.edit(instance);
@@ -582,13 +585,13 @@ describe('session-owned line annotations', () => {
     const externalAnnotations: LineAnnotation<undefined>[] = [
       { lineNumber: 2 },
     ];
-    const events: EditorChangeEvent<undefined, 'file'>[] = [];
+    const events: EditorChangeEvent<'file', undefined, undefined>[] = [];
     const instance = new TestFile({
       disableErrorHandling: true,
       disableFileHeader: true,
       onEditChange: (event) => events.push(event),
     });
-    const editor = new Editor<undefined>('file');
+    const editor = new Editor('file');
     instance.render({
       file: externalFile,
       fileContainer,
@@ -615,7 +618,7 @@ describe('session-owned line annotations', () => {
     };
   }
 
-  function insertLineAtStart(editor: Editor<undefined>): void {
+  function insertLineAtStart(editor: Editor<'file', undefined>): void {
     editor.applyEdits([
       {
         range: {
@@ -644,7 +647,7 @@ describe('session-owned line annotations', () => {
     };
   }
 
-  test('a remap moves only the private session collection', async () => {
+  test('a remap updates adopted annotations without changing the caller collection', async () => {
     const fixture = await createAnnotatedFixture();
     try {
       const { editor, events, externalAnnotations, instance } = fixture;
@@ -653,9 +656,7 @@ describe('session-owned line annotations', () => {
       const latest = instance.getLatestAnnotationsForTest();
       expect(latest).not.toBe(externalAnnotations);
       expect(latest).toEqual([{ lineNumber: 3 }]);
-      expect(instance.getExternalAnnotationsForTest()).toBe(
-        externalAnnotations
-      );
+      expect(instance.getDisplayedAnnotationsForTest()).toBe(latest);
       expect(externalAnnotations).toEqual([{ lineNumber: 2 }]);
       expect(events.at(-1)?.lineAnnotations).toBe(latest);
     } finally {
@@ -726,7 +727,7 @@ describe('session-owned line annotations', () => {
       // An external write is the source of truth: it renders in the session
       // and becomes the external collection too, so a revert keeps it.
       expect(fixture.instance.getLatestAnnotationsForTest()).toBe(written);
-      expect(fixture.instance.getExternalAnnotationsForTest()).toBe(written);
+      expect(fixture.instance.getDisplayedAnnotationsForTest()).toBe(written);
       const single = written.at(0);
       if (single == null) {
         throw new Error('Expected the written annotation to exist');
@@ -765,7 +766,7 @@ describe('session-owned line annotations', () => {
         lineAnnotations: replacementAnnotations,
       });
 
-      expect(instance.getExternalAnnotationsForTest()).toBe(
+      expect(instance.getDisplayedAnnotationsForTest()).toBe(
         replacementAnnotations
       );
       expect(instance.getLatestAnnotationsForTest()).toBe(
@@ -785,7 +786,7 @@ describe('session-owned line annotations', () => {
     }
   });
 
-  test('deleting an annotated line drops it from the session collection only', async () => {
+  test('deleting an annotated line drops its adopted annotation without changing the caller collection', async () => {
     const fixture = await createAnnotatedFixture();
     try {
       const { editor, externalAnnotations, instance } = fixture;
@@ -801,9 +802,7 @@ describe('session-owned line annotations', () => {
 
       expect(instance.getLatestAnnotationsForTest()).toEqual([]);
       expect(externalAnnotations).toEqual([{ lineNumber: 2 }]);
-      expect(instance.getExternalAnnotationsForTest()).toBe(
-        externalAnnotations
-      );
+      expect(instance.getDisplayedAnnotationsForTest()).toEqual([]);
     } finally {
       fixture.cleanup();
     }
@@ -885,9 +884,13 @@ describe('session-owned line annotations', () => {
 describe('__completeEditSession', () => {
   async function createCompletionFixture(config?: {
     editStateKey?: string;
-    editorOnComplete?: NonNullable<EditorOptions<undefined>['onComplete']>;
-    onEditComplete?: FileEditCompleteHandler<undefined>;
-    onEditChange?: (event: EditorChangeEvent<undefined, 'file'>) => void;
+    editorOnComplete?: NonNullable<
+      EditorOptions<'file', undefined, undefined>['onComplete']
+    >;
+    onEditComplete?: FileEditCompleteHandler<undefined, undefined>;
+    onEditChange?: (
+      event: EditorChangeEvent<'file', undefined, undefined>
+    ) => void;
     lineAnnotations?: LineAnnotation<undefined>[];
   }) {
     const dom = installDom();
@@ -900,7 +903,7 @@ describe('__completeEditSession', () => {
       onEditComplete: config?.onEditComplete,
       onEditChange: config?.onEditChange,
     });
-    const editor = new Editor<undefined>(
+    const editor = new Editor(
       'file',
       { onComplete: config?.editorOnComplete },
       config?.editStateKey
@@ -931,7 +934,7 @@ describe('__completeEditSession', () => {
     };
   }
 
-  function insertLinesAtStart(editor: Editor<undefined>): void {
+  function insertLinesAtStart(editor: Editor<'file', undefined>): void {
     editor.applyEdits([
       {
         range: {
@@ -945,8 +948,8 @@ describe('__completeEditSession', () => {
 
   test('editor completion receives the component event first and cannot accept', async () => {
     const calls: string[] = [];
-    let editorEvent: FileEditCompleteEvent<undefined> | undefined;
-    let componentEvent: FileEditCompleteEvent<undefined> | undefined;
+    let editorEvent: FileEditCompleteEvent<undefined, undefined> | undefined;
+    let componentEvent: FileEditCompleteEvent<undefined, undefined> | undefined;
     const fixture = await createCompletionFixture({
       editorOnComplete(event) {
         if ('file' in event) {
@@ -975,10 +978,12 @@ describe('__completeEditSession', () => {
   });
 
   test('a changed session delivers a fresh keyless file and the exact external file', async () => {
-    const events: FileEditCompleteEvent<undefined>[] = [];
-    let completionEditor: DiffsEditor<undefined> | undefined;
+    const events: FileEditCompleteEvent<undefined, undefined>[] = [];
+    let completionEditor: Editor<'file', undefined> | undefined;
     let completionState: EditorViewState | undefined;
-    let completionEditState: ReturnType<DiffsEditor<undefined>['getEditState']>;
+    let completionEditState: ReturnType<
+      Editor<'file', undefined>['getEditState']
+    >;
     const fixture = await createCompletionFixture({
       onEditComplete(event) {
         events.push(event);
@@ -1029,7 +1034,7 @@ describe('__completeEditSession', () => {
 
   test('releases keyed ownership before the completion callback', async () => {
     const editStateKey = 'completion-callback-release';
-    let replacementEditor: Editor<undefined> | undefined;
+    let replacementEditor: Editor<'file', undefined> | undefined;
     let replacementInstance: TestFile | undefined;
     const fixture = await createCompletionFixture({
       editStateKey,
@@ -1042,11 +1047,7 @@ describe('__completeEditSession', () => {
           fileContainer,
           forceRender: true,
         });
-        replacementEditor = new Editor<undefined>(
-          'file',
-          undefined,
-          editStateKey
-        );
+        replacementEditor = new Editor('file', undefined, editStateKey);
         replacementEditor.edit(replacementInstance);
         return 'reject';
       },
@@ -1068,7 +1069,7 @@ describe('__completeEditSession', () => {
     const externalAnnotations: LineAnnotation<undefined>[] = [
       { lineNumber: 2 },
     ];
-    const events: FileEditCompleteEvent<undefined>[] = [];
+    const events: FileEditCompleteEvent<undefined, undefined>[] = [];
     const fixture = await createCompletionFixture({
       lineAnnotations: externalAnnotations,
       onEditComplete(event) {
@@ -1085,10 +1086,10 @@ describe('__completeEditSession', () => {
       expect(events).toHaveLength(1);
       const event = events[0];
       expect(instance.file).toBe(event.file);
-      expect(instance.getLatestFileForTest()).toBe(event.file);
+      expect(instance.getWorkingFileForTest()).toBe(event.file);
       expect(instance.file?.cacheKey).toBe('external:file-v2');
       expect(event.lineAnnotations).toBe(
-        instance.getExternalAnnotationsForTest()
+        instance.getDisplayedAnnotationsForTest()
       );
       expect(event.originalLineAnnotations).toBe(externalAnnotations);
       expect(instance.getLatestAnnotationsForTest()).toEqual([
@@ -1114,7 +1115,7 @@ describe('__completeEditSession', () => {
     try {
       const { editor, fileContainer, instance } = fixture;
       insertLinesAtStart(editor);
-      const sessionFile = instance.getLatestFileForTest();
+      const sessionFile = instance.getWorkingFileForTest();
       if (sessionFile == null) {
         throw new Error('Expected an active session file');
       }
@@ -1131,7 +1132,7 @@ describe('__completeEditSession', () => {
         forceRender: true,
         lineAnnotations: added,
       });
-      expect(instance.getExternalAnnotationsForTest()).toBe(added);
+      expect(instance.getDisplayedAnnotationsForTest()).toBe(added);
 
       // Reverting keeps the added annotation; the baseline is not rewound.
       editor.cleanUp('complete');
@@ -1158,7 +1159,7 @@ describe('__completeEditSession', () => {
       editor.cleanUp('complete');
 
       expect(instance.file).toBe(externalFile);
-      expect(instance.getLatestFileForTest()).toBe(externalFile);
+      expect(instance.getWorkingFileForTest()).toBe(externalFile);
       expect(instance.getLatestAnnotationsForTest()).toBe(externalAnnotations);
       expect(externalAnnotations).toEqual([{ lineNumber: 2 }]);
     } finally {
@@ -1176,7 +1177,7 @@ describe('__completeEditSession', () => {
       editor.cleanUp('complete');
 
       expect(instance.file).toBe(externalFile);
-      expect(instance.getLatestFileForTest()).toBe(externalFile);
+      expect(instance.getWorkingFileForTest()).toBe(externalFile);
     } finally {
       fixture.cleanup();
     }
@@ -1190,7 +1191,7 @@ describe('__completeEditSession', () => {
       editor.cleanUp('complete');
 
       expect(instance.file).toBe(externalFile);
-      expect(instance.getLatestFileForTest()).toBe(externalFile);
+      expect(instance.getWorkingFileForTest()).toBe(externalFile);
     } finally {
       fixture.cleanup();
     }
@@ -1211,7 +1212,7 @@ describe('__completeEditSession', () => {
       );
 
       expect(instance.file).toBe(externalFile);
-      expect(instance.getLatestFileForTest()).toBe(externalFile);
+      expect(instance.getWorkingFileForTest()).toBe(externalFile);
     } finally {
       fixture.cleanup();
     }
@@ -1229,7 +1230,7 @@ describe('__completeEditSession', () => {
       expect(() => editor.cleanUp('complete')).toThrow('owner exploded');
 
       expect(instance.file).toBe(externalFile);
-      expect(instance.getLatestFileForTest()).toBe(externalFile);
+      expect(instance.getWorkingFileForTest()).toBe(externalFile);
     } finally {
       fixture.cleanup();
     }
@@ -1239,7 +1240,7 @@ describe('__completeEditSession', () => {
     const externalAnnotations: LineAnnotation<undefined>[] = [
       { lineNumber: 2 },
     ];
-    const events: FileEditCompleteEvent<undefined>[] = [];
+    const events: FileEditCompleteEvent<undefined, undefined>[] = [];
     const fixture = await createCompletionFixture({
       lineAnnotations: externalAnnotations,
       onEditComplete(event) {
@@ -1262,7 +1263,7 @@ describe('__completeEditSession', () => {
       expect(events[0].file.contents).toBe(externalFile.contents);
       expect(events[0].file.cacheKey).toBeUndefined();
       expect(instance.file).toBe(events[0].file);
-      expect(instance.getExternalAnnotationsForTest()).toBe(written);
+      expect(instance.getDisplayedAnnotationsForTest()).toBe(written);
       expect(instance.getLatestAnnotationsForTest()).toBe(written);
     } finally {
       fixture.cleanup();
@@ -1270,7 +1271,7 @@ describe('__completeEditSession', () => {
   });
 
   test('editing and undoing back to the external contents still completes', async () => {
-    const events: FileEditCompleteEvent<undefined>[] = [];
+    const events: FileEditCompleteEvent<undefined, undefined>[] = [];
     const fixture = await createCompletionFixture({
       onEditComplete(event) {
         events.push(event);
@@ -1294,7 +1295,7 @@ describe('__completeEditSession', () => {
   });
 
   test('completion emits no onEditChange', async () => {
-    const changeEvents: EditorChangeEvent<undefined, 'file'>[] = [];
+    const changeEvents: EditorChangeEvent<'file', undefined, undefined>[] = [];
     const fixture = await createCompletionFixture({
       onEditChange: (event) => changeEvents.push(event),
       onEditComplete(event) {
@@ -1327,7 +1328,7 @@ describe('__completeEditSession', () => {
   });
 
   test('a replacement accepted mid-session becomes the event originalFile', async () => {
-    const events: FileEditCompleteEvent<undefined>[] = [];
+    const events: FileEditCompleteEvent<undefined, undefined>[] = [];
     const fixture = await createCompletionFixture({
       onEditComplete(event) {
         events.push(event);
@@ -1363,7 +1364,7 @@ describe('__completeEditSession', () => {
 
 describe('editor session lifecycle', () => {
   async function createLifecycleFixture(config?: {
-    onEditComplete?: FileEditCompleteHandler<undefined>;
+    onEditComplete?: FileEditCompleteHandler<undefined, undefined>;
   }) {
     const dom = installDom();
     const fileContainer = document.createElement('div');
@@ -1374,7 +1375,7 @@ describe('editor session lifecycle', () => {
       disableFileHeader: true,
       onEditComplete: config?.onEditComplete,
     });
-    const editor = new Editor<undefined>('file');
+    const editor = new Editor('file');
     instance.render({ file: externalFile, fileContainer, forceRender: true });
     const finishSession = editor.edit(instance);
     await waitFor(() => editor.getText() === externalFile.contents, {
@@ -1395,7 +1396,7 @@ describe('editor session lifecycle', () => {
   }
 
   test('the disposer from edit() finishes the session exactly once', async () => {
-    const events: FileEditCompleteEvent<undefined>[] = [];
+    const events: FileEditCompleteEvent<undefined, undefined>[] = [];
     const fixture = await createLifecycleFixture({
       onEditComplete(event) {
         events.push(event);
@@ -1410,7 +1411,7 @@ describe('editor session lifecycle', () => {
 
       expect(events).toHaveLength(1);
       expect(instance.file).toBe(events[0].file);
-      expect(instance.getLatestFileForTest()).toBe(events[0].file);
+      expect(instance.getWorkingFileForTest()).toBe(events[0].file);
 
       finishSession();
       expect(events).toHaveLength(1);
@@ -1420,7 +1421,7 @@ describe('editor session lifecycle', () => {
   });
 
   test('editor.cleanUp() completes without installing the session', async () => {
-    const events: FileEditCompleteEvent<undefined>[] = [];
+    const events: FileEditCompleteEvent<undefined, undefined>[] = [];
     const fixture = await createLifecycleFixture({
       onEditComplete(event) {
         events.push(event);
@@ -1434,7 +1435,7 @@ describe('editor session lifecycle', () => {
 
       expect(events).toHaveLength(1);
       expect(events[0].file.contents).toBe('edited\nbravo\n');
-      expect(instance.getLatestFileForTest()?.contents).toBe(
+      expect(instance.getWorkingFileForTest()?.contents).toBe(
         EXTERNAL_FILE.contents
       );
     } finally {
@@ -1443,7 +1444,7 @@ describe('editor session lifecycle', () => {
   });
 
   test('a recycle keeps the session and a later disposer finishes it once', async () => {
-    const events: FileEditCompleteEvent<undefined>[] = [];
+    const events: FileEditCompleteEvent<undefined, undefined>[] = [];
     const dom = installDom();
     const fileContainer = document.createElement('div');
     document.body.appendChild(fileContainer);
@@ -1457,7 +1458,7 @@ describe('editor session lifecycle', () => {
       },
     });
     let attachCount = 0;
-    const editor = new Editor<undefined>('file', {
+    const editor = new Editor('file', {
       onAttach: () => {
         attachCount += 1;
       },
@@ -1469,7 +1470,7 @@ describe('editor session lifecycle', () => {
       replaceDocument(editor, 'first\n');
       editor.cleanUp('recycle');
       expect(events).toHaveLength(0);
-      expect(instance.getLatestFileForTest()?.contents).toBe('first\n');
+      expect(instance.getWorkingFileForTest()?.contents).toBe('first\n');
 
       const finishResumed = editor.edit(instance);
       await waitFor(() => attachCount === 2, { timeout: 4_000 });
@@ -1486,7 +1487,7 @@ describe('editor session lifecycle', () => {
   });
 
   test('component cleanUp finishes a changed session without installing the result', async () => {
-    const events: FileEditCompleteEvent<undefined>[] = [];
+    const events: FileEditCompleteEvent<undefined, undefined>[] = [];
     const fixture = await createLifecycleFixture({
       onEditComplete(event) {
         events.push(event);
@@ -1509,7 +1510,7 @@ describe('editor session lifecycle', () => {
   });
 
   test('component cleanUp after the disposer already finished stays silent', async () => {
-    const events: FileEditCompleteEvent<undefined>[] = [];
+    const events: FileEditCompleteEvent<undefined, undefined>[] = [];
     const fixture = await createLifecycleFixture({
       onEditComplete(event) {
         events.push(event);
@@ -1531,7 +1532,7 @@ describe('editor session lifecycle', () => {
   });
 
   test('a recycled session keeps final state through later editor cleanup', async () => {
-    const events: FileEditCompleteEvent<undefined>[] = [];
+    const events: FileEditCompleteEvent<undefined, undefined>[] = [];
     const completionStates: EditorViewState[] = [];
     const fixture = await createLifecycleFixture({
       onEditComplete(event) {

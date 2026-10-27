@@ -1,13 +1,9 @@
 ## Edit mode
 
-<Notice variant="warning" icon={<IconCiWarningFill />}>
-  Edit mode is experimental and subject to change.
-</Notice>
-
 Edit mode adds text editing, multiple selections, undo and redo, search and
-replace, markers, and custom selection actions to Pierre file and diff
-components. The existing component continues to own syntax highlighting, diff
-layout, annotations, SSR markup, and virtualization.
+replace, remote carets, markers, and custom selection actions to Pierre file and
+diff components. The existing component continues to own syntax highlighting,
+diff layout, annotations, SSR markup, and virtualization.
 
 Use it when a user needs to review and correct rendered code without replacing
 the surrounding file or diff UI with a separate editor.
@@ -48,6 +44,13 @@ creation-time inputs for an editor. Changing them does not replace an active
 editor; the latest values apply when a later edit session creates another
 editor. Keep factories and object props stable across renders.
 
+Setting `edit` on a partial `FileDiff` starts loading the full files through
+`loadDiffFiles`. The editor attaches after loading finishes, so `onAttach` runs
+then, not when `edit` first becomes true. Without `loadDiffFiles`, or for a
+partial `new` or `deleted` file that has nothing to load, rendering throws;
+catch it with an error boundary. A failed load logs and retries on the next
+render, or throws when `disableErrorHandling` is set.
+
 <EditComponentTabs
   fileExample={editReactExample}
   fileDiffExample={editReactFileDiffExample}
@@ -56,9 +59,16 @@ editor. Keep factories and object props stable across renders.
 
 #### Vanilla JS
 
-Render the component first, then attach an editor of the matching kind. Keep the
+Render the component first, then attach an editor of the matching type. Keep the
 function returned by `edit()` and call it for a normal, install-capable
 completion.
+
+If a `FileDiff` may be partial, configure `loadDiffFiles`, render, then await
+`fileDiffInstance.prepareForEditing()` before calling
+`editor.edit(fileDiffInstance)`. It resolves once the full files are loaded and
+rejects when `loadDiffFiles` is missing, when the partial diff cannot be
+hydrated (`new` or `deleted` files), or when loading fails. `editor.edit()`
+throws while the diff is partial.
 
 Set `onEditChange` in the component's `FileOptions` or `FileDiffOptions` to
 monitor live changes while in edit mode. Use `onEditComplete` to accept or
@@ -194,7 +204,7 @@ returned by the `CodeView` `getEditStateKey` option or prop. A key retains:
 - The old-side baseline and hunk metadata needed to resume a FileDiff safely
 
 Retention is in memory, bounded by an LRU, and does not survive page reload.
-File and file-diff keys use independent namespaces. The same kind and key cannot
+File and file-diff keys use independent namespaces. The same type and key cannot
 be active in two editors at once. A retained FileDiff can resume only against a
 compatible old-side baseline.
 
@@ -235,8 +245,8 @@ retained by each namespace; the default is `100` per namespace.
 ### Initialize state on first attach
 
 Use `initialState` to provide application-owned state when constructing an
-editor. `documentKind` is required and must match the editor kind. Every other
-field is optional:
+editor. `type` is required and must match the editor type. Every other field is
+optional:
 
 - `document` supplies the live `TextDocument`, including its current contents
   and any undo/redo history.
@@ -343,6 +353,35 @@ exact live position.
 
 ### Extend the editing UI
 
+#### Remote carets and highlights
+
+<Notice icon={<IconInfoFill />}>
+  The caret API is render-only. Diffs does not synchronize documents, edits,
+  selections, or presence. Your application must implement co-editing and pass
+  the current remote caret and highlight state to Diffs.
+</Notice>
+
+Use `setCarets()` for selections owned by a presence or collaboration layer.
+Each call replaces the complete remote-caret list, so pass the latest presence
+snapshot and use an empty array to clear it.
+
+Matching `anchor` and `focus` positions render a caret. Different positions also
+render a non-editable highlight, with the caret at `focus` for both forward and
+backward ranges. Positions are zero-based and normalized to the current
+document. Remote carets follow local edits without changing focus, the native
+selection, or `getViewState()`.
+
+<DocsCodeExample {...editCaretType} />
+
+Provide `renderCaret` in `EditorOptions` and call `setCarets()` after the editor
+attaches. The returned element renders inside the editor shadow root, so style
+it inline or from within that root. Pierre uses `metadata.color` to derive the
+range highlight. The third `EditorOptions` generic carries custom caret
+metadata; use the same type as the second generic on React components such as
+`File` and `FileDiff`.
+
+<DocsCodeExample {...editCaretExample} />
+
 #### Selection Action
 
 Set `enabledSelectionAction: true` and return custom UI from
@@ -381,8 +420,9 @@ collection; accept installs the final collection, which should be committed
 alongside the accepted file or diff.
 
 For interactive annotation content, keep application state under a stable,
-position-independent metadata ID. React may recreate annotation content when
-rows move, disappear, or leave a virtualized window.
+position-independent metadata ID. React keeps annotation content while editing
+moves its row, but may recreate it when rows disappear or leave a virtualized
+window.
 
 ### Performance and loading
 
@@ -407,21 +447,95 @@ the feature is used.
 
 <DocsCodeExample {...editLazyFileExample} />
 
+### Edit prediction
+
+Edit prediction is opt-in and model agnostic. Provide a `predict()` function
+through `editorOptions.editPrediction`; the editor renders its validated
+response as ghost text. Accept a visible prediction with <kbd>Tab</kbd>, or
+dismiss it with <kbd>Esc</kbd>. Keep model credentials in your service rather
+than shipping them to the browser.
+
+<DocsCodeExample {...editPredictionExample} />
+
+[Try the live demo](/edit#tab-tab-tab).
+
+The editor calls `predict()` 300 ms after typing or moving to a single,
+collapsed caret. A document or cursor change clears the current prediction and
+aborts in-progress work through `context.signal`. In `'subtle'` mode, the
+prediction toggles when you tap <kbd>Alt</kbd>. Use `include` and `exclude` to
+filter slash-normalized file paths; exclusions take precedence.
+
+#### Create a prediction API
+
+Create a server endpoint such as `POST /edit/predict` that accepts an
+`EditPredictRequest` as JSON and returns an `EditPredictResponse`. Both types
+are exported from `@pierre/diffs/edit`. The provider above connects the editor
+to this endpoint and forwards `context.signal` to cancel stale requests.
+
+The request contains the context needed to predict an edit:
+
+- `path`, `version`, and `eol` identify the file, its current document version,
+  and its line ending sequence.
+- `excerptText` is a bounded slice around the cursor. `excerptStartLine` is the
+  zero-based document line where that slice begins.
+- `cursorOffsetInExcerpt` is the cursor's UTF-16 offset within the excerpt.
+  `editableRange` contains the allowed `start` and exclusive `end` offsets in
+  the same coordinate system; text outside this range is context only.
+- `editHistory` contains recent changes as unified diffs, in chronological
+  order, with a `source` of `'user'` or `'prediction'`.
+
+Validate the request on the server, call your model, and translate its output
+into edits within `editableRange`. Return JSON with:
+
+- `edits`: non-overlapping `{ range: { start, end }, newText }` edits. Each
+  position uses an absolute, zero-based document `line` and UTF-16 `character`
+  offset in the document before the edits. Equal start and end positions insert
+  text; an empty `newText` deletes the range.
+- `newCursor`: the absolute cursor position after all edits are applied.
+
+Convert excerpt offsets to line and character positions by counting line endings
+within the excerpt, then add `excerptStartLine` to each line number. Preserve
+the request's `eol` in generated text and avoid splitting CRLF sequences or
+UTF-16 surrogate pairs. When there is no suggestion, return `edits: []` with the
+unchanged absolute cursor as `newCursor`.
+
+For example, inserting `hello` at line 10, character 4 returns:
+
+<DocsCodeExample {...editPredictionResponseExample} />
+
+#### Codestral FIM example
+
+The live demo's
+[prediction API route](<https://github.com/pierrecomputer/pierre/blob/main/apps/docs/app/(diffs)/edit/predict/route.ts>)
+uses Mistral's **Codestral fill-in-the-middle (FIM)** model. It calls
+`https://api.mistral.ai/v1/fim/completions` with the following body, where
+`input` is the validated `EditPredictRequest`:
+
+<DocsCodeExample {...editPredictionCodestralExample} />
+
+Codestral generates the missing text between `prompt` and `suffix`. The route
+reads `choices[0].message.content`, normalizes its line endings, and returns a
+single insertion at the cursor with `newCursor` immediately after the inserted
+text. It keeps `MISTRAL_API_KEY` on the server and includes request validation,
+GitHub authentication, rate limiting, size limits, cancellation, and an upstream
+timeout. Use the route as a reference when connecting your own prediction API.
+
 ### API reference
+
+Everything you need to make edit mode your own.
 
 <DocsCodeExample {...editorPublicApi} />
 
 #### Editor options
 
-Pass options to `new Editor(documentKind, options, editStateKey?)`.
-`initialState` and `ownsVerticalViewport` are constructor-only. `setOptions()`
-merges later values, but not every option is retroactive: for example,
-`matchBrackets` is captured when the document synchronizes, and changing
-`historyMaxEntries` does not resize history already created for a document.
-Callbacks that are read when an event occurs use their latest values.
-`EditorOptions.onComplete` is a low-level observer. You cannot accept or reject
-from this API. Most integrations should use the component completion callbacks
-described above instead.
+Pass options to `new Editor(editorType, options, editStateKey?)`. `initialState`
+and `ownsVerticalViewport` are constructor-only. `setOptions()` merges later
+values, but not every option is retroactive: for example, `matchBrackets` is
+captured when the document synchronizes, and changing `historyMaxEntries` does
+not resize history already created for a document. Callbacks that are read when
+an event occurs use their latest values. `EditorOptions.onComplete` is a
+low-level observer. You cannot accept or reject from this API. Most integrations
+should use the component completion callbacks described above instead.
 
 <DocsCodeExample {...editorOptionsType} />
 

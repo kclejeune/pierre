@@ -67,6 +67,19 @@
         </p>
       </li>
       <li>
+        <a href="/test/e2e/fixtures/worker-portable.html"
+          >worker-portable.html</a
+        >
+        <p class="desc">
+          A <code>File</code> rendered through a one-worker pool whose worker is
+          <code>dist/worker/worker-portable.js</code> loaded as a single script.
+          <code>?highlighter=</code> picks the backend; <code>&amp;mode=</code>
+          selects classic, module, or blob loading. Drives
+          <code>worker-portable.pw.ts</code>. Ready flag:
+          <code>window.__workerPortableReady</code>.
+        </p>
+      </li>
+      <li>
         <a href="/test/e2e/fixtures/edit.html">edit.html</a>
         <p class="desc">
           A <code>FileDiff</code> attached to the <code>Editor</code> (edit
@@ -85,6 +98,41 @@
           search, separator expansion mid-edit, session exit).
           <code>?diffStyle=unified</code> switches views. Ready flag:
           <code>window.__editReady</code>.
+        </p>
+      </li>
+      <li>
+        <a href="/test/e2e/fixtures/code-view-prediction.html"
+          >code-view-prediction.html</a
+        >
+        <p class="desc">
+          A <code>CodeView</code> with two edit-mode items and a scripted
+          edit-prediction provider that answers every request with three ghost
+          lines, running with <code>__devOnlyValidateItemHeights</code>. Drives
+          <code>code-view-prediction.pw.ts</code> (ghost-row layout: height
+          invariants, next-item offset, wrap probe, split column padding,
+          trailing scroll height). <code>?overflow=scroll|wrap</code> and
+          <code>?diff=none|unified|split</code> select variants. Ready flag:
+          <code>window.__predictionReady</code>; helpers on
+          <code>window.__prediction</code>, recorded errors on
+          <code>window.__consoleErrors</code>.
+        </p>
+      </li>
+      <li>
+        <a href="/test/e2e/fixtures/code-view-annotations.html"
+          >code-view-annotations.html</a
+        >
+        <p class="desc">
+          A scrollable <code>CodeView</code> with comments near the bottom and a
+          button to add an annotation. Drives
+          <code>code-view-annotations.pw.ts</code> (viewport preservation during
+          annotation measurement). <code>?type=file|diff</code> selects plain
+          file or split diff; <code>&amp;multiple=true</code> adds a second
+          existing comment.
+          <code>&amp;react=controlled|imperative</code> exercises React
+          annotation slots; <code>&amp;edit=true</code>
+          attaches an editor. Also covers content replacement, item removal,
+          layout changes, and scroll targets. Helpers:
+          <code>window.__annotationScroll</code>.
         </p>
       </li>
       <li>

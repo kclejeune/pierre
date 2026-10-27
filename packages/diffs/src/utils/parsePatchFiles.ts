@@ -1,8 +1,6 @@
 import {
-  ALTERNATE_FILE_NAMES_GIT,
   COMMIT_METADATA_SPLIT,
   FILENAME_HEADER_REGEX,
-  FILENAME_HEADER_REGEX_GIT,
   GIT_DIFF_FILE_BREAK_REGEX,
   INDEX_LINE_METADATA,
 } from '../constants';
@@ -22,7 +20,13 @@ import {
   getHunkSideEndBoundary,
   getHunkSideStartBoundary,
 } from './getHunkSideBoundaries';
+import { parseQuotedDiffFileName } from './parseQuotedDiffFileName';
 import { realignChangeContentBySimilarity } from './realignChangeContent';
+
+// Keep quotes and transport prefixes until decoding, while allowing spaces in
+// unquoted paths and escaped quotes inside quoted paths.
+const GIT_DIFF_HEADER_FILENAMES =
+  /^diff --git ("a\/(?:[^"\\]|\\.)*"|a\/.+?) ("b\/(?:[^"\\]|\\.)*"|b\/.+?)$/;
 
 interface ParsedHunkHeader {
   additionCount: number;
@@ -200,6 +204,14 @@ function _processFile(
           !isPartial && oldFile != null && newFile != null
             ? splitFileContents(oldFile.contents)
             : [],
+        additionCharacterCount:
+          !isPartial && oldFile != null && newFile != null
+            ? newFile.contents.length
+            : 0,
+        deletionCharacterCount:
+          !isPartial && oldFile != null && newFile != null
+            ? oldFile.contents.length
+            : 0,
         cacheKey: maybeDetachOptionalString(cacheKey),
       };
       // If either file is technically empty, then we should empty the
@@ -213,10 +225,8 @@ function _processFile(
 
       for (const line of lines) {
         if (line.startsWith('diff --git')) {
-          const filenameMatch = line.trim().match(ALTERNATE_FILE_NAMES_GIT);
-          const prevName = filenameMatch?.[1] ?? filenameMatch?.[2];
-          const name = filenameMatch?.[3] ?? filenameMatch?.[4];
-          if (prevName == null || name == null) {
+          const filenameMatch = line.trim().match(GIT_DIFF_HEADER_FILENAMES);
+          if (filenameMatch == null) {
             if (throwOnError) {
               throw Error('parsePatchContent: invalid git diff header');
             } else {
@@ -224,27 +234,27 @@ function _processFile(
             }
             continue;
           }
-          currentFile.name = name.trim();
+          const prevName = decodeDiffFileName(filenameMatch[1], true);
+          const name = decodeDiffFileName(filenameMatch[2], true);
+          currentFile.name = name;
           if (prevName !== name) {
-            currentFile.prevName = prevName.trim();
+            currentFile.prevName = prevName;
           }
           continue;
         }
 
         const filenameMatch =
           line.startsWith('---') || line.startsWith('+++')
-            ? line.match(
-                isGitDiff ? FILENAME_HEADER_REGEX_GIT : FILENAME_HEADER_REGEX
-              )
+            ? line.match(FILENAME_HEADER_REGEX)
             : null;
         if (filenameMatch != null) {
-          const [, type, fileName] = filenameMatch;
+          const [, type, rawFileName] = filenameMatch;
+          const fileName = decodeDiffFileName(rawFileName, isGitDiff);
           if (type === '---' && fileName !== '/dev/null') {
-            const trimmedFileName = fileName.trim();
-            currentFile.prevName = trimmedFileName;
-            currentFile.name = trimmedFileName;
+            currentFile.prevName = fileName;
+            currentFile.name = fileName;
           } else if (type === '+++' && fileName !== '/dev/null') {
-            currentFile.name = fileName.trim();
+            currentFile.name = fileName;
           }
         }
         // Git diffs have a bunch of additional metadata we can pull from
@@ -283,13 +293,28 @@ function _processFile(
               currentFile.mode = mode;
             }
           }
-          // We have to handle these for pure renames because there won't be
-          // --- and +++ lines
-          if (line.startsWith('rename from ')) {
-            currentFile.prevName = line.slice('rename from '.length).trim();
+          // Pure renames and copies have no --- / +++ headers. These paths
+          // are already relative to the repository, without transport prefixes.
+          if (
+            line.startsWith('rename from ') ||
+            line.startsWith('copy from ')
+          ) {
+            currentFile.prevName = decodeDiffFileName(
+              line.slice(
+                line.startsWith('rename')
+                  ? 'rename from '.length
+                  : 'copy from '.length
+              )
+            );
           }
-          if (line.startsWith('rename to ')) {
-            currentFile.name = line.slice('rename to '.length).trim();
+          if (line.startsWith('rename to ') || line.startsWith('copy to ')) {
+            currentFile.name = decodeDiffFileName(
+              line.slice(
+                line.startsWith('rename')
+                  ? 'rename to '.length
+                  : 'copy to '.length
+              )
+            );
           }
         }
       }
@@ -402,6 +427,7 @@ function _processFile(
         parsedAdditionLines++;
         if (isPartial) {
           currentFile.additionLines.push(line);
+          currentFile.additionCharacterCount += line.length;
         }
         currentContent.additions++;
         additionLines++;
@@ -423,6 +449,7 @@ function _processFile(
         parsedDeletionLines++;
         if (isPartial) {
           currentFile.deletionLines.push(line);
+          currentFile.deletionCharacterCount += line.length;
         }
         currentContent.deletions++;
         deletionLines++;
@@ -451,6 +478,8 @@ function _processFile(
         if (isPartial) {
           currentFile.deletionLines.push(line);
           currentFile.additionLines.push(line);
+          currentFile.deletionCharacterCount += line.length;
+          currentFile.additionCharacterCount += line.length;
         }
         currentContent.lines++;
         lastLineType = 'context';
@@ -471,9 +500,11 @@ function _processFile(
         ) {
           const lastIndex = currentFile.additionLines.length - 1;
           if (lastIndex >= 0) {
-            currentFile.additionLines[lastIndex] = cleanLastNewline(
-              currentFile.additionLines[lastIndex]
-            );
+            const line = currentFile.additionLines[lastIndex];
+            const cleanedLine = cleanLastNewline(line);
+            currentFile.additionLines[lastIndex] = cleanedLine;
+            currentFile.additionCharacterCount +=
+              cleanedLine.length - line.length;
           }
         }
         if (
@@ -482,9 +513,11 @@ function _processFile(
         ) {
           const lastIndex = currentFile.deletionLines.length - 1;
           if (lastIndex >= 0) {
-            currentFile.deletionLines[lastIndex] = cleanLastNewline(
-              currentFile.deletionLines[lastIndex]
-            );
+            const line = currentFile.deletionLines[lastIndex];
+            const cleanedLine = cleanLastNewline(line);
+            currentFile.deletionLines[lastIndex] = cleanedLine;
+            currentFile.deletionCharacterCount +=
+              cleanedLine.length - line.length;
           }
         }
       }
@@ -684,6 +717,18 @@ export function parsePatchFiles(
     }
   }
   return patches;
+}
+
+// Decode only quoted tokens, preserving whitespace inside them. Git's a/ and
+// b/ prefixes are part of the quoted token and must be removed after decoding.
+function decodeDiffFileName(value: string, stripGitPrefix = false): string {
+  const rawName = value.trim();
+  const name = rawName.startsWith('"')
+    ? (parseQuotedDiffFileName(rawName)?.fileName ?? rawName)
+    : rawName;
+  return stripGitPrefix && (name.startsWith('a/') || name.startsWith('b/'))
+    ? name.slice(2)
+    : name;
 }
 
 function hasCommitMetadataBoundary(data: string): boolean {

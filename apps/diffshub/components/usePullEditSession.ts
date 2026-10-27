@@ -4,9 +4,9 @@ import {
   cloneFileDiffMetadata,
   type CodeViewItem,
   type CodeViewItemEditCompleteHandler,
-  type EditorChangeEvent,
   type FileDiffMetadata,
 } from '@pierre/diffs';
+import type { EditorChangeEvent, EditorType } from '@pierre/diffs/edit';
 import { type CodeViewHandle, useStableCallback } from '@pierre/diffs/react';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -49,10 +49,13 @@ export interface PullEditSession {
   // longer match what GitHub knows.
   isFileLocked(itemId: string): boolean;
   onItemEditChange(
-    event: EditorChangeEvent<CommentMetadata, 'file' | 'diff'>,
+    event: EditorChangeEvent<EditorType, CommentMetadata, undefined>,
     item: CodeViewItem<CommentMetadata>
   ): void;
-  onItemEditComplete: CodeViewItemEditCompleteHandler<CommentMetadata>;
+  onItemEditComplete: CodeViewItemEditCompleteHandler<
+    CommentMetadata,
+    undefined
+  >;
   toggleEdit(itemId: string): void;
 }
 
@@ -70,7 +73,7 @@ interface UsePullEditSessionInput {
   // diff the user is looking at — a sha cached across reloads would make
   // every commit after an external push fail its compare-and-swap forever.
   viewerKey: number;
-  viewerRef: RefObject<CodeViewHandle<CommentMetadata> | null>;
+  viewerRef: RefObject<CodeViewHandle<CommentMetadata, undefined> | null>;
 }
 
 export function usePullEditSession({
@@ -200,7 +203,7 @@ export function usePullEditSession({
 
   const onItemEditChange = useStableCallback(
     (
-      { file }: EditorChangeEvent<CommentMetadata, 'file' | 'diff'>,
+      { file }: EditorChangeEvent<EditorType, CommentMetadata, undefined>,
       item: CodeViewItem<CommentMetadata>
     ) => {
       contentsRef.current.set(item.id, file.contents);
@@ -210,32 +213,34 @@ export function usePullEditSession({
     }
   );
 
-  const onItemEditComplete: CodeViewItemEditCompleteHandler<CommentMetadata> =
-    useStableCallback((event, item, nextItem) => {
-      if (item.type !== 'diff' || !('fileDiff' in event)) {
-        return 'reject';
+  const onItemEditComplete: CodeViewItemEditCompleteHandler<
+    CommentMetadata,
+    undefined
+  > = useStableCallback((event, item, nextItem) => {
+    if (item.type !== 'diff' || !('fileDiff' in event)) {
+      return 'reject';
+    }
+    const file = event.newFile;
+    if (file == null) {
+      return 'reject';
+    }
+    contentsRef.current.set(item.id, file.contents);
+    setDirtyFiles((previous) =>
+      upsertDirtyFile(previous, { itemId: item.id, path: file.name })
+    );
+    // CodeView installs nextItem after acceptance. Re-key the completed diff
+    // first so it cannot reuse render output from before the edit session.
+    event.fileDiff.cacheKey = `${item.id}:edit:${String(nextItem.version)}`;
+    setEditingIds((previous) => {
+      if (!previous.has(item.id)) {
+        return previous;
       }
-      const file = event.newFile;
-      if (file == null) {
-        return 'reject';
-      }
-      contentsRef.current.set(item.id, file.contents);
-      setDirtyFiles((previous) =>
-        upsertDirtyFile(previous, { itemId: item.id, path: file.name })
-      );
-      // CodeView installs nextItem after acceptance. Re-key the completed diff
-      // first so it cannot reuse render output from before the edit session.
-      event.fileDiff.cacheKey = `${item.id}:edit:${String(nextItem.version)}`;
-      setEditingIds((previous) => {
-        if (!previous.has(item.id)) {
-          return previous;
-        }
-        const next = new Set(previous);
-        next.delete(item.id);
-        return next;
-      });
-      return 'accept';
+      const next = new Set(previous);
+      next.delete(item.id);
+      return next;
     });
+    return 'accept';
+  });
 
   const discardFile = useStableCallback((itemId: string) => {
     const viewer = viewerRef.current;

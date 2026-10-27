@@ -15,6 +15,7 @@ import type {
   MergeConflictResolution,
   PostRenderPhase,
 } from '../types';
+import { areDiffTargetsEqual } from '../utils/areDiffTargetsEqual';
 import { areFilesEqual } from '../utils/areFilesEqual';
 import { areMergeConflictActionsEqual } from '../utils/areMergeConflictActionsEqual';
 import { createAnnotationWrapperNode } from '../utils/createAnnotationWrapperNode';
@@ -33,6 +34,8 @@ import {
   FileDiff,
   type FileDiffOptions,
   type FileDiffRenderBaseProps,
+  type FileDiffRenderData,
+  type FileDiffRenderInput,
 } from './FileDiff';
 
 export type RenderMergeConflictActions<LAnnotation> = (
@@ -46,7 +49,7 @@ export type MergeConflictActionsTypeOption<LAnnotation> =
   | RenderMergeConflictActions<LAnnotation>;
 
 export interface UnresolvedFileOptions<LAnnotation> extends Omit<
-  FileDiffOptions<LAnnotation>,
+  FileDiffOptions<LAnnotation, undefined>,
   'diffStyle' | 'onPostRender'
 > {
   onPostRender?(
@@ -110,11 +113,26 @@ interface ResolveConflictReturn {
 
 type UnresolvedFileDataCache = GetOrComputeDiffProps;
 
+export interface UnresolvedFileRenderInput<
+  LAnnotation,
+> extends FileDiffRenderInput<LAnnotation> {
+  actions: (MergeConflictDiffAction | undefined)[];
+  markerRows: MergeConflictMarkerRow[];
+}
+
+export interface UnresolvedFileRenderData<
+  LAnnotation,
+> extends FileDiffRenderData<LAnnotation> {
+  actions: (MergeConflictDiffAction | undefined)[];
+  markerRows: MergeConflictMarkerRow[];
+}
+
 let instanceId = -1;
 
-export class UnresolvedFile<
-  LAnnotation = undefined,
-> extends FileDiff<LAnnotation> {
+export class UnresolvedFile<LAnnotation = undefined> extends FileDiff<
+  LAnnotation,
+  undefined
+> {
   override readonly __id: string = `unresolved-file:${++instanceId}`;
   override readonly type = 'unresolved-file';
 
@@ -126,6 +144,21 @@ export class UnresolvedFile<
   };
   private conflictActions: (MergeConflictDiffAction | undefined)[] = [];
   private markerRows: MergeConflictMarkerRow[] = [];
+
+  public override __getNextRenderData({
+    actions,
+    markerRows,
+    ...input
+  }: UnresolvedFileRenderInput<LAnnotation>): UnresolvedFileRenderData<LAnnotation> {
+    const data = super.__getNextRenderData(input);
+    const isInput = areDiffTargetsEqual(data.fileDiff, input.fileDiff);
+    return {
+      ...data,
+      actions: isInput ? actions : this.conflictActions,
+      markerRows: isInput ? markerRows : this.markerRows,
+    };
+  }
+
   private conflictActionCache: Map<string, MergeConflictActionElementCache> =
     new Map();
 
@@ -134,9 +167,9 @@ export class UnresolvedFile<
       theme: DEFAULT_THEMES,
     },
     workerManager?: WorkerPoolManager | undefined,
-    isContainerManaged = false
+    requestOwnerRender?: () => void
   ) {
-    super(undefined, workerManager, isContainerManaged);
+    super(undefined, workerManager, requestOwnerRender);
     this.setOptions(options);
   }
 
@@ -218,6 +251,7 @@ export class UnresolvedFile<
       markerRows: undefined,
     };
     this.conflictActions = [];
+    this.markerRows = [];
     super.cleanUp();
   }
 
@@ -367,7 +401,7 @@ export class UnresolvedFile<
       return;
     }
     this.hydrateElements(fileContainer, prerenderedHTML);
-    this.setActiveMergeConflictState(source.actions, source.markerRows);
+    this.prepareRenderData(source.fileDiff);
     // If necessary hydration elements don't exist, we should assume a full
     // render
     if (
@@ -393,9 +427,10 @@ export class UnresolvedFile<
   }
 
   override rerender(): void {
-    if (!this.enabled || this.fileDiff == null) {
+    if (!this.enabled || this.computedCache.fileDiff == null) {
       return;
     }
+    if (this.requestRender()) return;
     this.render({ forceRender: true, renderRange: this.renderRange });
   }
 
@@ -418,7 +453,6 @@ export class UnresolvedFile<
     if (source == null) {
       return false;
     }
-    this.setActiveMergeConflictState(source.actions, source.markerRows);
     const didRender = super.render({
       ...rest,
       fileDiff: source.fileDiff,
@@ -439,7 +473,7 @@ export class UnresolvedFile<
     resolution: MergeConflictResolution,
     fileDiff: FileDiffMetadata | undefined = this.computedCache.fileDiff
   ): ResolveConflictReturn | undefined {
-    const action = this.conflictActions[conflictIndex];
+    const action = this.computedCache.actions?.[conflictIndex];
     if (fileDiff == null || action == null) {
       return undefined;
     }
@@ -455,7 +489,7 @@ export class UnresolvedFile<
     const previousFile = this.computedCache.file;
     const { file, actions, markerRows } = rebuildFileAndActions({
       fileDiff: newFileDiff,
-      previousActions: this.conflictActions,
+      previousActions: this.computedCache.actions ?? [],
       resolvedConflictIndex: conflictIndex,
       previousFile,
       resolution,
@@ -473,7 +507,7 @@ export class UnresolvedFile<
     conflictIndex: number,
     resolution: MergeConflictResolution
   ): void {
-    const action = this.conflictActions[conflictIndex];
+    const action = this.computedCache.actions?.[conflictIndex];
     if (action == null) {
       return;
     }
@@ -499,14 +533,17 @@ export class UnresolvedFile<
     }
 
     this.computedCache = { file, fileDiff, actions, markerRows };
-    this.setActiveMergeConflictState(actions, markerRows);
     // NOTE(amadeus): This is a bit jank, but helps to ensure we don't see a
     // bunch of jittery re-renders as things resolve out.  In a more perfect
     // world we would have a more elegant way to kick off a render to the
     // highlighter and then resolve actions in a cleaner way, but time is short
     // right now.  Can't let perfect be the enemy of good
-    if (this.workerManager != null) {
-      // Because we are using a workerManager, if we fire off the renderDiff
+    const { workerManager } = this;
+    if (
+      workerManager?.isWorkingPool() === true &&
+      !workerManager.shouldHighlightOnMainThread(fileDiff)
+    ) {
+      // Because the diff highlights on a worker, if we fire off the renderDiff
       // call, it will eventually get back to us in a callback which will
       // trigger a re-render
       this.hunksRenderer.renderDiff(fileDiff);
@@ -516,27 +553,46 @@ export class UnresolvedFile<
     this.options.onMergeConflictResolve?.(file, payload);
   }
 
-  private setActiveMergeConflictState(
-    actions: (MergeConflictDiffAction | undefined)[] = this.conflictActions,
-    markerRows: MergeConflictMarkerRow[] = this.markerRows
-  ): void {
-    this.conflictActions = actions;
-    this.markerRows = markerRows;
-    if (
-      this.computedCache.fileDiff != null &&
-      this.hunksRenderer instanceof UnresolvedFileHunksRenderer
-    ) {
+  // Use conflict actions and marker rows for the diff being rendered. While
+  // a replacement is being highlighted, use the previous diff's actions and rows.
+  protected override prepareRenderData(fileDiff: FileDiffMetadata): void {
+    super.prepareRenderData(fileDiff);
+    const latest = areDiffTargetsEqual(fileDiff, this.computedCache.fileDiff);
+    if (this.hunksRenderer instanceof UnresolvedFileHunksRenderer) {
       this.hunksRenderer.setConflictState(
-        this.options.mergeConflictActionsType === 'none' ? [] : actions,
-        markerRows,
-        this.computedCache.fileDiff
+        this.options.mergeConflictActionsType === 'none'
+          ? []
+          : ((latest ? this.computedCache.actions : this.conflictActions) ??
+              []),
+        (latest ? this.computedCache.markerRows : this.markerRows) ?? [],
+        fileDiff
       );
+    }
+  }
+
+  protected override adoptRenderData(fileDiff: FileDiffMetadata): void {
+    super.adoptRenderData(fileDiff);
+    if (areDiffTargetsEqual(fileDiff, this.computedCache.fileDiff)) {
+      this.conflictActions = this.computedCache.actions ?? [];
+      this.markerRows = this.computedCache.markerRows ?? [];
     }
   }
 
   private handleMergeConflictActionClick = (
     target: MergeConflictActionTarget
   ): void => {
+    // With onMergeConflictAction, the new diff may reuse an index for a different
+    // conflict. Ignore clicks on the old diff until the new one is displayed.
+    // Built-in resolution keeps indices stable, so remaining conflicts can still
+    // be clicked while highlighting is pending. A wrapper component manages
+    // resolution itself and handles every click.
+    if (
+      !this.isComponentManaged &&
+      this.options.onMergeConflictAction != null &&
+      !areDiffTargetsEqual(this.getRenderedDiff(), this.computedCache.fileDiff)
+    ) {
+      return;
+    }
     const action = this.conflictActions[target.conflictIndex];
     if (action == null) {
       return;
@@ -559,9 +615,9 @@ export class UnresolvedFile<
   };
 
   private renderMergeConflictActionSlots(): void {
-    const { fileDiff } = this.computedCache;
+    const fileDiff = this.getRenderedDiff();
     if (
-      this.isContainerManaged ||
+      this.isComponentManaged ||
       this.fileContainer == null ||
       typeof this.options.mergeConflictActionsType !== 'function' ||
       this.conflictActions.length === 0 ||

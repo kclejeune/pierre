@@ -1,5 +1,7 @@
 import type { DiffIndicators, SelectedLineRange } from '@pierre/diffs';
 
+import { getPreferredHighlighter } from '@/lib/preferredHighlighter';
+
 // The playground's URL state, parsed identically on the server (to build the
 // prerendered payload) and on the client (to seed component state). The
 // prerendered markup paints before hydration, so any parameter the two sides
@@ -29,6 +31,8 @@ export const DARK_THEMES = [
 export type PlaygroundLightTheme = (typeof LIGHT_THEMES)[number];
 export type PlaygroundDarkTheme = (typeof DARK_THEMES)[number];
 
+export const HIGHLIGHTERS = ['highlights', 'shiki-wasm', 'shiki-js'] as const;
+
 const VIEW_MODES = [
   'diff',
   'file',
@@ -40,7 +44,13 @@ const VIEW_MODES = [
 const DIFF_STYLES = ['split', 'unified'] as const;
 const COLOR_MODES = ['system', 'light', 'dark'] as const;
 const DIFF_INDICATORS = ['bars', 'classic', 'none'] as const;
-const LINE_DIFF_TYPES = ['word-alt', 'word', 'char', 'none'] as const;
+const LINE_DIFF_TYPES = [
+  'word-alt',
+  'word-line',
+  'word',
+  'char',
+  'none',
+] as const;
 const HUNK_SEPARATOR_VALUES = [
   'line-info',
   'line-info-basic',
@@ -61,6 +71,7 @@ export type PlaygroundLineDiffType = (typeof LINE_DIFF_TYPES)[number];
 
 // Default values for URL param comparison
 export const DEFAULTS = {
+  highlighter: getPreferredHighlighter(),
   viewMode: 'diff' as ViewMode,
   diffStyle: 'split',
   colorMode: 'system',
@@ -77,11 +88,13 @@ export const DEFAULTS = {
   gutterButton: true,
   interactionMode: 'comment' as const,
   annotations: true,
+  editPrediction: false,
   edit: false,
   markers: false,
 } as const;
 
 export interface PlaygroundUrlState {
+  highlighter: (typeof HIGHLIGHTERS)[number];
   viewMode: ViewMode;
   diffStyle: (typeof DIFF_STYLES)[number];
   colorMode: (typeof COLOR_MODES)[number];
@@ -97,6 +110,7 @@ export interface PlaygroundUrlState {
   enableLineSelection: boolean;
   enableGutterUtility: boolean;
   showAnnotations: boolean;
+  editPrediction: boolean;
   edit: boolean;
   showMarkers: boolean;
   selectedRange: SelectedLineRange | null;
@@ -151,6 +165,7 @@ export function parsePlaygroundSearchParams(
       : pickBool(get('gutter'), DEFAULTS.gutterButton);
 
   return {
+    highlighter: pick(get('highlighter'), HIGHLIGHTERS, DEFAULTS.highlighter),
     viewMode,
     diffStyle: pick(get('layout'), DIFF_STYLES, 'split'),
     colorMode: pick(get('mode'), COLOR_MODES, 'system'),
@@ -174,6 +189,7 @@ export function parsePlaygroundSearchParams(
     enableLineSelection,
     enableGutterUtility,
     showAnnotations: pickBool(get('annot'), DEFAULTS.annotations),
+    editPrediction: pickBool(get('predict'), DEFAULTS.editPrediction),
     // Only the direct File and FileDiff views carry their edit session in the
     // URL; the scrolling views own per-file controls instead.
     edit:

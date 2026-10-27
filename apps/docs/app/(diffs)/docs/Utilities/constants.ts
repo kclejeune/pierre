@@ -8,7 +8,10 @@ const options = {
   unsafeCSS: CustomScrollbarCSS,
 } as const;
 
-export const HELPER_PARSE_DIFF_FROM_FILE: PreloadFileOptions<undefined> = {
+export const HELPER_PARSE_DIFF_FROM_FILE: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'parseDiffFromFile.ts',
     contents: `import {
@@ -57,7 +60,10 @@ const deletedFileDiff: FileDiffMetadata = parseDiffFromFile(oldFile, null);
   options,
 };
 
-export const HELPER_PARSE_PATCH_FILES: PreloadFileOptions<undefined> = {
+export const HELPER_PARSE_PATCH_FILES: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'parsePatchFiles.ts',
     contents: `import {
@@ -107,7 +113,10 @@ for (const patch of patches) {
   options,
 };
 
-export const HELPER_TRIM_PATCH_CONTEXT: PreloadFileOptions<undefined> = {
+export const HELPER_TRIM_PATCH_CONTEXT: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'trimPatchContext.ts',
     contents: `import { trimPatchContext } from '@pierre/diffs';
@@ -158,14 +167,16 @@ index abc123..def456 100644
   options,
 };
 
-export const HELPER_REGISTER_CUSTOM_THEME: PreloadFileOptions<undefined> = {
+export const HELPER_REGISTER_CUSTOM_THEME: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'registerCustomTheme.ts',
     contents: `import { registerCustomTheme } from '@pierre/diffs';
 
-// Register a custom Shiki theme before using it.
-// The theme name you register must match the 'name' field
-// inside your theme JSON file.
+// Register themes before rendering.
+// TextMate themes must have a matching 'name' field.
 
 // Option 1: Dynamic import (recommended for code splitting)
 registerCustomTheme('my-custom-theme', () => import('./my-theme.json'));
@@ -188,19 +199,26 @@ registerCustomTheme('inline-theme', async () => ({
   ],
 }));
 
-// Once registered, use the theme name in your components:
-// <FileDiff options={{ theme: 'my-custom-theme' }} ... />`,
+// Option 3: A Zed-compatible Highlights theme or theme family
+registerCustomTheme('my-zed-theme', () => import('./my-zed-theme.json'), 'zed');
+
+// Use the registered name and the matching backend:
+// <FileDiff options={{ theme: 'my-custom-theme', preferredHighlighter: 'shiki-js' }} ... />
+// <FileDiff options={{ theme: 'my-zed-theme', preferredHighlighter: 'highlights' }} ... />`,
   },
   options,
 };
 
-export const HELPER_REGISTER_CUSTOM_LANGUAGE: PreloadFileOptions<undefined> = {
+export const HELPER_REGISTER_CUSTOM_LANGUAGE: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'registerCustomLanguage.ts',
     contents: `import { registerCustomLanguage } from '@pierre/diffs';
 
 // Register a custom Shiki language loader before rendering.
-// The language name you register becomes available to Shiki.
+// my-lang.tmLanguage.json must declare "my-lang" as its name or an alias.
 
 // Option 1: Dynamic import (recommended for code splitting)
 registerCustomLanguage('my-lang', () => import('./my-lang.tmLanguage.json'), [
@@ -218,7 +236,22 @@ registerCustomLanguage('my-lang', () => import('./my-lang.tmLanguage.json'));`,
   options,
 };
 
-export const HELPER_DISPOSE_HIGHLIGHTER: PreloadFileOptions<undefined> = {
+export const HELPER_CAN_USE_WASM: PreloadFileOptions<undefined, undefined> = {
+  file: {
+    name: 'canUseWASM.ts',
+    contents: `import { canUseWASM } from '@pierre/diffs';
+
+// 'highlights' and 'shiki-wasm' need WebAssembly. Fall back to
+// 'shiki-js' when the browser lacks it or the page blocks it.
+const preferredHighlighter = canUseWASM() ? 'highlights' : 'shiki-js';`,
+  },
+  options,
+};
+
+export const HELPER_DISPOSE_HIGHLIGHTER: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'disposeHighlighter.ts',
     contents: `import { disposeHighlighter } from '@pierre/diffs';
@@ -235,28 +268,33 @@ disposeHighlighter();`,
   options,
 };
 
-export const HELPER_GET_SHARED_HIGHLIGHTER: PreloadFileOptions<undefined> = {
+export const HELPER_GET_SHARED_HIGHLIGHTER: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'getSharedHighlighter.ts',
-    contents: `import { getSharedHighlighter, DiffsHighlighter } from '@pierre/diffs';
+    contents: `import { getSharedHighlighter } from '@pierre/diffs';
 
-// Get the shared Shiki highlighter instance.
-// This is the same instance used internally by all FileDiff
-// and File components. Useful if you need direct access to
-// Shiki for custom highlighting operations.
-//
-// The highlighter is initialized lazily - themes and languages
-// are loaded on demand as you render different files.
-const highlighter: DiffsHighlighter = await getSharedHighlighter();
+// Later preferences do not replace an active backend.
+const highlighter = await getSharedHighlighter({
+  preferredHighlighter: 'shiki-js', // defaults to the loaded backend, else 'shiki-js'
+  themes: ['pierre-dark'],
+  langs: ['typescript'],
+});
 
-// You can use it directly for custom highlighting, see the Shiki
-// docs at https://shiki.style/ for details
-const tokens = highlighter.codeToTokens('const x = 1;'); `,
+const { tokens } = highlighter.codeToTokens('const x = 1;', {
+  lang: 'typescript',
+  theme: 'pierre-dark',
+});`,
   },
   options,
 };
 
-export const HELPER_PRELOAD_HIGHLIGHTER: PreloadFileOptions<undefined> = {
+export const HELPER_PRELOAD_HIGHLIGHTER: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'preloadHighlighter.ts',
     contents: `import { preloadHighlighter } from '@pierre/diffs';
@@ -281,7 +319,10 @@ await preloadHighlighter({
   options,
 };
 
-export const HELPER_SET_LANGUAGE_OVERRIDE: PreloadFileOptions<undefined> = {
+export const HELPER_SET_LANGUAGE_OVERRIDE: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'setLanguageOverride.ts',
     contents: `import {
@@ -315,7 +356,10 @@ const typescriptDiff = setLanguageOverride(diff, 'typescript');
   options,
 };
 
-export const HELPER_DIFF_ACCEPT_REJECT: PreloadFileOptions<undefined> = {
+export const HELPER_DIFF_ACCEPT_REJECT: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'diffAcceptRejectHunk.ts',
     contents: `import {
@@ -366,7 +410,10 @@ instance.render({
   options,
 };
 
-export const HELPER_DIFF_ACCEPT_REJECT_REACT: PreloadFileOptions<undefined> = {
+export const HELPER_DIFF_ACCEPT_REJECT_REACT: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'AcceptRejectExample.tsx',
     contents: `import {
@@ -461,7 +508,10 @@ export function AcceptRejectExample() {
   options,
 };
 
-export const HELPER_RESOLVE_MERGE_CONFLICT: PreloadFileOptions<undefined> = {
+export const HELPER_RESOLVE_MERGE_CONFLICT: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'resolveMergeConflict.ts',
     contents: `import {

@@ -1,22 +1,21 @@
 import type { ElementContent, Element as HASTElement } from 'hast';
-import { toHtml } from 'hast-util-to-html';
 
 import {
   DEFAULT_RENDER_RANGE,
   DEFAULT_THEMES,
   DEFAULT_TOKENIZE_MAX_LENGTH,
 } from '../constants';
+import type { TextDocument } from '../editor/textDocument';
 import { areLanguagesAttached } from '../highlighter/languages/areLanguagesAttached';
 import {
   getHighlighterIfLoaded,
   getSharedHighlighter,
+  HighlighterDisposedError,
 } from '../highlighter/shared_highlighter';
 import { areThemesAttached } from '../highlighter/themes/areThemesAttached';
-import { hasResolvedThemes } from '../highlighter/themes/hasResolvedThemes';
 import type {
   BaseCodeOptions,
   DiffsHighlighter,
-  DiffsTextDocument,
   FileContents,
   FileHeaderRenderMode,
   HighlightedToken,
@@ -40,13 +39,13 @@ import { createPreElement } from '../utils/createPreElement';
 import { getFiletypeFromFileName } from '../utils/getFiletypeFromFileName';
 import { getHighlighterOptions } from '../utils/getHighlighterOptions';
 import { getLineAnnotationName } from '../utils/getLineAnnotationName';
-import { getThemes } from '../utils/getThemes';
 import {
   createGutterGap,
   createGutterItem,
   createGutterWrapper,
   createHastElement,
 } from '../utils/hast_utils';
+import { hastToHtml } from '../utils/hastToHtml';
 import {
   FILE_ANNOTATION_HUNK_INDEX,
   FILE_ANNOTATION_LINE_INDEX,
@@ -56,6 +55,7 @@ import {
 import { isDefaultRenderRange } from '../utils/isDefaultRenderRange';
 import { isFilePlainText } from '../utils/isFilePlainText';
 import { renderFileWithHighlighter } from '../utils/renderFileWithHighlighter';
+import { resolvePreferredHighlighter } from '../utils/resolvePreferredHighlighter';
 import type { WorkerPoolManager } from '../worker';
 
 type AnnotationLineMap<LAnnotation> = Record<
@@ -118,7 +118,6 @@ let instanceId = -1;
 export class FileRenderer<LAnnotation = undefined> {
   readonly __id: string = `file-renderer:${++instanceId}`;
 
-  private highlighter: DiffsHighlighter | undefined;
   // The latest file requested by the component. The render cache may
   // intentionally keep displaying an older highlighted file while this one
   // is highlighted in the background.
@@ -133,7 +132,14 @@ export class FileRenderer<LAnnotation = undefined> {
   private lineAnnotations: AnnotationLineMap<LAnnotation> = {};
   private lineCache: LineCache | undefined;
   private pendingStructuralRows: Map<number, HASTElement> | undefined;
-  private textDocumentCache = new WeakMap<FileContents, DiffsTextDocument>();
+  private textDocumentCache = new WeakMap<
+    FileContents,
+    TextDocument<'file', LAnnotation>
+  >();
+  // Rows this renderer built itself, which edits renumber in place. Any other
+  // row can be shared with the pool cache or other renderers, so an edit
+  // copies it the first time it has to change.
+  private ownedRows = new WeakSet<HASTElement>();
 
   // Edit-session state: while active, this renderer stays on the main thread
   // with editor-compatible token markup — the editor's caret/selection
@@ -153,13 +159,7 @@ export class FileRenderer<LAnnotation = undefined> {
     ) => string = getLineAnnotationName,
     private onRenderUpdate?: () => unknown,
     private workerManager?: WorkerPoolManager | undefined
-  ) {
-    if (workerManager?.isWorkingPool() !== true) {
-      this.highlighter = areThemesAttached(options.theme ?? DEFAULT_THEMES)
-        ? getHighlighterIfLoaded()
-        : undefined;
-    }
-  }
+  ) {}
 
   public setOptions(options: FileRendererOptions): void {
     this.options = options;
@@ -181,6 +181,7 @@ export class FileRenderer<LAnnotation = undefined> {
   }
 
   public cleanUp(): void {
+    this.endEditSession();
     this.recycle();
     this.workerManager = undefined;
     this.onRenderUpdate = undefined;
@@ -193,16 +194,13 @@ export class FileRenderer<LAnnotation = undefined> {
    * rendering resumes after recycle.
    */
   public beginEditSession(
-    file?: FileContents,
+    file: FileContents,
     externalFile?: FileContents
   ): void {
     const { editSessionActive: wasAlreadyActive, renderCache } = this;
     this.editSessionActive = true;
     if (!wasAlreadyActive) {
       this.pendingHighlightResult = undefined;
-    }
-    if (file == null) {
-      return;
     }
 
     this.file = file;
@@ -212,6 +210,12 @@ export class FileRenderer<LAnnotation = undefined> {
     // Edit updates call this again before each write. That cache is already
     // private and must retain plain-text session results.
     if (wasAlreadyActive && renderCache.file === file) {
+      return;
+    }
+    if (wasAlreadyActive) {
+      this.clearRenderCache();
+      this.lineCache = undefined;
+      this.textDocumentCache = new WeakMap();
       return;
     }
     const { options } = this.getRenderOptions(file);
@@ -269,6 +273,12 @@ export class FileRenderer<LAnnotation = undefined> {
   public endEditSession(settledFile?: FileContents): void {
     this.editSessionActive = false;
     this.pendingHighlightResult = undefined;
+    if (this.file == null) {
+      this.clearRenderCache();
+      this.lineCache = undefined;
+      this.textDocumentCache = new WeakMap();
+      return;
+    }
     const { renderCache } = this;
     if (
       settledFile == null ||
@@ -293,19 +303,21 @@ export class FileRenderer<LAnnotation = undefined> {
   }
 
   public recycle(): void {
-    this.clearRenderCache();
-    this.highlighter = undefined;
+    if (this.editSessionActive) {
+      // The editor and its document survive this recycle. Keep their patched
+      // highlight, line map, and document count together for the next mount.
+      if (this.renderCache != null) {
+        this.renderCache.renderRange = undefined;
+      }
+      this.pendingHighlightResult = undefined;
+      this.pendingStructuralRows = undefined;
+    } else {
+      this.clearRenderCache();
+      this.lineCache = undefined;
+      this.textDocumentCache = new WeakMap();
+    }
     this.workerManager?.cleanUpTasks(this);
-    this.lineCache = undefined;
     this.file = undefined;
-    // The session flag re-seeds on the next editor attach (beginEditSession).
-    this.endEditSession();
-    // The edited-document cache is only coherent alongside the render cache
-    // it patched. Keeping it across a recycle would let getLineCount report
-    // edit-session line counts (keyed by the long-lived file object) against
-    // a result rebuilt from the file's own contents, which processFileResult
-    // treats as a missing-line error.
-    this.textDocumentCache = new WeakMap();
   }
 
   public clearRenderCache(): void {
@@ -335,19 +347,45 @@ export class FileRenderer<LAnnotation = undefined> {
       // FIXME(amadeus): Add support for renderRanges
       renderRange: undefined,
     };
-    if (
-      !this.editSessionActive &&
-      this.workerManager?.isWorkingPool() === true
-    ) {
+    const workerManager = this.getHighlightWorkerManager(file);
+    if (workerManager != null) {
       if (this.renderCache.result == null && !massiveFile) {
         // We should only kick off a preload of the AST if we have a WorkerPool
-        this.workerManager.highlightFileAST(this, file);
+        workerManager.highlightFileAST(this, file);
       }
     }
     // Lets attempt to get the highlighter/languages ready immediately
-    else if (this.highlighter == null) {
+    else if (
+      getHighlighterIfLoaded({ theme: this.getLocalHighlightTheme() }) == null
+    ) {
       this.computedLang = file.lang ?? getFiletypeFromFileName(file.name);
-      void this.initializeHighlighter();
+      void this.initializeHighlighter().catch((error: unknown) => {
+        if (!(error instanceof HighlighterDisposedError)) {
+          this.onHighlightError(error);
+        }
+      });
+    }
+  }
+
+  // Returns the pool when there's a valid worker AND we should use it
+  private getHighlightWorkerManager(
+    file: FileContents
+  ): WorkerPoolManager | undefined {
+    const { editSessionActive, workerManager } = this;
+    return !editSessionActive &&
+      workerManager?.isWorkingPool() === true &&
+      !workerManager.shouldHighlightOnMainThread(file)
+      ? workerManager
+      : undefined;
+  }
+
+  private cacheHighlightResult(
+    file: FileContents,
+    renderResult: RenderFileResult
+  ): void {
+    const { editSessionActive, workerManager } = this;
+    if (!editSessionActive && workerManager?.isWorkingPool() === true) {
+      workerManager.setFileResultCache(file.cacheKey, renderResult);
     }
   }
 
@@ -451,8 +489,9 @@ export class FileRenderer<LAnnotation = undefined> {
     if (forcePlainText) {
       return (
         (renderCache.result == null && renderCache.hydrated !== true) ||
-        this.workerManager?.isWorkingPool() === true ||
-        (this.highlighter != null && areThemesAttached(options.theme))
+        (this.workerManager?.isWorkingPool() === true &&
+          !this.workerManager.shouldHighlightOnMainThread(file)) ||
+        getHighlighterIfLoaded({ theme: options.theme }) != null
       );
     }
     // Hydration has highlighted DOM without a local AST. It is still active
@@ -462,14 +501,11 @@ export class FileRenderer<LAnnotation = undefined> {
       return true;
     }
 
-    if (
-      !this.editSessionActive &&
-      this.workerManager?.isWorkingPool() === true
-    ) {
+    if (this.getHighlightWorkerManager(file) != null) {
       return !renderCache.highlighted;
     }
 
-    return this.highlighter != null && areThemesAttached(options.theme);
+    return getHighlighterIfLoaded({ theme: options.theme }) != null;
   }
 
   public getOrCreateLineCache(file: FileContents): string[] {
@@ -561,6 +597,7 @@ export class FileRenderer<LAnnotation = undefined> {
           };
         }),
       };
+      this.ownedRows.add(row);
       if (pendingStructuralRows != null) {
         pendingStructuralRows.set(line, row);
       } else {
@@ -576,21 +613,18 @@ export class FileRenderer<LAnnotation = undefined> {
     }
   }
 
-  // normally triggered by the host when the document line count changes
-  public applyDocumentChange(textDocument: DiffsTextDocument): void {
+  // Reconcile the session source even when no highlighted result exists. A
+  // suspended editor can still receive programmatic edits after cache clear.
+  public applyDocumentChange(
+    textDocument: TextDocument<'file', LAnnotation>
+  ): void {
     const { pendingStructuralRows, renderCache } = this;
     this.pendingStructuralRows = undefined;
-    if (renderCache == null) {
+    const file = this.file ?? renderCache?.file;
+    if (file == null) {
       return;
     }
-    const { file, result } = renderCache;
-    // Without a result there is nothing to reconcile the document against, so
-    // do not record it either: the document cache must never claim line
-    // counts the (possibly still highlighting) result cannot back, or the
-    // async highlight pass would process lines that do not exist.
-    if (result == null) {
-      return undefined;
-    }
+    const result = renderCache?.result;
     // Structural edits renumber cached HAST rows. Keep the unchanged prefix
     // and suffix, and plain-fill only the window that still needs tokenizing.
     const previousLines =
@@ -598,7 +632,7 @@ export class FileRenderer<LAnnotation = undefined> {
         ? this.lineCache.lines
         : linesFromFileContents(file.contents);
     const nextLines = linesFromFileContents(textDocument.getText());
-    if (previousLines.length !== nextLines.length) {
+    if (result != null && previousLines.length !== nextLines.length) {
       const maxShared = Math.min(previousLines.length, nextLines.length);
       let prefix = 0;
       while (
@@ -633,7 +667,7 @@ export class FileRenderer<LAnnotation = undefined> {
         }
       }
       for (let i = prefix; i < nextLines.length - suffix; i++) {
-        result.code[i] ??= {
+        result.code[i] ??= this.ownRow({
           type: 'element',
           tagName: 'div',
           properties: {
@@ -656,26 +690,42 @@ export class FileRenderer<LAnnotation = undefined> {
               ],
             },
           ],
-        };
+        });
       }
       for (let i = 0; i < result.code.length; i++) {
         const line = result.code[i];
-        if (line?.type === 'element') {
-          line.properties['data-line'] = i + 1;
-          line.properties['data-line-index'] = i;
+        if (
+          line?.type === 'element' &&
+          (line.properties['data-line'] !== i + 1 ||
+            line.properties['data-line-index'] !== i)
+        ) {
+          const row = this.ownedRows.has(line)
+            ? line
+            : this.ownRow({ ...line, properties: { ...line.properties } });
+          row.properties['data-line'] = i + 1;
+          row.properties['data-line-index'] = i;
+          result.code[i] = row;
         }
       }
-      renderCache.isDirty = true;
+      if (renderCache != null) {
+        renderCache.isDirty = true;
+      }
     }
     // Replace the old split-line cache with the authoritative edited document.
+    const contents = textDocument.getText();
     this.lineCache = {
       cacheKey: file.cacheKey,
       file,
-      sourceContents: file.contents,
+      sourceContents: contents,
       lines: nextLines,
     };
     this.textDocumentCache.set(file, textDocument);
-    file.contents = textDocument.getText();
+    file.contents = contents;
+  }
+
+  private ownRow(row: HASTElement): HASTElement {
+    this.ownedRows.add(row);
+    return row;
   }
 
   public renderFile(
@@ -717,10 +767,8 @@ export class FileRenderer<LAnnotation = undefined> {
       this.renderCache.renderRange,
       renderRange
     );
-    if (
-      !this.editSessionActive &&
-      this.workerManager?.isWorkingPool() === true
-    ) {
+    const workerManager = this.getHighlightWorkerManager(file);
+    if (workerManager != null) {
       // Hydration has highlighted DOM but no local AST. Keep that DOM until
       // its corresponding worker result is ready.
       const preserveHydratedContent =
@@ -745,7 +793,7 @@ export class FileRenderer<LAnnotation = undefined> {
           newRenderRange ||
           forceHighlight
         ) {
-          this.renderCache.result = this.workerManager.getPlainFileAST(
+          this.renderCache.result = workerManager.getPlainFileAST(
             file,
             renderRange.startingLine,
             renderRange.totalLines,
@@ -760,23 +808,22 @@ export class FileRenderer<LAnnotation = undefined> {
         hasContent &&
         (!this.renderCache.highlighted || forceHighlight)
       ) {
-        this.workerManager.highlightFileAST(this, file);
+        workerManager.highlightFileAST(this, file);
       }
     } else {
       this.computedLang = file.lang ?? getFiletypeFromFileName(file.name);
+      const highlighter = getHighlighterIfLoaded();
       const hasThemes =
-        this.highlighter != null && areThemesAttached(options.theme);
+        highlighter != null && areThemesAttached(options.theme, highlighter);
       const hasLangs =
-        this.highlighter != null && areLanguagesAttached(this.computedLang);
+        highlighter != null &&
+        areLanguagesAttached(this.computedLang, highlighter);
       const canHighlight = !forcePlainText && hasLangs;
+      const lazyLineAST = Number.isFinite(renderRange.totalLines);
 
-      // If we have any semblance of a highlighter with the correct theme(s)
-      // attached, we can kick off some form of rendering.  If we don't have
-      // the correct language, then we can render plain text and after kick off
-      // an async job to get the highlighted AST
       if (
         canRenderFile &&
-        this.highlighter != null &&
+        highlighter != null &&
         hasThemes &&
         (forceHighlight ||
           forcePlainText ||
@@ -785,8 +832,9 @@ export class FileRenderer<LAnnotation = undefined> {
       ) {
         const { result, options } = this.renderFileWithHighlighter(
           file,
-          this.highlighter,
-          forcePlainText || !hasLangs
+          highlighter,
+          forcePlainText || !hasLangs,
+          lazyLineAST
         );
         this.renderCache = {
           file,
@@ -795,15 +843,24 @@ export class FileRenderer<LAnnotation = undefined> {
           result,
           renderRange: undefined,
         };
+        if (canHighlight) {
+          this.cacheHighlightResult(file, { result, options });
+        }
       }
 
-      // If we get in here it means we'll have to kick off an async highlight
-      // process which will involve initializing the highlighter with new themes
-      // and languages
       if (!hasThemes || (!forcePlainText && !hasLangs)) {
-        void this.asyncHighlight(file).then(({ result, options }) => {
-          this.applyHighlightResult(file, result, options, !forcePlainText);
-        });
+        void this.asyncHighlight(file, lazyLineAST)
+          .then(({ result, options }) => {
+            if (!forcePlainText) {
+              this.cacheHighlightResult(file, { result, options });
+            }
+            this.applyHighlightResult(file, result, options, !forcePlainText);
+          })
+          .catch((error: unknown) => {
+            if (!(error instanceof HighlighterDisposedError)) {
+              this.onHighlightError(error);
+            }
+          });
       }
     }
 
@@ -821,11 +878,17 @@ export class FileRenderer<LAnnotation = undefined> {
     renderRange: RenderRange = DEFAULT_RENDER_RANGE
   ): Promise<FileRenderResult> {
     this.file = file;
-    const { result } = await this.asyncHighlight(file);
+    const { result } = await this.asyncHighlight(
+      file,
+      Number.isFinite(renderRange.totalLines)
+    );
     return this.processFileResult(file, renderRange, result);
   }
 
-  private async asyncHighlight(file: FileContents): Promise<RenderFileResult> {
+  private async asyncHighlight(
+    file: FileContents,
+    lazyLineAST = false
+  ): Promise<RenderFileResult> {
     const lines = this.getOrCreateLineCache(file);
     const forcePlainText = isFileMassive(
       lines.length,
@@ -834,32 +897,37 @@ export class FileRenderer<LAnnotation = undefined> {
     this.computedLang = forcePlainText
       ? 'text'
       : (file.lang ?? getFiletypeFromFileName(file.name));
+    let highlighter = getHighlighterIfLoaded();
     const hasThemes =
-      this.highlighter != null &&
-      hasResolvedThemes(getThemes(this.getLocalHighlightTheme()));
+      highlighter != null &&
+      areThemesAttached(this.getLocalHighlightTheme(), highlighter);
     const hasLangs =
       forcePlainText ||
-      (this.highlighter != null && areLanguagesAttached(this.computedLang));
+      (highlighter != null &&
+        areLanguagesAttached(this.computedLang, highlighter));
     // If we don't have the required langs or themes, then we need to
     // initialize the highlighter to load the appropriate languages and themes
-    if (this.highlighter == null || !hasThemes || !hasLangs) {
-      this.highlighter = await this.initializeHighlighter();
+    if (highlighter == null || !hasThemes || !hasLangs) {
+      highlighter = await this.initializeHighlighter();
     }
     return this.renderFileWithHighlighter(
       file,
-      this.highlighter,
-      forcePlainText
+      highlighter,
+      forcePlainText,
+      lazyLineAST
     );
   }
 
   private renderFileWithHighlighter(
     file: FileContents,
     highlighter: DiffsHighlighter,
-    forcePlainText = false
+    forcePlainText = false,
+    lazyLineAST = false
   ): RenderFileResult {
     const { options } = this.getRenderOptions(file);
     const result = renderFileWithHighlighter(file, highlighter, options, {
       forcePlainText,
+      lazyLineAST,
     });
     return { result, options };
   }
@@ -969,7 +1037,7 @@ export class FileRenderer<LAnnotation = undefined> {
   }
 
   public renderFullHTML(result: FileRenderResult): string {
-    return toHtml(this.renderFullAST(result));
+    return hastToHtml(this.renderFullAST(result));
   }
 
   public renderFullAST(
@@ -1002,9 +1070,9 @@ export class FileRenderer<LAnnotation = undefined> {
     includeCodeNode: boolean = false
   ): string {
     if (!includeCodeNode) {
-      return toHtml(children);
+      return hastToHtml(children);
     }
-    return toHtml(
+    return hastToHtml(
       createHastElement({
         tagName: 'code',
         children,
@@ -1013,16 +1081,16 @@ export class FileRenderer<LAnnotation = undefined> {
     );
   }
 
-  public async initializeHighlighter(): Promise<DiffsHighlighter> {
-    this.highlighter = await getSharedHighlighter(
+  public initializeHighlighter(): Promise<DiffsHighlighter> {
+    return getSharedHighlighter(
       getHighlighterOptions(this.computedLang, {
         theme: this.getLocalHighlightTheme(),
-        preferredHighlighter:
-          this.workerManager?.getPreferredHighlighter() ??
-          this.options.preferredHighlighter,
+        preferredHighlighter: resolvePreferredHighlighter(
+          this.workerManager,
+          this.options
+        ),
       })
     );
-    return this.highlighter;
   }
 
   public onHighlightSuccess(

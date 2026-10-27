@@ -33,7 +33,7 @@ export function cancelDocTargetScroll(): void {
 // fights the user. `onUnavailable` runs if the resolver reports the target can
 // never appear, letting the caller fall back.
 export function scrollDocTargetIntoView(
-  viewer: Pick<CodeViewHandle<CommentMetadata>, 'scrollTo'>,
+  viewer: Pick<CodeViewHandle<CommentMetadata, undefined>, 'scrollTo'>,
   itemId: string,
   resolve: () => DocScrollTarget,
   onUnavailable?: () => void

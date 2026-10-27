@@ -38,7 +38,7 @@ interface UsePendingReviewCommentsOptions {
   pullRequest: PullRequestRef | undefined;
   viewerKey: number;
   viewerReadyTick: number;
-  viewerRef: RefObject<CodeViewHandle<CommentMetadata> | null>;
+  viewerRef: RefObject<CodeViewHandle<CommentMetadata, undefined> | null>;
 }
 
 interface UsePendingReviewCommentsResult {

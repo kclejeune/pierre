@@ -1,7 +1,6 @@
 'use client';
 
-import type { DiffsEditor, EditorDocumentKind } from '@pierre/diffs';
-import type { EditorOptions } from '@pierre/diffs/edit';
+import type { Editor, EditorOptions, EditorType } from '@pierre/diffs/edit';
 import { EditProvider } from '@pierre/diffs/react';
 import { type ReactNode, useEffect } from 'react';
 
@@ -13,15 +12,15 @@ import { type ReactNode, useEffect } from 'react';
 // milliseconds — long before any edit toggle can be clicked.
 let editModule: typeof import('@pierre/diffs/edit') | null = null;
 
-function createEditor<LAnnotation>(
-  documentKind: EditorDocumentKind,
-  options: EditorOptions<LAnnotation>,
+function createEditor<EType extends EditorType, LAnnotation, Caret>(
+  editorType: EType,
+  options: EditorOptions<EType, LAnnotation, Caret>,
   editStateKey?: string
-): DiffsEditor<LAnnotation> {
+): Editor<EType, LAnnotation, Caret> {
   if (editModule == null) {
     throw new Error('The editor is still loading — try again in a moment.');
   }
-  return new editModule.Editor(documentKind, options, editStateKey);
+  return new editModule.Editor(editorType, options, editStateKey);
 }
 
 export function AppEditProvider({ children }: { children: ReactNode }) {

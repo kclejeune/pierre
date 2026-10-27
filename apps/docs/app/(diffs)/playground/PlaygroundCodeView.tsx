@@ -5,13 +5,18 @@ import {
   type CodeViewItem,
   type CodeViewLineSelection,
   type DiffLineAnnotation,
-  type EditCompletionDecision,
+  type FileContents,
   type FileDiffEditCompleteEvent,
+  type FileDiffMetadata,
   type FileEditCompleteEvent,
   type LineAnnotation,
   type SelectedLineRange,
 } from '@pierre/diffs';
-import type { EditorOptions } from '@pierre/diffs/edit';
+import type {
+  EditCompletionDecision,
+  EditorOptions,
+  EditorType,
+} from '@pierre/diffs/edit';
 import {
   CodeView,
   type CodeViewReactOptions,
@@ -26,23 +31,26 @@ import {
   ExampleThread,
 } from './PlaygroundComments';
 import { EditSessionButtons } from './PlaygroundEditButtons';
+import { useOnValueChange } from '@/lib/useOnValueChange';
 
 const CODE_VIEW_STYLES = { height: '70vh', overflow: 'auto' } as const;
 
 type PlaygroundItem = CodeViewItem<PlaygroundAnnotationMetadata>;
 
-const CODE_VIEW_EDITOR_OPTIONS: EditorOptions<PlaygroundAnnotationMetadata> = {
-  onAttach(editor) {
-    editor.focus({ lineNumber: 'first-visible', preventScroll: true });
-  },
-};
-
 interface PlaygroundCodeViewProps {
   items: PlaygroundItem[];
-  options: CodeViewReactOptions<PlaygroundAnnotationMetadata>;
+  options: CodeViewReactOptions<PlaygroundAnnotationMetadata, undefined>;
   enableLineSelection: boolean;
   enableGutterComments: boolean;
   showAnnotations: boolean;
+  editPrediction?: NonNullable<
+    EditorOptions<
+      EditorType,
+      PlaygroundAnnotationMetadata,
+      undefined
+    >['editPrediction']
+  >;
+  onEditingChange?: (editing: boolean) => void;
 }
 
 // Renders a mix of diff and file items in a CodeView. Unlike the Virtualizer
@@ -67,11 +75,35 @@ export function PlaygroundCodeView({
   enableLineSelection,
   enableGutterComments,
   showAnnotations,
+  editPrediction,
+  onEditingChange,
 }: PlaygroundCodeViewProps) {
   const [items, setItems] = useState(initialItems);
   const [selectedLines, setSelectedLines] =
     useState<CodeViewLineSelection | null>(null);
+  const editorOptions = useMemo<
+    EditorOptions<EditorType, PlaygroundAnnotationMetadata, undefined>
+  >(
+    () => ({
+      editPrediction,
+      onAttach(editor) {
+        editor.focus({ lineNumber: 'first-visible', preventScroll: true });
+      },
+    }),
+    [editPrediction]
+  );
+  const hasEditingItem = items.some((item) => item.edit === true);
 
+  useEffect(() => {
+    onEditingChange?.(hasEditingItem);
+  }, [hasEditingItem, onEditingChange]);
+
+  useEffect(
+    () => () => {
+      onEditingChange?.(false);
+    },
+    [onEditingChange]
+  );
   // Item ids whose next completion should revert: Cancel marks the id here
   // before turning edit off, and the completion handler consumes the mark.
   const cancelledEdits = useRef<Set<string>>(new Set());
@@ -94,8 +126,8 @@ export function PlaygroundCodeView({
   const handleEditComplete = useCallback(
     (
       event:
-        | FileEditCompleteEvent<PlaygroundAnnotationMetadata>
-        | FileDiffEditCompleteEvent<PlaygroundAnnotationMetadata>,
+        | FileEditCompleteEvent<PlaygroundAnnotationMetadata, undefined>
+        | FileDiffEditCompleteEvent<PlaygroundAnnotationMetadata, undefined>,
       item: PlaygroundItem,
       nextItem: PlaygroundItem
     ): EditCompletionDecision => {
@@ -241,20 +273,24 @@ export function PlaygroundCodeView({
   );
 
   // Annotations live on item data, so hiding them is a data change: turning
-  // the toggle off clears any comments that were added.
-  useEffect(() => {
-    if (showAnnotations) {
-      return;
-    }
-    setSelectedLines(null);
-    setItems((current) =>
-      current.map((item) =>
-        (item.annotations?.length ?? 0) > 0
-          ? { ...item, annotations: [], version: (item.version ?? 0) + 1 }
-          : item
-      )
-    );
-  }, [showAnnotations]);
+  // the toggle off clears any comments that were added. Measured against
+  // `true` so mounting with annotations hidden runs the same clearing pass.
+  useOnValueChange(
+    showAnnotations,
+    (show) => {
+      if (!show) {
+        setSelectedLines(null);
+        setItems((current) =>
+          current.map((item) =>
+            (item.annotations?.length ?? 0) > 0
+              ? { ...item, annotations: [], version: (item.version ?? 0) + 1 }
+              : item
+          )
+        );
+      }
+    },
+    true
+  );
 
   // Match the direct views' precedence: an open comment form (neither a
   // thread nor a submitted comment) pauses the gutter utility so forms can't
@@ -273,7 +309,7 @@ export function PlaygroundCodeView({
     enableGutterComments && showAnnotations && !hasOpenCommentForm;
 
   const codeViewOptions = useMemo<
-    CodeViewReactOptions<PlaygroundAnnotationMetadata>
+    CodeViewReactOptions<PlaygroundAnnotationMetadata, undefined>
   >(
     () => ({
       ...options,
@@ -291,6 +327,7 @@ export function PlaygroundCodeView({
       annotation:
         | LineAnnotation<PlaygroundAnnotationMetadata>
         | DiffLineAnnotation<PlaygroundAnnotationMetadata>,
+      _fileOrDiff: FileContents | FileDiffMetadata,
       item: PlaygroundItem
     ) => {
       const side = 'side' in annotation ? annotation.side : undefined;
@@ -348,7 +385,7 @@ export function PlaygroundCodeView({
 
   return (
     <CodeView
-      editorOptions={CODE_VIEW_EDITOR_OPTIONS}
+      editorOptions={editorOptions}
       items={items}
       className="border-border rounded-lg border"
       style={CODE_VIEW_STYLES}

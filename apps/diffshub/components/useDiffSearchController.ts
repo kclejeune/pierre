@@ -85,7 +85,7 @@ interface UseDiffSearchControllerOptions {
   loadDiffFiles?: FileDiffContentsLoader;
   // Changes whenever the viewer's item list grows (the streamed tree source).
   itemsVersion: unknown;
-  viewerRef: RefObject<CodeViewHandle<CommentMetadata> | null>;
+  viewerRef: RefObject<CodeViewHandle<CommentMetadata, undefined> | null>;
 }
 
 // Shared plumbing for the find bar and the cross-file search panel:
@@ -438,8 +438,10 @@ function isPartialSource(source: DiffSearchSource): boolean {
 // Expands a collapsed file so its rows (or rendered document) mount before a
 // navigation scrolls into it.
 function expandIfCollapsed(
-  viewer: CodeViewHandle<CommentMetadata>,
-  item: NonNullable<ReturnType<CodeViewHandle<CommentMetadata>['getItem']>>
+  viewer: CodeViewHandle<CommentMetadata, undefined>,
+  item: NonNullable<
+    ReturnType<CodeViewHandle<CommentMetadata, undefined>['getItem']>
+  >
 ): void {
   if (item.collapsed !== true) {
     return;

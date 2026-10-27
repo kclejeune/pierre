@@ -1,16 +1,19 @@
 import { afterAll, expect, test } from 'bun:test';
 
 import { disposeHighlighter, FileDiff, parseDiffFromFile } from '../src';
-import type {
-  DiffsEditor,
-  FileDiffMetadata,
-  HighlightedToken,
-} from '../src/types';
+import type { FileDiffMetadata, HighlightedToken } from '../src/types';
 import { installDom, wait, waitFor } from './domHarness';
+import { createEditorInstance } from './editorTestUtils';
 
 afterAll(async () => {
   await disposeHighlighter();
 });
+
+class TestFileDiff extends FileDiff {
+  getWorkingDiffForTest(): FileDiffMetadata | undefined {
+    return this.getWorkingDiff();
+  }
+}
 
 // Waits until the first rendered row keeps the same DOM node across several
 // consecutive samples, so late async highlight rerenders (which rebuild rows)
@@ -37,19 +40,6 @@ async function waitForStableRow(
   return row;
 }
 
-function createEditorStub(): DiffsEditor<undefined> {
-  return {
-    cleanUp() {},
-    edit: () => () => {},
-    __captureFocusForDOMReplacement() {},
-    __emitEditComplete() {},
-    __getDocumentContents: () => undefined,
-    __getDocumentSessionState: () => undefined,
-    __postponeBgTokenizeToNextFrame() {},
-    __syncRenderView() {},
-  } as unknown as DiffsEditor<undefined>;
-}
-
 function createDiff(name: string, marker: string): FileDiffMetadata {
   return parseDiffFromFile(
     { name, contents: 'const base = 0;\n' },
@@ -71,7 +61,7 @@ test('a host render after an internal rerender takes the early-return path', asy
     const newFile = { name: 'x.ts', contents: 'alpha\nBRAVO\ncharlie\n' };
     const fileContainer = document.createElement('div');
     document.body.appendChild(fileContainer);
-    instance = new FileDiff<undefined>({
+    instance = new TestFileDiff({
       disableFileHeader: true,
       diffStyle: 'split',
     });
@@ -112,7 +102,7 @@ test('parsed unkeyed diffs with the same filename render fresh contents', async 
     );
     const fileContainer = document.createElement('div');
     document.body.appendChild(fileContainer);
-    instance = new FileDiff<undefined>({
+    instance = new TestFileDiff({
       disableFileHeader: true,
       diffStyle: 'unified',
     });
@@ -149,12 +139,12 @@ test('a dirty unkeyed session remains authoritative when the same object is re-p
   const externalAdditionLines = externalDiff.additionLines;
   const fileContainer = document.createElement('div');
   document.body.appendChild(fileContainer);
-  const instance = new FileDiff<undefined>({ disableFileHeader: true });
+  const instance = new TestFileDiff({ disableFileHeader: true });
 
   try {
     instance.render({ fileDiff: externalDiff, fileContainer });
     await waitForStableRow(fileContainer);
-    const detach = instance.__attachEditor(createEditorStub());
+    const detach = instance.__attachEditor(createEditorInstance('file-diff'));
     instance.updateRenderCache(
       new Map<number, HighlightedToken[]>([
         [0, [[0, '', 'const editedMarker = 3;']]],
@@ -173,6 +163,10 @@ test('a dirty unkeyed session remains authoritative when the same object is re-p
     );
 
     expect(instance.fileDiff).toBe(externalDiff);
+    expect(instance.getWorkingDiffForTest()).not.toBe(externalDiff);
+    expect(instance.getWorkingDiffForTest()?.additionLines.join('')).toContain(
+      'editedMarker'
+    );
     expect(externalDiff.additionLines).toBe(externalAdditionLines);
     expect(externalDiff.additionLines.join('')).toContain('firstMarker');
     expect(externalDiff.additionLines.join('')).not.toContain('editedMarker');

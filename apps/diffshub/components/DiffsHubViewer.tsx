@@ -8,14 +8,16 @@ import {
   type DiffIndicators,
   type DiffLineAnnotation,
   type DiffTokenEventBaseProps,
-  type EditorChangeEvent,
+  type FileContents,
   type FileDiffContentsLoader,
+  type FileDiffMetadata,
   isDiffAnnotation,
   type LineAnnotation,
   type SelectedLineRange,
   type ThemeTypes,
   type TokenEventBase,
 } from '@pierre/diffs';
+import type { EditorChangeEvent, EditorType } from '@pierre/diffs/edit';
 import { type CodeViewHandle, useStableCallback } from '@pierre/diffs/react';
 import { IconBook, IconChevronSm, IconPencil } from '@pierre/icons';
 import {
@@ -99,7 +101,7 @@ function isDocRailComment(
 }
 
 function updateViewerDiffItem(
-  viewer: CodeViewHandle<CommentMetadata>,
+  viewer: CodeViewHandle<CommentMetadata, undefined>,
   itemId: string,
   updateItem: (item: CodeViewDiffItem<CommentMetadata>) => boolean
 ): CodeViewDiffItem<CommentMetadata> | undefined {
@@ -129,10 +131,13 @@ export interface ViewerEditSession {
   isEditing(itemId: string): boolean;
   isFileLocked(itemId: string): boolean;
   onItemEditChange(
-    event: EditorChangeEvent<CommentMetadata, 'file' | 'diff'>,
+    event: EditorChangeEvent<EditorType, CommentMetadata, undefined>,
     item: CodeViewItem<CommentMetadata>
   ): void;
-  onItemEditComplete: CodeViewItemEditCompleteHandler<CommentMetadata>;
+  onItemEditComplete: CodeViewItemEditCompleteHandler<
+    CommentMetadata,
+    undefined
+  >;
   toggleEdit(itemId: string): void;
 }
 
@@ -177,7 +182,7 @@ interface DiffsHubViewerProps {
   lineNumbers: boolean;
   scrollRef: RefObject<HTMLDivElement | null>;
   themeType: ThemeTypes;
-  viewerRef: RefObject<CodeViewHandle<CommentMetadata> | null>;
+  viewerRef: RefObject<CodeViewHandle<CommentMetadata, undefined> | null>;
   initialItems: CodeViewItem<CommentMetadata>[];
   loadDiffFiles?: FileDiffContentsLoader;
   onLineLinkChange(selection: CodeViewLineSelection | null): void;
@@ -284,7 +289,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
   );
 
   const handleViewerRef = useStableCallback(
-    (viewer: CodeViewHandle<CommentMetadata> | null) => {
+    (viewer: CodeViewHandle<CommentMetadata, undefined> | null) => {
       viewerRef.current = viewer;
       if (viewer != null) {
         onViewerReady();
@@ -414,7 +419,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
   // Swaps the annotation with the given key for `nextAnnotation` (or removes
   // it when null) and returns the updated item.
   const replaceAnnotation = (
-    viewer: CodeViewHandle<CommentMetadata>,
+    viewer: CodeViewHandle<CommentMetadata, undefined>,
     itemId: string,
     key: string,
     nextAnnotation: DiffLineAnnotation<CommentMetadata> | null
@@ -966,6 +971,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       annotation:
         | DiffLineAnnotation<CommentMetadata>
         | LineAnnotation<CommentMetadata>,
+      _fileOrDiff: FileContents | FileDiffMetadata,
       item: CodeViewItem<CommentMetadata>
     ) => {
       if (
@@ -1153,7 +1159,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
 
   // NOTE(amadeus): For some insane reason, the react compiler did not know how
   // to properly memoize this, so we pulled it into a `useMemo` for safety...
-  const options: CodeViewOptions<CommentMetadata> = useMemo(
+  const options: CodeViewOptions<CommentMetadata, undefined> = useMemo(
     () =>
       ({
         // Use this to validate itemMetrics when changing layout with unsafeCSS.
@@ -1193,7 +1199,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
         },
         // Token events need per-token spans. Main-thread renders switch them
         // on whenever these callbacks exist; worker-pool renders take the
-        // pool-wide `useTokenTransformer` option (see WorkerPoolContext).
+        // pool-wide `useTokenTransformer` option (see WorkerPoolProvider).
         ...(hasSymbolNavigation
           ? {
               onTokenClick(token, event, context) {
@@ -1207,7 +1213,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
               },
             }
           : undefined),
-      }) satisfies CodeViewOptions<CommentMetadata>,
+      }) satisfies CodeViewOptions<CommentMetadata, undefined>,
     [
       handleRowsRendered,
       handleTokenClick,

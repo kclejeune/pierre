@@ -1,5 +1,3 @@
-import { toHtml } from 'hast-util-to-html';
-
 import type {
   AnnotationSide,
   DiffLineEventBaseProps,
@@ -16,6 +14,7 @@ import type {
 import { areSelectionPointsEqual } from '../utils/areSelectionPointsEqual';
 import { areSelectionsEqual } from '../utils/areSelectionsEqual';
 import { createGutterUtilityElement } from '../utils/createGutterUtilityElement';
+import { hastToHtml } from '../utils/hastToHtml';
 import { isGutterUtilityPath } from '../utils/isGutterUtilityPath';
 import { dequeueRender, queueRender } from './UniversalRenderingManager';
 
@@ -626,7 +625,7 @@ export class InteractionManager<TMode extends InteractionManagerMode> {
         }
 
         if (isTokenPointerTarget(target) && onTokenClick != null) {
-          onTokenClick(this.toTokenEventBaseProps(target), event as MouseEvent);
+          onTokenClick(this.toTokenEventBaseProps(target), event);
         }
 
         const eventBase = this.toEventBaseProps(target);
@@ -1135,7 +1134,7 @@ export class InteractionManager<TMode extends InteractionManagerMode> {
       this.gutterUtilitySlot = undefined;
       if (this.gutterUtilityButton == null) {
         const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = toHtml(createGutterUtilityElement());
+        tempDiv.innerHTML = hastToHtml(createGutterUtilityElement());
         const utilityButton = tempDiv.firstElementChild;
         if (!(utilityButton instanceof HTMLButtonElement)) {
           throw new Error(
@@ -2085,7 +2084,7 @@ export class InteractionManager<TMode extends InteractionManagerMode> {
     }
 
     if (mergeConflictActionTarget != null) {
-      return mergeConflictActionTarget as ResolvedPointerTarget<TMode>;
+      return mergeConflictActionTarget;
     }
 
     if (expandInfo?.hunkIndex != null) {
@@ -2094,7 +2093,7 @@ export class InteractionManager<TMode extends InteractionManagerMode> {
         hunkIndex: expandInfo.hunkIndex,
         direction: expandInfo.direction,
         all: expandInfo.all,
-      } as ResolvedPointerTarget<TMode>;
+      };
     }
 
     lineElement ??=

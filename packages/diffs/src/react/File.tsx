@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  type FileEditChangeHandler,
   type FileEditCompleteEvent,
   type FileEditCompleteHandler,
 } from '../components/File';
@@ -10,10 +11,14 @@ import { renderFileChildren } from './utils/renderFileChildren';
 import { templateRender } from './utils/templateRender';
 import { useFileInstance } from './utils/useFileInstance';
 
-export type { FileEditCompleteEvent, FileEditCompleteHandler };
+export type {
+  FileEditChangeHandler,
+  FileEditCompleteEvent,
+  FileEditCompleteHandler,
+};
 export type { FileOptions } from './types';
 
-export function File<LAnnotation = undefined>({
+export function File<LAnnotation = undefined, Caret = undefined>({
   file,
   lineAnnotations,
   selectedLines,
@@ -34,8 +39,14 @@ export function File<LAnnotation = undefined>({
   edit = false,
   onEditChange,
   onEditComplete,
-}: FileProps<LAnnotation>): React.JSX.Element {
-  const { ref, getHoveredLine, getAnnotationSlotName } = useFileInstance({
+}: FileProps<LAnnotation, Caret>): React.JSX.Element {
+  const {
+    ref,
+    getHoveredLine,
+    getAnnotationSlotName,
+    file: renderedFile,
+    lineAnnotations: renderedAnnotations,
+  } = useFileInstance({
     file,
     options,
     editorOptions,
@@ -52,14 +63,14 @@ export function File<LAnnotation = undefined>({
     onEditComplete,
   });
   const children = renderFileChildren({
-    file,
+    file: renderedFile,
     renderAnnotation,
     renderCustomHeader,
     renderHeaderPrefix,
     renderHeaderFilenameSuffix,
     renderHeaderMetadata,
     renderGutterUtility,
-    lineAnnotations,
+    lineAnnotations: renderedAnnotations,
     getHoveredLine,
     getAnnotationSlotName,
   });

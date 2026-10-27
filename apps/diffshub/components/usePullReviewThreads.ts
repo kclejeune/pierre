@@ -41,7 +41,7 @@ interface UsePullReviewThreadsOptions {
   // Bumped by the parent whenever the CodeView handle mounts, so application
   // can retry once the viewer exists.
   viewerReadyTick: number;
-  viewerRef: RefObject<CodeViewHandle<CommentMetadata> | null>;
+  viewerRef: RefObject<CodeViewHandle<CommentMetadata, undefined> | null>;
 }
 
 // Loads the pull request's review comments, groups them into threads, and

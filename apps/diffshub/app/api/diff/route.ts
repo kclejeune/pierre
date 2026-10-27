@@ -22,12 +22,10 @@ import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 const CACHE_CONTROL = 'no-store';
-const EMPTY_PATCH_MESSAGE = 'GitHub returned an empty diff.';
 const GITHUB_DIFF_MEDIA_TYPE = 'application/vnd.github.diff';
 const GITHUB_JSON_MEDIA_TYPE = 'application/vnd.github+json';
 const GITHUB_RAW_DIFF_HOST = 'patch-diff.githubusercontent.com';
 const NON_DIFF_RESPONSE_MESSAGE = 'GitHub did not return a diff for this URL.';
-const NON_WHITESPACE_PATTERN = /\S/;
 const RAW_GITHUB_DIFF_PATH_PATTERN =
   /^\/raw\/[^/]+\/[^/]+\/pull\/[^/]+\.(?:diff|patch)$/;
 const GITHUB_PULL_TAB_PATH_PATTERN =
@@ -500,20 +498,6 @@ interface TextResponseOptions {
   sourceURL?: string;
 }
 
-// Serves local patch fixtures through the same response path as GitHub data,
-// while rejecting empty files so the viewer does not enter a silent no-op
-// state.
-function createPatchTextResponse(
-  patchText: string,
-  options: Omit<TextResponseOptions, 'status'>
-): Response {
-  if (!NON_WHITESPACE_PATTERN.test(patchText)) {
-    return createTextResponse(EMPTY_PATCH_MESSAGE, { status: 422 });
-  }
-
-  return createTextResponse(patchText, options);
-}
-
 // Validates the upstream response before opening the client-facing stream so
 // GitHub HTML pages and redirects become small text errors instead of Next.js
 // error documents.
@@ -623,7 +607,7 @@ async function createPatchStreamResponse(
   if (responseBody == null) {
     try {
       const patchText = await response.text();
-      return createPatchTextResponse(patchText, options);
+      return createTextResponse(patchText, options);
     } finally {
       requestSignal.removeEventListener('abort', abortUpstream);
     }
@@ -760,10 +744,6 @@ async function getPatchResponseFailure(
   const contentType = response.headers.get('Content-Type');
   if (contentType == null || !isDiffContentType(contentType)) {
     return { status: 415, message: NON_DIFF_RESPONSE_MESSAGE };
-  }
-
-  if (response.headers.get('Content-Length') === '0') {
-    return { status: 422, message: EMPTY_PATCH_MESSAGE };
   }
 
   return undefined;
@@ -905,14 +885,14 @@ function isDiffContentType(contentType: string): boolean {
   );
 }
 
-// Forwards each validated upstream diff chunk into the client stream.
+// Forwards each validated upstream diff chunk into the client stream. An empty
+// stream is a successful diff with no changes, so it closes normally.
 async function pumpPatchBody(
   body: ReadableStream<Uint8Array>,
   controller: ReadableStreamDefaultController<Uint8Array>
 ): Promise<void> {
   try {
     const reader = body.getReader();
-    let sawContent = false;
     try {
       for (;;) {
         const result = await reader.read();
@@ -921,16 +901,11 @@ async function pumpPatchBody(
         }
 
         if (result.value.byteLength > 0) {
-          sawContent = true;
           controller.enqueue(result.value);
         }
       }
     } finally {
       reader.releaseLock();
-    }
-
-    if (!sawContent) {
-      throw new Error(EMPTY_PATCH_MESSAGE);
     }
 
     controller.close();

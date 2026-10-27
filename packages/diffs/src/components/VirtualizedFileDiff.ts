@@ -1,8 +1,8 @@
 import { DEFAULT_COLLAPSED_CONTEXT_THRESHOLD } from '../constants';
+import type { TextDocument } from '../editor/textDocument';
 import type {
   BaseDiffOptions,
   DiffLineAnnotation,
-  DiffsTextDocument,
   ExpansionDirections,
   FileContents,
   FileDiffMetadata,
@@ -25,6 +25,7 @@ import { awaitWithTimeout } from '../utils/awaitWithTimeout';
 import { computeEstimatedDiffHeights } from '../utils/computeEstimatedDiffHeights';
 import {
   computeVirtualFileMetrics,
+  getVirtualFileHeaderHeight,
   getVirtualFileHeaderRegion,
   getVirtualFilePaddingBottom,
 } from '../utils/computeVirtualFileMetrics';
@@ -85,6 +86,12 @@ interface DiffLayoutCache {
   // Measured height for the file annotation row. Starts at 0 so
   // unmeasured annotations behave like all other unmeasured annotations.
   fileAnnotationHeight: number;
+  // Ghost text rows folded into `heightDeltas`. `ghostTextRows` is the editor's
+  // own map (zero-based new-file line -> rows), replaced rather than mutated, so
+  // identity alone says whether anything changed. `ghostTextRowsByIndex` is the
+  // same data keyed by this view's row index, which the deltas use.
+  ghostTextRows: ReadonlyMap<number, number>;
+  ghostTextRowsByIndex: Map<number, number>;
 }
 
 interface ResetLayoutCacheOptions {
@@ -107,18 +114,23 @@ interface PendingExpansion {
 }
 
 interface PendingRender {
-  latestDiff: FileDiffMetadata;
+  // Diff requested for the next render, including editor changes.
+  workingDiff: FileDiffMetadata;
+  // Diff selected by the renderer. Highlighting can keep this on the old diff.
   diff: FileDiffMetadata;
 }
 
 export const VIRTUALIZED_FILE_DIFF_LAYOUT_CHECKPOINT_INTERVAL = 3_000;
+const NO_GHOST_TEXT_ROWS: ReadonlyMap<number, number> = new Map();
 
 let instanceId = -1;
 
 export class VirtualizedFileDiff<
   LAnnotation = undefined,
-> extends FileDiff<LAnnotation> {
+  Caret = undefined,
+> extends FileDiff<LAnnotation, Caret> {
   override readonly __id: string = `little-virtualized-file-diff:${++instanceId}`;
+  public readonly renderType = 'virtualized';
 
   public top: number | undefined;
   public height: number = 0;
@@ -131,30 +143,33 @@ export class VirtualizedFileDiff<
     checkpoints: [],
     totalLines: 0,
     fileAnnotationHeight: 0,
+    ghostTextRows: NO_GHOST_TEXT_ROWS,
+    ghostTextRowsByIndex: new Map(),
   };
   private isVisible: boolean = false;
   private isSetup: boolean = false;
-  private virtualizer: Virtualizer | CodeView<LAnnotation>;
+  private virtualizer: Virtualizer | CodeView<LAnnotation, Caret>;
   private layoutDirty = true;
-  private forceRenderOverride: true | undefined;
   private currentCollapsed: boolean | undefined;
   private pendingHydratedDiff: PendingLoadedDiff | undefined;
   private pendingExpansions: PendingExpansion[] | undefined;
   // A one-based new-file line requestRevealLine could not expand yet because
   // the diff was still partial. Applied right after hydration lands.
   private pendingRevealLine: number | undefined;
-  // CodeView calculates the next layout before its DOM pass. Keep that
-  // selection separate from renderedDiff until render() applies it.
+  // Remember which diff the layout was calculated from, even when only a
+  // placeholder is rendered. Async highlighting clears this through rerender()
+  // so layout can use the newly available content. CodeView updates it during
+  // its layout pass.
   private pendingRender: PendingRender | undefined;
 
   constructor(
-    options: FileDiffOptions<LAnnotation> | undefined,
-    virtualizer: Virtualizer | CodeView<LAnnotation>,
+    options: FileDiffOptions<LAnnotation, Caret> | undefined,
+    virtualizer: Virtualizer | CodeView<LAnnotation, Caret>,
     metrics?: Partial<VirtualFileMetrics>,
     workerManager?: WorkerPoolManager,
-    isContainerManaged = false
+    requestOwnerRender?: () => void
   ) {
-    super(options, workerManager, isContainerManaged);
+    super(options, workerManager, requestOwnerRender);
     this.virtualizer = virtualizer;
     this.metrics = computeVirtualFileMetrics(metrics);
   }
@@ -176,10 +191,12 @@ export class VirtualizedFileDiff<
     lineAnnotations: DiffLineAnnotation<LAnnotation>[]
   ): void {
     if (this.syncLineAnnotations(lineAnnotations)) {
-      this.resetLayoutCache({ includeEstimatedHeights: false });
+      this.forceRenderOverride = true;
     }
   }
 
+  // Keep measured row heights as estimates when annotations change; rendering
+  // will replace them with the updated heights without discarding other rows.
   private syncLineAnnotations(
     lineAnnotations: DiffLineAnnotation<LAnnotation>[] | undefined
   ): boolean {
@@ -198,7 +215,7 @@ export class VirtualizedFileDiff<
     lineAnnotations: DiffLineAnnotation<LAnnotation>[]
   ): boolean {
     if (super.syncEditSessionAnnotationsFromEditor(lineAnnotations)) {
-      this.resetLayoutCache({ includeEstimatedHeights: false });
+      this.forceRenderOverride = true;
       return true;
     }
     return false;
@@ -216,7 +233,7 @@ export class VirtualizedFileDiff<
   }
 
   private hasFileAnnotations(fileDiff: FileDiffMetadata): boolean {
-    const lineAnnotations = this.getLatestAnnotations();
+    const lineAnnotations = this.getLayoutAnnotations();
     if (!includesFileAnnotations(lineAnnotations)) {
       return false;
     }
@@ -249,7 +266,9 @@ export class VirtualizedFileDiff<
     return this.metrics.lineHeight * multiplier;
   }
 
-  override setOptions(options: FileDiffOptions<LAnnotation> | undefined): void {
+  override setOptions(
+    options: FileDiffOptions<LAnnotation, Caret> | undefined
+  ): void {
     if (this.isAdvancedMode()) {
       throw new Error(
         'VirtualizedFileDiff.setOptions cannot be used inside CodeView. Update CodeView options instead.'
@@ -319,6 +338,10 @@ export class VirtualizedFileDiff<
     if (this.cache.measuredHeightDeltaTotal !== nextFileAnnotationHeight) {
       this.cache.measuredHeightDeltaTotal = nextFileAnnotationHeight;
     }
+    this.cache.ghostTextRows = NO_GHOST_TEXT_ROWS;
+    if (this.cache.ghostTextRowsByIndex.size > 0) {
+      this.cache.ghostTextRowsByIndex.clear();
+    }
     this.invalidateDerivedLayoutCache(
       includeEstimatedHeights,
       resetRenderRange
@@ -350,14 +373,75 @@ export class VirtualizedFileDiff<
     }
   }
 
+  // Fold the ghost text rows the editor is showing below lines into the height
+  // deltas. Ghost text sits in a margin below the row, which measuring never
+  // includes, so the rows are added here on top of the row's own height, and
+  // removed again when the ghost text changes or goes away, even for rows that
+  // are not rendered right now. The editor keys by new-file line; the deltas
+  // are keyed by this view's row index, so lines are translated the same way
+  // getLinePosition does. The editor only reports lines that have a rendered
+  // row (it draws a prediction all or nothing); the translation is undefined
+  // only for a diff without hunks.
+  private applyGhostTextRows(
+    fileDiff: FileDiffMetadata,
+    ghostTextRows: ReadonlyMap<number, number>
+  ): boolean {
+    const {
+      cache: {
+        heightDeltas,
+        ghostTextRows: folded,
+        ghostTextRowsByIndex: previous,
+      },
+      metrics: { lineHeight },
+    } = this;
+    if (folded === ghostTextRows) {
+      return false;
+    }
+    const diffStyle = this.getDiffStyle();
+    const next = new Map<number, number>();
+    for (const [line, rows] of ghostTextRows) {
+      const indexes = this.getLineIndexForDiff(fileDiff, line + 1, 'additions');
+      if (indexes == null) {
+        continue;
+      }
+      next.set(diffStyle === 'split' ? indexes[1] : indexes[0], rows);
+    }
+    let changed = false;
+    for (const rowIndex of new Set([...previous.keys(), ...next.keys()])) {
+      const delta =
+        ((next.get(rowIndex) ?? 0) - (previous.get(rowIndex) ?? 0)) *
+        lineHeight;
+      if (delta === 0) {
+        continue;
+      }
+      const nextDelta = (heightDeltas.get(rowIndex) ?? 0) + delta;
+      if (nextDelta === 0) {
+        heightDeltas.delete(rowIndex);
+      } else {
+        heightDeltas.set(rowIndex, nextDelta);
+      }
+      this.cache.measuredHeightDeltaTotal += delta;
+      changed = true;
+    }
+    this.cache.ghostTextRows = ghostTextRows;
+    this.cache.ghostTextRowsByIndex = next;
+    return changed;
+  }
+
   // Measure rendered lines and update height cache.
   // Called after render to reconcile estimated vs actual heights.
   // Definitely need to optimize this in cases where there aren't any custom
   // line heights or in cases of extremely large files...
   public reconcileHeights(): boolean {
     let hasHeightChange = false;
-    const { overflow = 'scroll' } = this.options;
-    const fileDiff = this.getRenderedDiff();
+    const {
+      options: { overflow = 'scroll' },
+      metrics: { lineHeight },
+    } = this;
+    // A placeholder may have a prepared layout before any content has
+    // rendered.
+    const fileDiff =
+      this.placeHolder != null ? this.getLayoutDiff() : this.getRenderedDiff();
     if (this.fileContainer == null || fileDiff == null) {
       if (this.height !== 0) {
         hasHeightChange = true;
@@ -366,16 +450,30 @@ export class VirtualizedFileDiff<
       return hasHeightChange;
     }
     this.top = this.getVirtualizedTop();
-    const lineAnnotations = this.getLatestAnnotations();
-    // NOTE(amadeus): We can probably be a lot smarter about this, and we
-    // should be thinking about ways to improve this
-    // If the file has no annotations and we are using the scroll variant, then
-    // we can probably skip everything
+    hasHeightChange = this.applyGhostTextRows(
+      fileDiff,
+      this.editor?.__getGhostTextRows() ?? NO_GHOST_TEXT_ROWS
+    );
+    // Folding replaces the row-index map; measure against the newly folded
+    // counts so reconciliation does not overwrite their height contribution.
+    const { ghostTextRowsByIndex } = this.cache;
+    const measureAllRows =
+      overflow !== 'scroll' ||
+      this.lineAnnotations.length > 0 ||
+      this.isResizeDebuggingEnabled();
+    // Ghost-row changes affect placeholders too, but placeholders have no DOM
+    // rows to measure. After the last annotation is removed, keep measuring
+    // rendered rows until their previously cached heights have been corrected.
     if (
-      overflow === 'scroll' &&
-      lineAnnotations.length === 0 &&
-      !this.isResizeDebuggingEnabled()
+      this.placeHolder != null ||
+      (!measureAllRows &&
+        this.cache.heightDeltas.size === 0 &&
+        this.cache.fileAnnotationHeight === 0)
     ) {
+      if (hasHeightChange) {
+        this.computeApproximateSize(true);
+        this.setPlaceholderHeight(this.height);
+      }
       return hasHeightChange;
     }
     const diffStyle = this.getDiffStyle();
@@ -384,10 +482,10 @@ export class VirtualizedFileDiff<
         ? [this.codeDeletions, this.codeAdditions]
         : [this.codeUnified];
 
-    const hasFileAnnotations = this.hasFileAnnotations(fileDiff);
+    // Keep offscreen file annotation measurements consistent with the buffers
+    // computed for this render. A rendered top row can confirm their removal.
     if (
       this.renderRange != null &&
-      hasFileAnnotations &&
       shouldRenderFileAnnotations(this.renderRange)
     ) {
       const fileAnnotationHeight = measureFileAnnotationHeight(codeGroups);
@@ -395,14 +493,18 @@ export class VirtualizedFileDiff<
       if (this.setFileAnnotationHeight(nextFileAnnotationHeight)) {
         hasHeightChange = true;
       }
-    } else if (!hasFileAnnotations && this.setFileAnnotationHeight(0)) {
-      hasHeightChange = true;
     }
 
     for (const codeGroup of codeGroups) {
       if (codeGroup == null) continue;
       const content = codeGroup.children[1];
       if (!(content instanceof HTMLElement)) continue;
+      // The ghost prediction margin sits on the additions row. When the two
+      // split columns share one grid, the deletions row stretches to that
+      // taller track, so measuring it would count the rows twice; the
+      // additions row is authoritative for a row pair with ghost text.
+      const skipsGhostRows =
+        diffStyle === 'split' && codeGroup === this.codeDeletions;
       for (const line of content.children) {
         if (!(line instanceof HTMLElement)) continue;
 
@@ -410,7 +512,16 @@ export class VirtualizedFileDiff<
         if (lineIndexAttr == null) continue;
 
         const lineIndex = parseLineIndex(lineIndexAttr, diffStyle);
-        let measuredHeight = line.getBoundingClientRect().height;
+        const ghostRows = ghostTextRowsByIndex.get(lineIndex) ?? 0;
+        if (skipsGhostRows && ghostRows > 0) continue;
+        const previousDelta = this.cache.heightDeltas.get(lineIndex) ?? 0;
+        // With no annotations or wrapping, only stale custom measurements need
+        // DOM reads. Ghost rows already have known heights from the editor.
+        if (!measureAllRows && previousDelta === ghostRows * lineHeight) {
+          continue;
+        }
+        let measuredHeight =
+          line.getBoundingClientRect().height + ghostRows * lineHeight;
         let hasMetadata = false;
         // Annotations or noNewline metadata increase the size of the their
         // attached line
@@ -426,7 +537,6 @@ export class VirtualizedFileDiff<
             line.nextElementSibling.getBoundingClientRect().height;
         }
         const estimatedHeight = this.getEstimatedLineHeight(hasMetadata);
-        const previousDelta = this.cache.heightDeltas.get(lineIndex) ?? 0;
         const nextDelta = measuredHeight - estimatedHeight;
 
         if (nextDelta === previousDelta) {
@@ -491,7 +601,7 @@ export class VirtualizedFileDiff<
         // and treat it as a mutation
         Object.assign(fileDiff, pendingHydratedDiff.nextDiff);
         this.setHydratedState(pendingHydratedDiff.files);
-        this.startHydratedEditSession(fileDiff);
+        this.installHydratedSessionDiff(fileDiff);
         this.forceRenderOverride = true;
         resetLayoutCache = true;
         resetEstimatedHeights = true;
@@ -526,7 +636,7 @@ export class VirtualizedFileDiff<
       }
     }
 
-    const diffChanged = this.updateExternalDiff(fileDiff, lineAnnotations);
+    const diffChanged = this.updateInputDiff(fileDiff, lineAnnotations);
     const {
       pendingRenderDiff,
       layoutDiffChanged,
@@ -540,11 +650,7 @@ export class VirtualizedFileDiff<
       this.forceRenderOverride = true;
     }
 
-    if (
-      reset?.resetDiffLayoutCache === true ||
-      layoutDiffChanged ||
-      annotationsChanged
-    ) {
+    if (reset?.resetDiffLayoutCache === true || layoutDiffChanged) {
       resetLayoutCache = true;
     }
     if (
@@ -614,7 +720,10 @@ export class VirtualizedFileDiff<
     let top = checkpoint?.top ?? headerRegion + this.cache.fileAnnotationHeight;
 
     if (collapsed) {
-      return { top: headerRegion, height: 0 };
+      return {
+        top: getVirtualFileHeaderHeight(this.metrics, disableFileHeader),
+        height: 0,
+      };
     }
 
     let position: { top: number; height: number } | undefined;
@@ -875,11 +984,16 @@ export class VirtualizedFileDiff<
   }
 
   override cleanUp(recycle = false): void {
+    const hadGhostTextRows = this.cache.ghostTextRows.size > 0;
+    if (hadGhostTextRows) {
+      this.layoutDirty = true;
+    }
     const shouldRecomputeLayout =
       recycle &&
       this.isAdvancedMode() &&
       this.fileContainer != null &&
-      !areDiffTargetsEqual(this.getRenderedDiff(), this.getLatestDiff());
+      (hadGhostTextRows ||
+        !areDiffTargetsEqual(this.getRenderedDiff(), this.getWorkingDiff()));
     if (this.fileContainer != null && this.isSimpleMode()) {
       this.getSimpleVirtualizer()?.disconnect(this.fileContainer);
     }
@@ -905,9 +1019,10 @@ export class VirtualizedFileDiff<
     direction: ExpansionDirections,
     expansionLineCountOverride?: number
   ): void => {
-    if (this.fileDiff == null) {
+    if (this.getInputDiff() == null) {
       return;
     }
+    this.loadFilesIfNecessary();
     if (this.isAdvancedMode()) {
       this.pendingExpansions ??= [];
       this.pendingExpansions.push({
@@ -924,7 +1039,6 @@ export class VirtualizedFileDiff<
       this.resetLayoutCache({ includeEstimatedHeights: true });
       this.computeApproximateSize();
     }
-    this.loadFilesIfNecessary();
     this.forceRenderOverride = true;
     this.virtualizer.instanceChanged(this, true);
   };
@@ -936,7 +1050,7 @@ export class VirtualizedFileDiff<
   // render. Partial diffs only hold hunk lines, so lines outside every hunk
   // need the full file before they can be expanded.
   public requestRevealLine(lineNumber: number): boolean {
-    const fileDiff = this.getLatestDiff();
+    const fileDiff = this.getWorkingDiff();
     if (fileDiff == null) {
       return false;
     }
@@ -965,7 +1079,7 @@ export class VirtualizedFileDiff<
     expectedDiff: FileDiffMetadata,
     files: LoadedPartialDiffContents
   ): Promise<void> {
-    if (this.fileDiff !== expectedDiff || !expectedDiff.isPartial) {
+    if (this.getInputDiff() !== expectedDiff || !expectedDiff.isPartial) {
       return;
     }
     // CodeView component requires careful control for anchor
@@ -975,7 +1089,7 @@ export class VirtualizedFileDiff<
     if (this.isAdvancedMode()) {
       const nextDiff = hydratePartialDiff('clone', expectedDiff, files);
       await awaitWithTimeout(() => this.primeHighlightCache(nextDiff));
-      if (!this.enabled || this.fileDiff !== expectedDiff) {
+      if (this.getInputDiff() !== expectedDiff) {
         return;
       }
       this.pendingHydratedDiff = {
@@ -986,9 +1100,9 @@ export class VirtualizedFileDiff<
     } else {
       hydratePartialDiff('merge', expectedDiff, files);
       this.setHydratedState(files);
-      if (!this.startHydratedEditSession(expectedDiff)) {
+      if (!this.installHydratedSessionDiff(expectedDiff)) {
         await awaitWithTimeout(() => this.primeHighlightCache(expectedDiff));
-        if (!this.enabled || this.fileDiff !== expectedDiff) {
+        if (this.getInputDiff() !== expectedDiff) {
           return;
         }
       }
@@ -1001,7 +1115,7 @@ export class VirtualizedFileDiff<
 
   protected override loadFilesIfNecessary(): void {
     if (this.pendingHydratedDiff != null) {
-      if (this.pendingHydratedDiff.expectedDiff === this.fileDiff) {
+      if (this.pendingHydratedDiff.expectedDiff === this.getInputDiff()) {
         return;
       }
       this.pendingHydratedDiff = undefined;
@@ -1081,7 +1195,7 @@ export class VirtualizedFileDiff<
   // covers it.
   protected override escalateEditSessionRender(): void {
     this.invalidateEditSessionLayout();
-    if (!this.enabled || this.fileDiff == null) {
+    if (!this.enabled || this.getInputDiff() == null) {
       return;
     }
     this.forceRenderOverride = true;
@@ -1111,27 +1225,55 @@ export class VirtualizedFileDiff<
   override rerender(): void {
     if (
       !this.enabled ||
-      (this.fileDiff == null &&
+      (this.getInputDiff() == null &&
         this.additionFile == null &&
         this.deletionFile == null)
     ) {
       return;
     }
-    const latestDiff = this.getLatestDiff();
+    const workingDiff = this.getWorkingDiff();
     const nextRenderDiff =
-      latestDiff == null
+      workingDiff == null
         ? undefined
-        : this.hunksRenderer.getDiffForNextRender(latestDiff);
+        : this.hunksRenderer.getDiffForNextRender(workingDiff);
+    // A completed async highlight can change which diff the next simple
+    // virtualizer render will commit. CodeView refreshes this during layout.
+    if (this.isSimpleMode()) {
+      this.pendingRender = undefined;
+    }
     this.forceRenderOverride = true;
+    if (this.isSimpleMode() && this.requestRender()) return;
     this.virtualizer.instanceChanged(
       this,
       !areDiffTargetsEqual(this.getRenderedDiff(), nextRenderDiff)
     );
   }
 
+  // CodeView items are component-managed whenever their CodeView is.
+  protected override get isComponentManaged(): boolean {
+    return (
+      this.getAdvancedVirtualizer()?.isComponentManaged ??
+      super.isComponentManaged
+    );
+  }
+
+  // The editor changed the ghost text rows it shows below lines. Ask the
+  // virtualizer for a layout pass, which folds them in (see
+  // applyGhostTextRows). Layout state only changes inside that pass.
+  public syncGhostTextRows(): void {
+    const codeView = this.getAdvancedVirtualizer();
+    if (codeView != null) {
+      codeView.capturePendingLayoutAnchor();
+      this.layoutDirty = true;
+      codeView.instanceChanged(this, true);
+    } else {
+      this.getSimpleVirtualizer()?.requestHeightReconcile(this);
+    }
+  }
+
   // Normally triggered by the host when the document line count changes.
   override applyDocumentChange(
-    textDocument: DiffsTextDocument,
+    textDocument: TextDocument<'file-diff', LAnnotation>,
     newLineAnnotations?: DiffLineAnnotation<LAnnotation>[],
     shouldUpdateBuffer = false
   ): void {
@@ -1195,15 +1337,17 @@ export class VirtualizedFileDiff<
       this.layoutDirty = false;
       return;
     }
-
-    const { disableFileHeader = false, collapsed = false } = this.options;
-    const headerRegion = getVirtualFileHeaderRegion(
-      this.metrics,
-      disableFileHeader
+    this.applyGhostTextRows(
+      fileDiff,
+      this.editor?.__getGhostTextRows() ?? NO_GHOST_TEXT_ROWS
     );
 
-    this.height += headerRegion;
+    const { disableFileHeader = false, collapsed = false } = this.options;
     if (collapsed) {
+      this.height += getVirtualFileHeaderHeight(
+        this.metrics,
+        disableFileHeader
+      );
       this.layoutDirty = false;
       return;
     }
@@ -1222,6 +1366,14 @@ export class VirtualizedFileDiff<
   // layout calculation within that frame tied to the same diff.
   private getLayoutDiff(): FileDiffMetadata | undefined {
     return this.pendingRender?.diff ?? this.getRenderedDiff();
+  }
+
+  // Annotations paired with the content layout is prepared for.
+  private getLayoutAnnotations(): DiffLineAnnotation<LAnnotation>[] {
+    const { pendingRender } = this;
+    return pendingRender != null
+      ? this.getAnnotationsForDiff(pendingRender.diff)
+      : this.lineAnnotations;
   }
 
   private getActiveEstimatedHeight(
@@ -1319,11 +1471,11 @@ export class VirtualizedFileDiff<
       hasFileInput &&
       (!areOptionalFilesEqual(oldFile, this.deletionFile) ||
         !areOptionalFilesEqual(newFile, this.additionFile));
-    let nextFileDiff = fileDiff ?? this.fileDiff;
+    let nextFileDiff = fileDiff ?? this.getInputDiff();
     if (
       fileDiff == null &&
       hasFileInput &&
-      (filesDidChange || this.fileDiff == null)
+      (filesDidChange || this.getInputDiff() == null)
     ) {
       nextFileDiff = parseDiffFromFile(
         fileInput.oldFile,
@@ -1334,7 +1486,8 @@ export class VirtualizedFileDiff<
     const { forceRenderOverride, isSetup } = this;
     this.forceRenderOverride = undefined;
     const targetChanged =
-      nextFileDiff != null && !areDiffTargetsEqual(this.fileDiff, nextFileDiff);
+      nextFileDiff != null &&
+      !areDiffTargetsEqual(this.getInputDiff(), nextFileDiff);
     const dataChanged = targetChanged || filesDidChange;
 
     fileContainer = this.getOrCreateFileContainer(fileContainer);
@@ -1346,7 +1499,7 @@ export class VirtualizedFileDiff<
       return false;
     }
     if (targetChanged) {
-      this.updateExternalDiff(nextFileDiff, lineAnnotations);
+      this.updateInputDiff(nextFileDiff, lineAnnotations);
     }
 
     const {
@@ -1357,25 +1510,23 @@ export class VirtualizedFileDiff<
     } = (() => {
       if (
         this.pendingRender != null &&
-        areDiffTargetsEqual(
-          this.pendingRender.latestDiff,
-          this.getLatestDiff(nextFileDiff) ?? nextFileDiff
-        )
+        this.pendingRender.workingDiff ===
+          (this.getWorkingDiff(nextFileDiff) ?? nextFileDiff)
       ) {
         return {
           pendingRenderDiff: this.pendingRender.diff,
           layoutDiffChanged: false,
           renderedDiffChanged: false,
-          annotationsChanged: false,
+          annotationsChanged: this.syncLineAnnotations(lineAnnotations),
         };
       }
       return this.updatePendingRender(nextFileDiff, lineAnnotations);
     })();
 
-    if (annotationsChanged || layoutDiffChanged) {
+    if (layoutDiffChanged) {
       this.resetLayoutCache({
-        includeEstimatedHeights: layoutDiffChanged,
-        resetFileAnnotationHeight: layoutDiffChanged,
+        includeEstimatedHeights: true,
+        resetFileAnnotationHeight: true,
       });
     }
 
@@ -1400,7 +1551,7 @@ export class VirtualizedFileDiff<
       this.isSetup = true;
     } else {
       this.top ??= this.getVirtualizedTop();
-      if (layoutDiffChanged) {
+      if (this.layoutDirty && this.isSimpleMode()) {
         this.getSimpleVirtualizer()?.markDOMDirty();
         this.computeApproximateSize(false, pendingRenderDiff);
       }
@@ -1414,7 +1565,6 @@ export class VirtualizedFileDiff<
       if (targetChanged) {
         this.clearReusableHeader();
       }
-      this.pendingRender = undefined;
       return this.renderPlaceholder(this.height);
     }
 
@@ -1425,7 +1575,7 @@ export class VirtualizedFileDiff<
       fileTop,
       windowSpecs
     );
-    const rendered = super.render({
+    return super.render({
       fileDiff: nextFileDiff,
       fileContainer,
       renderRange,
@@ -1438,37 +1588,39 @@ export class VirtualizedFileDiff<
       ...fileInput,
       ...fileInputProps,
     });
-    if (rendered) {
-      if (this.getRenderedDiff() !== pendingRenderDiff) {
-        throw new Error(
-          'VirtualizedFileDiff.render: rendered a different diff than its prepared layout'
-        );
-      }
-      this.pendingRender = undefined;
+  }
+
+  protected override finalizeRender(): void {
+    if (
+      !areDiffTargetsEqual(this.getRenderedDiff(), this.pendingRender?.diff)
+    ) {
+      throw new Error(
+        'VirtualizedFileDiff.render: rendered a different diff than its prepared layout'
+      );
     }
+    this.pendingRender = undefined;
     // Renders can be driven from outside the virtualizer (host/React render
     // calls, async highlight completions), and the virtualizer only
     // auto-reconciles renders it initiated. Queue a measured-height
     // reconciliation for every applied content render so line deltas
     // (wrapped lines, annotation heights) survive layout resets.
-    if (this.isSimpleMode() && rendered) {
+    if (this.isSimpleMode()) {
       this.getSimpleVirtualizer()?.requestHeightReconcile(this);
     }
-    return rendered;
   }
 
   private updatePendingRender(
     nextFileDiff: FileDiffMetadata,
     lineAnnotations: DiffLineAnnotation<LAnnotation>[] | undefined
   ) {
-    const latestDiff = this.getLatestDiff(nextFileDiff) ?? nextFileDiff;
+    const workingDiff = this.getWorkingDiff(nextFileDiff) ?? nextFileDiff;
     const previousRenderedDiff = this.getRenderedDiff();
     const { pendingRender } = this;
     const previousLayoutDiff = pendingRender?.diff ?? previousRenderedDiff;
     const pendingRenderDiff =
-      this.hunksRenderer.getDiffForNextRender(latestDiff);
+      this.hunksRenderer.getDiffForNextRender(workingDiff);
 
-    this.pendingRender = { latestDiff, diff: pendingRenderDiff };
+    this.pendingRender = { workingDiff, diff: pendingRenderDiff };
 
     return {
       pendingRenderDiff,
@@ -1519,7 +1671,7 @@ export class VirtualizedFileDiff<
     return this.virtualizer.type === 'simple' ? this.virtualizer : undefined;
   }
 
-  private getAdvancedVirtualizer(): CodeView<LAnnotation> | undefined {
+  private getAdvancedVirtualizer(): CodeView<LAnnotation, Caret> | undefined {
     return this.virtualizer.type === 'advanced' ? this.virtualizer : undefined;
   }
 
@@ -2268,9 +2420,9 @@ function getHunkMetadataOffsets({
   return offsets;
 }
 
-function hasDiffLayoutOptionChanged<LAnnotation>(
-  previousOptions: FileDiffOptions<LAnnotation>,
-  nextOptions: FileDiffOptions<LAnnotation>
+function hasDiffLayoutOptionChanged<LAnnotation, Caret>(
+  previousOptions: FileDiffOptions<LAnnotation, Caret>,
+  nextOptions: FileDiffOptions<LAnnotation, Caret>
 ): boolean {
   return (
     (previousOptions.diffStyle ?? 'split') !==
@@ -2298,9 +2450,9 @@ function hasDiffLayoutOptionChanged<LAnnotation>(
   );
 }
 
-function hasDiffEstimateOptionChanged<LAnnotation>(
-  previousOptions: FileDiffOptions<LAnnotation>,
-  nextOptions: FileDiffOptions<LAnnotation>
+function hasDiffEstimateOptionChanged<LAnnotation, Caret>(
+  previousOptions: FileDiffOptions<LAnnotation, Caret>,
+  nextOptions: FileDiffOptions<LAnnotation, Caret>
 ): boolean {
   return (
     (previousOptions.disableFileHeader ?? false) !==
@@ -2329,8 +2481,10 @@ function canHydrateCollapsedContext(
   );
 }
 
-function getOptionHunkSeparatorType<LAnnotation>(
-  hunkSeparators: FileDiffOptions<LAnnotation>['hunkSeparators'] | undefined
+function getOptionHunkSeparatorType<LAnnotation, Caret>(
+  hunkSeparators:
+    | FileDiffOptions<LAnnotation, Caret>['hunkSeparators']
+    | undefined
 ): HunkSeparators {
   return typeof hunkSeparators === 'function'
     ? 'custom'

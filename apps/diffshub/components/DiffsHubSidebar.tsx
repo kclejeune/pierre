@@ -1,6 +1,5 @@
 'use client';
 
-import type { CodeViewHandle } from '@pierre/diffs/react';
 import {
   IconCodeSearch,
   IconComment,
@@ -32,9 +31,11 @@ import {
 } from './DiffsHubCommentsList';
 import { DiffsHubDiffStats } from './DiffsHubDiffStats';
 import { DiffsHubFileTree } from './DiffsHubFileTree';
+import { PoweredBy } from './PoweredBy';
+import { StressTestControls } from './StressTestControls';
 import { useChromeThemeProps } from './useChromeThemeProps';
-import type { ThemeCycleControls } from './useThemeCycle';
-import { WorkerPoolStatus } from './WorkerPoolStatus';
+import { useMediaQuery } from './useMediaQuery';
+import type { StressTestState } from './useStressTest';
 import { Button } from '@/components/Button';
 import { ButtonGroup, ButtonGroupItem } from '@/components/ButtonGroup';
 import {
@@ -55,7 +56,6 @@ import { isMacPlatform } from '@/lib/platform';
 import { diffshubChromeMapping } from '@/lib/theme/diffshubChromeMapping';
 import { getDropdownThemeStyle } from '@/lib/theme/dropdownChromeStyle';
 import type {
-  CommentMetadata,
   DiffsHubDiffStats as DiffsHubDiffStatsData,
   DiffsHubFileTreeSource,
   DiffsHubSavedCommentEntry,
@@ -66,7 +66,6 @@ import type {
 type SidebarTab = 'files' | 'search' | 'comments';
 
 const HIDDEN_ITEMS_SYNC_DELAY_MS = 150;
-type SidebarStatusPanel = 'diffStats' | 'systemMonitor';
 
 interface DiffsHubSidebarProps {
   className?: string;
@@ -91,8 +90,7 @@ interface DiffsHubSidebarProps {
   scrollRef: RefObject<HTMLDivElement | null>;
   source: DiffsHubFileTreeSource;
   streaming: boolean;
-  themeCycle: ThemeCycleControls;
-  viewerRef: RefObject<CodeViewHandle<CommentMetadata> | null>;
+  stressTest: StressTestState;
 }
 
 export const DiffsHubSidebar = memo(function DiffsHubSidebar({
@@ -112,8 +110,7 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
   searchTabRequest = 0,
   source,
   streaming,
-  themeCycle,
-  viewerRef,
+  stressTest,
 }: DiffsHubSidebarProps) {
   const [activeTab, setActiveTab] = useState<SidebarTab>('files');
   // The comments list mounts the first time its tab is opened and stays
@@ -165,8 +162,10 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
     () => getDropdownThemeStyle(sidebarStyle),
     [sidebarStyle]
   );
-  const [activeStatusPanel, setActiveStatusPanel] =
-    useState<SidebarStatusPanel | null>('diffStats');
+  const [diffStatsExpanded, setDiffStatsExpanded] = useState(true);
+  const isMobileViewport = useMediaQuery(MOBILE_MEDIA_QUERY, undefined);
+  const [previousMobileOverlayOpen, setPreviousMobileOverlayOpen] =
+    useState(false);
   const [fileTreeModel, setFileTreeModel] = useState<FileTree | null>(null);
   // Inclusion filter: the statuses the tree should show. Empty means "no
   // filter" — every file is shown — so the menu opens with nothing checked and
@@ -209,8 +208,8 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
   const handleModelReady = useCallback((model: FileTree | null) => {
     setFileTreeModel(model);
   }, []);
-  const toggleStatusPanel = useCallback((panel: SidebarStatusPanel) => {
-    setActiveStatusPanel((current) => (current === panel ? null : panel));
+  const toggleDiffStats = useCallback(() => {
+    setDiffStatsExpanded((expanded) => !expanded);
   }, []);
 
   const clearStatusFilter = useCallback(() => {
@@ -241,14 +240,20 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
     });
   }, []);
 
-  useEffect(() => {
-    if (mobileOverlayOpen && window.matchMedia(MOBILE_MEDIA_QUERY).matches) {
-      setActiveStatusPanel(null);
+  // Collapse the diff stats once when a mobile overlay opens, while still
+  // allowing the user to reopen them during that same overlay session.
+  if (
+    isMobileViewport !== undefined &&
+    previousMobileOverlayOpen !== mobileOverlayOpen
+  ) {
+    setPreviousMobileOverlayOpen(mobileOverlayOpen);
+    if (mobileOverlayOpen && isMobileViewport) {
+      setDiffStatsExpanded(false);
     }
-  }, [mobileOverlayOpen]);
+  }
 
   useEffect(() => {
-    if (!mobileOverlayOpen || !window.matchMedia(MOBILE_MEDIA_QUERY).matches) {
+    if (!mobileOverlayOpen || isMobileViewport !== true) {
       return undefined;
     }
 
@@ -272,7 +277,7 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
         codeViewScroll.style.overflow = previousCodeViewOverflow ?? '';
       }
     };
-  }, [mobileOverlayOpen, scrollRef]);
+  }, [isMobileViewport, mobileOverlayOpen, scrollRef]);
 
   return (
     <>
@@ -416,17 +421,13 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
           </div>
         </div>
         <DiffsHubDiffStats
-          expanded={activeStatusPanel === 'diffStats'}
-          onToggle={() => toggleStatusPanel('diffStats')}
+          expanded={diffStatsExpanded}
+          onToggle={toggleDiffStats}
           stats={diffStats}
           streaming={streaming}
         />
-        <WorkerPoolStatus
-          expanded={activeStatusPanel === 'systemMonitor'}
-          onToggle={() => toggleStatusPanel('systemMonitor')}
-          viewerRef={viewerRef}
-          themeCycle={themeCycle}
-        />
+        <StressTestControls stressTest={stressTest} />
+        <PoweredBy />
       </SidebarWrapper>
     </>
   );

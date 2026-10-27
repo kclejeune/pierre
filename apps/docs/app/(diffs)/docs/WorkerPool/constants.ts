@@ -8,19 +8,23 @@ const options = {
   unsafeCSS: CustomScrollbarCSS,
 } as const;
 
-export const WORKER_POOL_HELPER_VITE: PreloadFileOptions<undefined> = {
-  file: {
-    name: 'utils/workerFactory.ts',
-    contents: `import WorkerUrl from '@pierre/diffs/worker/worker.js?worker&url';
+export const WORKER_POOL_HELPER_VITE: PreloadFileOptions<undefined, undefined> =
+  {
+    file: {
+      name: 'utils/workerFactory.ts',
+      contents: `import WorkerUrl from '@pierre/diffs/worker/worker.js?worker&url';
 
 export function workerFactory(): Worker {
   return new Worker(WorkerUrl, { type: 'module' });
 }`,
-  },
-  options,
-};
+    },
+    options,
+  };
 
-export const WORKER_POOL_HELPER_NEXTJS: PreloadFileOptions<undefined> = {
+export const WORKER_POOL_HELPER_NEXTJS: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'utils/workerFactory.ts',
     contents: `'use client';
@@ -37,7 +41,10 @@ export function workerFactory(): Worker {
   options,
 };
 
-export const WORKER_POOL_VSCODE_LOCAL_ROOTS: PreloadFileOptions<undefined> = {
+export const WORKER_POOL_VSCODE_LOCAL_ROOTS: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'extension.ts',
     contents: `function getWebviewOptions(extensionUri: vscode.Uri): vscode.WebviewOptions {
@@ -45,14 +52,7 @@ export const WORKER_POOL_VSCODE_LOCAL_ROOTS: PreloadFileOptions<undefined> = {
     enableScripts: true,
     localResourceRoots: [
       // ... your other roots
-      vscode.Uri.joinPath(
-        extensionUri,
-        'node_modules',
-        '@pierre',
-        'diffs',
-        'dist',
-        'worker'
-      ),
+      vscode.Uri.joinPath(extensionUri, 'media'),
     ],
   };
 }`,
@@ -60,16 +60,15 @@ export const WORKER_POOL_VSCODE_LOCAL_ROOTS: PreloadFileOptions<undefined> = {
   options,
 };
 
-export const WORKER_POOL_VSCODE_WORKER_URI: PreloadFileOptions<undefined> = {
+export const WORKER_POOL_VSCODE_WORKER_URI: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'extension.ts',
     contents: `const workerScriptPath = vscode.Uri.joinPath(
   this._extensionUri,
-  'node_modules',
-  '@pierre',
-  'diffs',
-  'dist',
-  'worker',
+  'media',
   'worker-portable.js'
 );
 const workerScriptUri = webview.asWebviewUri(workerScriptPath);`,
@@ -77,7 +76,10 @@ const workerScriptUri = webview.asWebviewUri(workerScriptPath);`,
   options,
 };
 
-export const WORKER_POOL_VSCODE_INLINE_SCRIPT: PreloadFileOptions<undefined> = {
+export const WORKER_POOL_VSCODE_INLINE_SCRIPT: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'extension.ts',
     contents: `<script nonce="\${nonce}">window.WORKER_URI = "\${workerScriptUri}";</script>`,
@@ -85,16 +87,20 @@ export const WORKER_POOL_VSCODE_INLINE_SCRIPT: PreloadFileOptions<undefined> = {
   options,
 };
 
-export const WORKER_POOL_VSCODE_CSP: PreloadFileOptions<undefined> = {
-  file: {
-    name: 'extension.ts',
-    contents: `worker-src \${webview.cspSource} blob:;
+export const WORKER_POOL_VSCODE_CSP: PreloadFileOptions<undefined, undefined> =
+  {
+    file: {
+      name: 'extension.ts',
+      contents: `worker-src \${webview.cspSource} blob:;
 connect-src \${webview.cspSource};`,
-  },
-  options,
-};
+    },
+    options,
+  };
 
-export const WORKER_POOL_VSCODE_GLOBAL: PreloadFileOptions<undefined> = {
+export const WORKER_POOL_VSCODE_GLOBAL: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'webview-ui/index.ts',
     contents: `declare global {
@@ -106,7 +112,10 @@ export const WORKER_POOL_VSCODE_GLOBAL: PreloadFileOptions<undefined> = {
   options,
 };
 
-export const WORKER_POOL_VSCODE_BLOB_URL: PreloadFileOptions<undefined> = {
+export const WORKER_POOL_VSCODE_BLOB_URL: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'webview-ui/index.ts',
     contents: `async function createWorkerBlobUrl(): Promise<string> {
@@ -119,7 +128,10 @@ export const WORKER_POOL_VSCODE_BLOB_URL: PreloadFileOptions<undefined> = {
   options,
 };
 
-export const WORKER_POOL_VSCODE_FACTORY: PreloadFileOptions<undefined> = {
+export const WORKER_POOL_VSCODE_FACTORY: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'webview-ui/index.ts',
     contents: `const workerBlobUrl = await createWorkerBlobUrl();
@@ -131,7 +143,10 @@ function workerFactory() {
   options,
 };
 
-export const WORKER_POOL_HELPER_WEBPACK: PreloadFileOptions<undefined> = {
+export const WORKER_POOL_HELPER_WEBPACK: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'utils/workerFactory.ts',
     contents: `export function workerFactory(): Worker {
@@ -147,7 +162,10 @@ export const WORKER_POOL_HELPER_WEBPACK: PreloadFileOptions<undefined> = {
   options,
 };
 
-export const WORKER_POOL_HELPER_ESBUILD: PreloadFileOptions<undefined> = {
+export const WORKER_POOL_HELPER_ESBUILD: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'utils/workerFactory.ts',
     contents: `export function workerFactory(): Worker {
@@ -163,113 +181,42 @@ export const WORKER_POOL_HELPER_ESBUILD: PreloadFileOptions<undefined> = {
   options,
 };
 
-export const WORKER_POOL_HELPER_STATIC: PreloadFileOptions<undefined> = {
+export const WORKER_POOL_HELPER_STATIC: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'utils/workerFactory.ts',
-    contents: `// For Rollup or bundlers without special worker support:
-// 1. Copy worker.js to your static/public folder
-// 2. Reference it by URL
+    contents: `// Copy dist/worker/worker-portable.js from @pierre/diffs
+// into public/static/workers/.
 
 export function workerFactory(): Worker {
-  return new Worker('/static/workers/worker.js', { type: 'module' });
+  return new Worker('/static/workers/worker-portable.js');
 }`,
   },
   options,
 };
 
-export const WORKER_POOL_HELPER_VANILLA: PreloadFileOptions<undefined> = {
+export const WORKER_POOL_HELPER_VANILLA: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'utils/workerFactory.js',
-    contents: `// No bundler / Vanilla JS
-// Host worker.js on your server and reference it by URL
+    contents: `// Host worker-portable.js on your server.
 
 export function workerFactory() {
-  return new Worker('/path/to/worker.js', { type: 'module' });
+  return new Worker('/workers/worker-portable.js');
 }`,
   },
   options,
 };
 
-export const WORKER_POOL_USAGE: PreloadFileOptions<undefined> = {
-  file: {
-    name: 'example.ts',
-    contents: `import { createWorkerAPI } from './utils/createWorkerAPI';
-
-// Create worker pool with 8 workers
-const workerAPI = createWorkerAPI({
-  poolSize: 8,
-  initOptions: {
-    themes: ['pierre-dark', 'pierre-light'],
-    langs: ['typescript', 'javascript'],
-  },
-});
-
-// Initialize the pool (optional - auto-initializes on first use)
-await workerAPI.ensureInitialized();
-
-// Render a single file
-const file = {
-  name: 'example.ts',
-  contents: 'const x = 42;',
-};
-
-const result = await workerAPI.renderFileToHast(file, {
-  theme: 'pierre-dark',
-});
-
-console.log(result.lines); // Array of ElementContent
-
-// Render a diff from two files
-const oldFile = { name: 'example.ts', contents: 'const x = 1;' };
-const newFile = { name: 'example.ts', contents: 'const x = 2;' };
-
-const diffResult = await workerAPI.renderDiffToHast(oldFile, newFile, {
-  theme: { dark: 'pierre-dark', light: 'pierre-light' },
-});
-console.log(diffResult.oldLines, diffResult.newLines);
-
-// Check pool status
-console.log(workerAPI.getStats());
-// { totalWorkers: 8, busyWorkers: 0, queuedTasks: 0, pendingTasks: 0 }
-
-// Clean up when done
-workerAPI.terminate();`,
-  },
-  options,
-};
-
-export const WORKER_POOL_REACT_COMPONENT: PreloadFileOptions<undefined> = {
-  file: {
-    name: 'CodeView.tsx',
-    contents: `'use client';
-
-import { createWorkerAPI } from '@/utils/createWorkerAPI';
-import { useEffect, useState } from 'react';
-
-export function CodeView() {
-  const [workerAPI] = useState(() =>
-    createWorkerAPI({
-      poolSize: 8,
-      initOptions: {
-        themes: ['pierre-dark', 'pierre-light'],
-      },
-    })
-  );
-
-  useEffect(() => {
-    return () => workerAPI.terminate();
-  }, [workerAPI]);
-
-  // Use workerAPI.renderFileToHast() etc.
-}`,
-  },
-  options,
-};
-
-export const WORKER_POOL_REACT_USAGE: PreloadFileOptions<undefined> = {
-  file: {
-    name: 'HighlightProvider.tsx',
-    contents: `// components/HighlightProvider.tsx
+export const WORKER_POOL_REACT_USAGE: PreloadFileOptions<undefined, undefined> =
+  {
+    file: {
+      name: 'HighlightProvider.tsx',
+      contents: `// components/HighlightProvider.tsx
 'use client';
 
 import {
@@ -294,7 +241,7 @@ export function HighlightProvider({ children }: { children: ReactNode }) {
         theme: { dark: 'pierre-dark', light: 'pierre-light' },
         // Optional: skip inline line diffs for very long changed lines
         // maxLineDiffLength: 1000,
-        // Optional: pick the Shiki engine ('shiki-js' is default)
+        // Optional: pick the highlighter backend ('shiki-js' is default)
         // preferredHighlighter: 'shiki-wasm',
         // Optionally preload languages to avoid lazy-loading delays
         langs: ['typescript', 'javascript', 'css', 'html'],
@@ -343,11 +290,14 @@ function ThemeSwitcher() {
 }
 // WARNING: Changing render options will force all mounted components
 // to re-render and will clear the render cache.`,
-  },
-  options,
-};
+    },
+    options,
+  };
 
-export const WORKER_POOL_VANILLA_USAGE: PreloadFileOptions<undefined> = {
+export const WORKER_POOL_VANILLA_USAGE: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'vanilla-worker-usage.ts',
     contents: `import { FileDiff } from '@pierre/diffs';
@@ -370,7 +320,7 @@ const workerPool = getOrCreateWorkerPoolSingleton({
     theme: { dark: 'pierre-dark', light: 'pierre-light' },
     // Optional: skip inline line diffs for very long changed lines
     // maxLineDiffLength: 1000,
-    // Optional: pick the Shiki engine ('shiki-js' is default)
+    // Optional: pick the highlighter backend ('shiki-js' is default)
     // preferredHighlighter: 'shiki-wasm',
     // Optionally preload languages to avoid lazy-loading delays
     langs: ['typescript', 'javascript', 'css', 'html'],
@@ -411,7 +361,53 @@ await workerPool.setRenderOptions({
   options,
 };
 
-export const WORKER_POOL_API_REFERENCE: PreloadFileOptions<undefined> = {
+export const WORKER_POOL_WORKER_ERRORS: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
+  file: {
+    name: 'worker-errors.ts',
+    contents: `import {
+  getOrCreateWorkerPoolSingleton,
+  isHandledWorkerPoolError,
+} from '@pierre/diffs/worker';
+import { workerFactory } from './utils/workerFactory';
+
+let reported = false;
+
+const workerPool = getOrCreateWorkerPoolSingleton({
+  poolOptions: {
+    workerFactory,
+    // Multiple workers can report the same script load failure.
+    // Report only the first error to avoid duplicate reports.
+    onWorkerError(event, worker) {
+      // Prevent the browser from reporting this error as uncaught.
+      event.preventDefault();
+      if (reported) return;
+      reported = true;
+      const message =
+        'message' in event ? event.message : 'worker script failed to load';
+      myErrorReporter.capture('diffs highlight worker failed', { message });
+    },
+  },
+  highlighterOptions: {
+    theme: { dark: 'pierre-dark', light: 'pierre-light' },
+  },
+});
+
+// Skip expected cancellations and worker errors already reported above.
+workerPool.primeDiffHighlightCache(diff).catch((error: unknown) => {
+  if (isHandledWorkerPoolError(error)) return;
+  console.error(error);
+});`,
+  },
+  options,
+};
+
+export const WORKER_POOL_API_REFERENCE: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'api-reference.ts',
     contents: `// WorkerPoolManager constructor
@@ -424,17 +420,27 @@ new WorkerPoolManager(poolOptions, highlighterOptions)
 //   - totalASTLRUCacheSize?: number (default: 100) - Max items per cache
 //     (Two separate LRU caches are maintained: one for files, one for diffs.
 //      Each cache has this limit, so total cached items can be 2x this value.)
+//   - onWorkerError?: (event: ErrorEvent | Event, worker: Worker) => void
+//     Called for each worker error instead of logging it with console.error.
+//     Failed initialization switches components to main-thread highlighting.
+//   - mainThreadMaxCharacters?: number (default: unset) - Files and diffs with
+//     at most this many characters highlight on the main thread instead of a
+//     worker. Diffs count both sides. Unset (default behavior) sends every 
+//     highlight to a worker.
 // - highlighterOptions: WorkerInitializationRenderOptions
 //   - theme?: DiffsThemeNames | ThemesType - Theme name or { dark, light } object
-//   - lineDiffType?: 'word' | 'word-alt' | 'char' - How to diff lines (default: 'word-alt')
+//   - lineDiffType?: 'word' | 'word-alt' | 'word-line' | 'char' | 'none'
+//     How to diff lines (default: 'word-alt')
 //   - maxLineDiffLength?: number - Max changed-line length for inline line diffs (default: 1000)
 //   - tokenizeMaxLineLength?: number - Max line length to tokenize (default: 1000)
-//   - preferredHighlighter?: 'shiki-js' | 'shiki-wasm' - Highlighter engine (default: 'shiki-js')
+//   - preferredHighlighter?: 'shiki-js' | 'shiki-wasm' | 'highlights' - Highlighter backend (default: 'shiki-js')
 //   - langs?: SupportedLanguages[] - Array of languages to preload
 
 // Methods:
 poolManager.initialize()
-// Returns: Promise<void> - Initializes workers (auto-called on first render)
+// Returns: Promise<void> - Resolves when the workers are ready. Startup begins
+// automatically when the manager is constructed; call this to await it, or to
+// start the pool again after terminate()
 
 poolManager.isInitialized()
 // Returns: boolean
@@ -443,7 +449,7 @@ poolManager.setRenderOptions(options)
 // Returns: Promise<void> - Changes render options dynamically
 // Accepts: Partial<WorkerRenderingOptions>
 //   - theme?: DiffsThemeNames | ThemesType
-//   - lineDiffType?: 'word' | 'word-alt' | 'char'
+//   - lineDiffType?: 'word' | 'word-alt' | 'word-line' | 'char' | 'none'
 //   - maxLineDiffLength?: number
 //   - tokenizeMaxLineLength?: number
 // Omitted options will use defaults. WARNING: This forces all mounted
@@ -464,8 +470,12 @@ poolManager.highlightDiffAST(fileDiffInstance, diff, options)
 poolManager.getPlainDiffAST(diff, lineDiffType)
 // Returns: ThemedDiffResult | undefined - Sync render with 'text' lang
 
+poolManager.shouldHighlightOnMainThread(fileOrDiff)
+// Returns: boolean - Whether a file or diff is within mainThreadMaxCharacters
+
 poolManager.terminate()
-// Terminates all workers and resets state
+// Terminates all workers and resets state. Components highlight on the main
+// thread until initialize() starts the pool again.
 
 poolManager.getStats()
 // Returns: { totalWorkers, busyWorkers, queuedTasks, pendingTasks }
@@ -484,7 +494,7 @@ poolManager.evictDiffFromCache(cacheKey)
   options,
 };
 
-export const WORKER_POOL_CACHING: PreloadFileOptions<undefined> = {
+export const WORKER_POOL_CACHING: PreloadFileOptions<undefined, undefined> = {
   file: {
     name: 'caching-example.ts',
     contents: `import {
@@ -554,7 +564,10 @@ workerPool.evictDiffFromCache('diff-xyz789');`,
   options,
 };
 
-export const WORKER_POOL_ARCHITECTURE_ASCII: PreloadFileOptions<undefined> = {
+export const WORKER_POOL_ARCHITECTURE_ASCII: PreloadFileOptions<
+  undefined,
+  undefined
+> = {
   file: {
     name: 'architecture.txt',
     contents: `┌────────────── Main Thread ──────────────┐
@@ -593,7 +606,7 @@ export const WORKER_POOL_ARCHITECTURE_ASCII: PreloadFileOptions<undefined> = {
 ┌───┴───────── Worker Threads ────────│───┐
 │ ┌ worker.js ────────────────────────│─┐ │
 │ │ * 8 threads by default            │ │ │
-│ │ * Runs Shiki's codeToHast() ──────┘ │ │
+│ │ * Tokenizes with the backend ────┘ │ │
 │ │ * Manages themes and language       │ │
 │ │   loading automatically             │ │
 │ └─────────────────────────────────────┘ │

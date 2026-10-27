@@ -4,6 +4,7 @@ import type {
   InitializeWorkerRequest,
   RenderDiffRequest,
   RenderFileRequest,
+  SetRenderOptionsWorkerRequest,
   WorkerInitializationRenderOptions,
   WorkerPoolOptions,
   WorkerRequest,
@@ -26,7 +27,7 @@ export function installAnimationFramePolyfill(): () => void {
   let nextFrameId = 0;
   const frames = new Map<number, ReturnType<typeof setTimeout>>();
 
-  globalThis.requestAnimationFrame = ((callback) => {
+  globalThis.requestAnimationFrame = (callback) => {
     const id = ++nextFrameId;
     const timeout = setTimeout(() => {
       frames.delete(id);
@@ -34,15 +35,15 @@ export function installAnimationFramePolyfill(): () => void {
     }, 0);
     frames.set(id, timeout);
     return id;
-  }) as typeof requestAnimationFrame;
+  };
 
-  globalThis.cancelAnimationFrame = ((id) => {
+  globalThis.cancelAnimationFrame = (id) => {
     const timeout = frames.get(id);
     if (timeout != null) {
       clearTimeout(timeout);
       frames.delete(id);
     }
-  }) as typeof cancelAnimationFrame;
+  };
 
   return () => {
     for (const timeout of frames.values()) {
@@ -83,6 +84,10 @@ export class TestWorker {
     new Promise<InitializeWorkerRequest>((resolve) => {
       this.initializeRequestResolve = resolve;
     });
+  private setRenderOptionsRequests: SetRenderOptionsWorkerRequest[] = [];
+  private setRenderOptionsRequestResolve:
+    | ((request: SetRenderOptionsWorkerRequest) => void)
+    | undefined;
   private readonly messageListeners = new Set<EventListener>();
   private readonly errorListeners = new Set<EventListener>();
 
@@ -108,6 +113,10 @@ export class TestWorker {
       this.fileRequests.push(clonedRequest);
       this.fileRequestResolve?.(clonedRequest);
       this.fileRequestResolve = undefined;
+    } else if (clonedRequest.type === 'set-render-options') {
+      this.setRenderOptionsRequests.push(clonedRequest);
+      this.setRenderOptionsRequestResolve?.(clonedRequest);
+      this.setRenderOptionsRequestResolve = undefined;
     }
   }
 
@@ -147,6 +156,16 @@ export class TestWorker {
     });
   }
 
+  async waitForSetRenderOptionsRequest(): Promise<SetRenderOptionsWorkerRequest> {
+    const request = this.setRenderOptionsRequests.at(-1);
+    if (request != null) {
+      return request;
+    }
+    return new Promise<SetRenderOptionsWorkerRequest>((resolve) => {
+      this.setRenderOptionsRequestResolve = resolve;
+    });
+  }
+
   respond(response: WorkerResponse): void {
     for (const listener of this.messageListeners) {
       listener({ data: response } as MessageEvent<WorkerResponse>);
@@ -154,19 +173,28 @@ export class TestWorker {
   }
 
   emitError(error: Error): void {
-    const event = { error, message: error.message } as ErrorEvent;
+    this.emitErrorEvent({ error, message: error.message } as ErrorEvent);
+  }
+
+  // Send a worker error event to the manager's listeners.
+  emitErrorEvent(event: ErrorEvent | Event): void {
     for (const listener of this.errorListeners) {
       listener(event);
     }
   }
 }
 
+type TestPoolOptions = Pick<
+  WorkerPoolOptions,
+  | 'mainThreadMaxCharacters'
+  | 'onWorkerError'
+  | 'poolSize'
+  | 'workerInitializationTimeout'
+>;
+
 export function createInitializingManager(
   initOptions: Partial<WorkerInitializationRenderOptions> = {},
-  poolOptions: Pick<
-    WorkerPoolOptions,
-    'poolSize' | 'workerInitializationTimeout'
-  > = {}
+  poolOptions: TestPoolOptions = {}
 ): {
   initialization: Promise<void>;
   manager: WorkerPoolManager;
@@ -193,7 +221,6 @@ export function createInitializingManager(
     },
     {
       langs: [],
-      preferredHighlighter: 'shiki-js',
       theme: 'github-dark',
       ...initOptions,
     }
@@ -207,13 +234,16 @@ export function createInitializingManager(
 }
 
 export async function createInitializedManager(
-  initOptions: Partial<WorkerInitializationRenderOptions> = {}
+  initOptions: Partial<WorkerInitializationRenderOptions> = {},
+  poolOptions: TestPoolOptions = {}
 ): Promise<{
   manager: WorkerPoolManager;
   worker: TestWorker;
 }> {
-  const { initialization, manager, worker } =
-    createInitializingManager(initOptions);
+  const { initialization, manager, worker } = createInitializingManager(
+    initOptions,
+    poolOptions
+  );
   const request = await worker.waitForInitializeRequest();
   worker.respond({
     type: 'success',

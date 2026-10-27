@@ -30,7 +30,7 @@ interface ApplyViewerAnnotationsOptions<
 // item already has, and reports every injected annotation via onApplied.
 // Entries whose path is absent from the diff are skipped.
 export function applyViewerAnnotations<Entry, Metadata extends CommentMetadata>(
-  viewer: CodeViewHandle<CommentMetadata>,
+  viewer: CodeViewHandle<CommentMetadata, undefined>,
   pathToItemId: ReadonlyMap<string, string>,
   entries: Iterable<Entry>,
   options: ApplyViewerAnnotationsOptions<Entry, Metadata>

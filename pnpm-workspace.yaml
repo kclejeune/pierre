@@ -71,6 +71,7 @@ catalog:
   '@radix-ui/react-toggle-group': '1.1.11'
   '@radix-ui/react-tooltip': '1.2.8'
   '@radix-ui/react-use-controllable-state': '1.2.2'
+  '@redis/client': '6.3.0'
   '@shikijs/core': '4.4.1'
   '@shikijs/engine-javascript': '4.4.1'
   '@shikijs/themes': '4.4.1'

@@ -66,6 +66,9 @@ catalogs:
     '@radix-ui/react-use-controllable-state':
       specifier: 1.2.2
       version: 1.2.2
+    '@redis/client':
+      specifier: 6.3.0
+      version: 6.3.0
     '@tailwindcss/postcss':
       specifier: 4.1.13
       version: 4.1.13
@@ -400,6 +403,9 @@ importers:
       '@radix-ui/react-switch':
         specifier: 'catalog:'
         version: 1.2.6(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@redis/client':
+        specifier: 'catalog:'
+        version: 6.3.0
       '@vercel/analytics':
         specifier: 'catalog:'
         version: 2.0.1(next@16.3.3(@playwright/test@1.51.1)(@types/node@20.19.41)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)
@@ -3371,6 +3377,18 @@ packages:
 
   '@radix-ui/rect@1.1.1':
     resolution: {integrity: sha512-HPwpGIzkl28mWyZqG52jiqDJ12waP11Pa1lGoiyUkIEuMLBP0oeK/C89esbXrxsky5we7dfd8U58nm0SgAWpVw==}
+
+  '@redis/client@6.3.0':
+    resolution: {integrity: sha512-fHrjwGCBvAANGi+TuRuwKi83sIOzgHr8eh+Uf48w3fSX7Hhrz174NrWqfJhAC2vnN0d/tfaZpdr6+o6JC3QHwg==}
+    engines: {node: '>= 20.0.0'}
+    peerDependencies:
+      '@node-rs/xxhash': ^1.1.0
+      '@opentelemetry/api': '>=1 <2'
+    peerDependenciesMeta:
+      '@node-rs/xxhash':
+        optional: true
+      '@opentelemetry/api':
+        optional: true
 
   '@rolldown/binding-android-arm-eabi@1.2.15':
     resolution: {integrity: sha512-aLcgK9gIJ3YRvrrtfSBbRa27F5WrpiTaPulnFpsHPxpUHgFlSgnU4854MHwoRGEBhfRJDWCS2WQ7lIjskE9Olw==}
@@ -10908,6 +10926,8 @@ snapshots:
       '@types/react-dom': 19.2.3(@types/react@19.2.7)
 
   '@radix-ui/rect@1.1.1': {}
+
+  '@redis/client@6.3.0': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.15':
     optional: true

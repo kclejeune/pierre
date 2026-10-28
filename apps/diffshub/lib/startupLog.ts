@@ -6,11 +6,11 @@
 // later is omitted until it is listed here, so a new secret can never be
 // printed in the clear by default.
 
+import { validateDeploymentConfiguration } from './deploymentConfig';
 import {
   getGitHubEnvironment,
   isLoginRequired,
   isPATInputEnabled,
-  validateGitHubConfiguration,
 } from './githubEnvironment';
 import { readNonEmptyString } from './githubOAuthGrant';
 import { formatError } from './serverLog';
@@ -37,6 +37,8 @@ const CONFIG_VARIABLES: ConfigVariable[] = [
   { name: 'DIFFSHUB_REFRESH_TOKEN_MAX_TTL' },
   { name: 'DIFFSHUB_TOKEN_ENCRYPTION_KEY', secret: true },
   { name: 'DIFFSHUB_AVATAR_TOKEN', secret: true },
+  // Secret because the URL may embed a password.
+  { name: 'DIFFSHUB_REDIS_URL', secret: true },
   { name: 'DIFFSHUB_DEFAULT_LIGHT_THEME' },
   { name: 'DIFFSHUB_DEFAULT_DARK_THEME' },
   { name: 'NEXT_PUBLIC_WORKTREE_SLUG' },
@@ -57,7 +59,7 @@ function readConfigValue({ name, secret }: ConfigVariable): string | null {
 // raw values alone do not say what the instance will do. This is the resolved
 // answer: which instance it talks to and which credential policies are on.
 function readEffectiveConfig(): Record<string, unknown> {
-  validateGitHubConfiguration();
+  validateDeploymentConfiguration();
   const environment = getGitHubEnvironment();
   return {
     apiURL: environment.apiURL,

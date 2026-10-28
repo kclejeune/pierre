@@ -31,6 +31,13 @@ DIFFSHUB_GITHUB_CLIENT_ID = "Ov23liNSMB9Nj1jWUU3n"
 directory = ".open-next/assets"
 binding = "ASSETS"
 
+# Per-user preferences (never credentials) for /api/preferences. No id: Wrangler
+# provisions the namespace on first deploy and reuses it afterward, and
+# `next dev` / `wrangler dev` back it with a local Miniflare store. Remove this
+# block to disable server-side preferences.
+[[kv_namespaces]]
+binding = "DIFFSHUB_PREFERENCES"
+
 # OpenNext calls back into this Worker for ISR/revalidation work.
 [[services]]
 binding = "WORKER_SELF_REFERENCE"

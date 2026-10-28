@@ -24,9 +24,10 @@
 // wrap survives only to unwrap sessions issued before the key was set.
 
 import { readNonEmptyString } from './githubOAuthGrant';
+import { WRAPPED_REFRESH_TOKEN_PREFIX } from './tokenEnvelope';
 import { asRecord } from './untypedJson';
 
-const WRAP_PREFIX = 'dhr1';
+const WRAP_PREFIX = WRAPPED_REFRESH_TOKEN_PREFIX;
 
 const textEncoder = new TextEncoder();
 

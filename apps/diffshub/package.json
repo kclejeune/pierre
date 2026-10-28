@@ -15,6 +15,7 @@
     "@radix-ui/react-dropdown-menu": "catalog:",
     "@radix-ui/react-slot": "catalog:",
     "@radix-ui/react-switch": "catalog:",
+    "@redis/client": "catalog:",
     "@vercel/analytics": "catalog:",
     "@vercel/speed-insights": "catalog:",
     "babel-plugin-react-compiler": "catalog:",

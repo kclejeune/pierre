@@ -35,6 +35,7 @@ available. Changing `.env` only needs a server restart, not a rebuild.
 | `DIFFSHUB_REFRESH_TOKEN_MAX_TTL`                               | unset (GitHub's six months)                                | Maximum absolute session age, e.g. `86400`, `24h`, or `7d`: every viewer must complete a full GitHub reauthorization at least that often, however active they are. Server-enforced — refresh tokens leave the server wrapped and MAC'd with the original sign-in time (keyed by the client secret, so rotating the secret invalidates all outstanding sessions), and the refresh route rejects older sessions. `0` omits refresh tokens entirely, forcing reauthorization once each short-lived (8h) access token expires. Unset leaves GitHub's six-month inactivity window. Setting or changing the value signs existing sessions out once. Only meaningful for GitHub Apps with token expiration enabled.  |
 | `DIFFSHUB_TOKEN_ENCRYPTION_KEY`                                | unset (tokens stored in the clear)                         | Opt-in at-rest encryption of the credentials the browser stores: 32 base64-encoded bytes, e.g. `openssl rand -base64 32`. When set, OAuth access and refresh tokens leave the server sealed into AES-256-GCM envelopes, so localStorage (and its backups) holds only ciphertext GitHub never accepts directly; the API routes decrypt on arrival. Enabling or rotating the key signs out existing sessions whose credentials are bare or sealed under another key, forcing a fresh OAuth login. Manual PATs are incompatible with this policy.                                                                                                                                                                |
 | `DIFFSHUB_AVATAR_TOKEN`                                        | unset (avatars use the viewer's token)                     | Classic GitHub token used for nothing but GHES avatar lookups. GHES gates its avatar API on a classic OAuth scope (`read:user` is enough) and exposes no equivalent GitHub App permission, so a viewer signed in through a GitHub App cannot load avatars with their own token. Fine-grained PATs use the permission model and do not work either. Prefer a dedicated machine account, since classic scopes are bounded by what that account can already see. This setting requires `DIFFSHUB_TOKEN_ENCRYPTION_KEY`; DiffsHub only lends the shared credential to a verified, server-sealed session. Unset, blank, or rejected by the instance, avatars fall back to the viewer's token and then to initials. |
+| `DIFFSHUB_REDIS_URL`                                           | unset (`redis://valkey:6379` under docker compose)         | Redis or Valkey connection URL (`redis://` or `rediss://`) for server-side user preferences; see [User preferences](#user-preferences). Unset leaves the preferences API disabled unless a Workers KV binding is present.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `DIFFSHUB_DEFAULT_LIGHT_THEME` / `DIFFSHUB_DEFAULT_DARK_THEME` | `catppuccin-latte` / `one-dark-pro`                        | Theme names applied to viewers who have not picked a theme in the header menu, and the target of its reset action. Any light or dark theme from the picker works, e.g. `pierre-light-soft` / `pierre-dark-soft`. A name that is unknown or belongs to the other color scheme logs a warning and falls back to the default. Viewers' saved picks are unaffected.                                                                                                                                                                                                                                                                                                                                               |
 
 Every upstream request is made with the viewer's token — the one they signed in
@@ -136,6 +137,34 @@ docker compose logs -f diffshub | grep github_upstream_failure
 Query-string values are redacted, since avatar lookups carry an email address
 and redirected asset URLs carry signed download tokens. Credentials are never
 logged.
+
+### User preferences
+
+`/api/preferences` stores a small key/value map per GitHub user, so display
+preferences can follow a viewer across browsers. The backend is chosen at
+runtime:
+
+- **Redis or Valkey** when `DIFFSHUB_REDIS_URL` is set. `docker compose up`
+  starts a `valkey` service with append-only persistence and points DiffsHub at
+  it.
+- **Workers KV** on Cloudflare, through the `DIFFSHUB_PREFERENCES` binding in
+  `wrangler.toml`. Wrangler provisions the namespace on first deploy.
+- Neither: `GET` answers `{"enabled": false}` and the browser keeps its
+  localStorage-only behavior.
+
+The server identifies the caller by the numeric user id GitHub returns for their
+token, and stores values under that id and the instance URL. The token itself is
+never written to the store. Writes are refused when any key or string in the
+value looks like a credential: GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`,
+`ghr_`, `github_pat_`), DiffsHub sealed or wrapped tokens, JWTs, bearer headers,
+or the caller's own credential. Key names are not screened, so `authorFilter` is
+an ordinary preference. Each value is capped at 8 KiB, and each user at 100 keys
+and 64 KiB.
+
+`PUT {"preferences": {"key": value}}` merges into the stored map, with `null`
+deleting a key; `DELETE` removes everything stored for the caller. Concurrent
+writes are last-write-wins, and Workers KV reads may lag a write made from
+another region by up to a minute.
 
 ### Health check
 

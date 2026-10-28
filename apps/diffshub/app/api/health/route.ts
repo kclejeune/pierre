@@ -1,4 +1,4 @@
-import { validateGitHubConfiguration } from '@/lib/githubEnvironment';
+import { validateDeploymentConfiguration } from '@/lib/deploymentConfig';
 import { createJSONResponse } from '@/lib/jsonResponse';
 
 // Readiness probe for container orchestrators (ECS/ALB target groups, App
@@ -10,7 +10,7 @@ import { createJSONResponse } from '@/lib/jsonResponse';
 // seconds would be noise. Invalid configuration is already emitted at startup.
 export function GET() {
   try {
-    validateGitHubConfiguration();
+    validateDeploymentConfiguration();
   } catch {
     return createJSONResponse(
       { error: 'DiffsHub configuration is invalid.', status: 'error' },

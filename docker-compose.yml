@@ -26,6 +26,24 @@ services:
       DIFFSHUB_TOKEN_ENCRYPTION_KEY: ${DIFFSHUB_TOKEN_ENCRYPTION_KEY:-}
       DIFFSHUB_DEFAULT_LIGHT_THEME: ${DIFFSHUB_DEFAULT_LIGHT_THEME:-}
       DIFFSHUB_DEFAULT_DARK_THEME: ${DIFFSHUB_DEFAULT_DARK_THEME:-}
+      # Per-user preferences (never credentials) live in the valkey service
+      # below. Point this at an external Redis/Valkey instead if you have one.
+      DIFFSHUB_REDIS_URL: ${DIFFSHUB_REDIS_URL:-redis://valkey:6379}
     ports:
       - 127.0.0.1:${DIFFSHUB_PORT:-3692}:3000
+    depends_on:
+      - valkey
     restart: unless-stopped
+
+  # Preference store. Not published to the host; only diffshub reaches it on
+  # the compose network. Append-only persistence keeps preferences across
+  # restarts in the named volume.
+  valkey:
+    image: valkey/valkey:9-alpine
+    command: ['valkey-server', '--appendonly', 'yes']
+    volumes:
+      - valkey-data:/data
+    restart: unless-stopped
+
+volumes:
+  valkey-data:

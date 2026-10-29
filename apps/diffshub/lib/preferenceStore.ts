@@ -26,7 +26,30 @@ export interface PreferenceStore {
 // reconnecting in the background; this only bounds each request's wait.
 const REDIS_COMMAND_TIMEOUT_MS = 3000;
 
-let redisStorePromise: Promise<PreferenceStore> | undefined;
+// A connected Redis client behind the stall-and-timeout guard in
+// createRedisConnection. Shared by the preference store and the GitHub read
+// cache (lib/githubCacheStore), so one process holds one connection.
+export interface RedisConnection {
+  run<T>(command: (client: RedisClient) => Promise<T>): Promise<T>;
+}
+
+// The commands the stores issue, so callers do not depend on the client
+// library's generic types.
+export interface RedisClient {
+  del(key: string): Promise<unknown>;
+  eval(
+    script: string,
+    options: { arguments: string[]; keys: string[] }
+  ): Promise<unknown>;
+  evalSha(
+    sha1: string,
+    options: { arguments: string[]; keys: string[] }
+  ): Promise<unknown>;
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string): Promise<unknown>;
+}
+
+let redisConnectionPromise: Promise<RedisConnection> | undefined;
 let storeOverride: { store: PreferenceStore | undefined } | undefined;
 
 // Lets tests substitute an in-memory store (or force "disabled" with
@@ -44,14 +67,33 @@ export async function getPreferenceStore(): Promise<
   if (storeOverride != null) {
     return storeOverride.store;
   }
-  const redisURL = getRedisURL();
-  if (redisURL != null) {
-    redisStorePromise ??= createRedisStore(redisURL, () => {
-      redisStorePromise = undefined;
-    });
-    return redisStorePromise;
+  const connection = getRedisConnection();
+  if (connection != null) {
+    const { run } = await connection;
+    return {
+      async delete(key) {
+        await run((client) => client.del(key));
+      },
+      get: (key) => run((client) => client.get(key)),
+      async put(key, value) {
+        await run((client) => client.set(key, value));
+      },
+    };
   }
   return await readCloudflareKVBinding();
+}
+
+// The process's Redis connection when DIFFSHUB_REDIS_URL is set, created on
+// first use; undefined otherwise.
+export function getRedisConnection(): Promise<RedisConnection> | undefined {
+  const redisURL = getRedisURL();
+  if (redisURL == null) {
+    return undefined;
+  }
+  redisConnectionPromise ??= createRedisConnection(redisURL, () => {
+    redisConnectionPromise = undefined;
+  });
+  return redisConnectionPromise;
 }
 
 // Connection URL for the Redis/Valkey store from DIFFSHUB_REDIS_URL, e.g.
@@ -101,10 +143,10 @@ export function validatePreferenceStoreConfiguration(): void {
 // never opens a socket. The offline queue is disabled: while Redis is down,
 // commands fail immediately instead of piling up behind a reconnect. onBroken
 // runs once if the client is torn down after a stall (see run).
-async function createRedisStore(
+async function createRedisConnection(
   url: string,
   onBroken: () => void
-): Promise<PreferenceStore> {
+): Promise<RedisConnection> {
   const { createClient } = await import('@redis/client');
   const client = createClient({
     disableOfflineQueue: true,
@@ -145,12 +187,14 @@ async function createRedisStore(
   // reports ready, and later commands would queue behind the stalled ones. The
   // client is destroyed, rejecting everything pending, and the next request
   // builds a fresh one.
-  async function run<T>(command: () => Promise<T>): Promise<T> {
+  async function run<T>(
+    command: (connected: RedisClient) => Promise<T>
+  ): Promise<T> {
     try {
       if (!client.isReady) {
         await withTimeout(firstConnect);
       }
-      return await withTimeout(command());
+      return await withTimeout(command(client));
     } catch (error) {
       if (error instanceof StoreTimeoutError && connected && client.isOpen) {
         client.destroy();
@@ -160,24 +204,19 @@ async function createRedisStore(
     }
   }
 
-  return {
-    async delete(key) {
-      await run(() => client.del(key));
-    },
-    get: (key) => run(() => client.get(key)),
-    async put(key, value) {
-      await run(() => client.set(key, value));
-    },
-  };
+  return { run };
 }
 
 // The KV binding, or undefined outside a Worker (Node standalone, tests) or
-// when wrangler.toml does not declare it. Sync mode only reads the context the
+// when wrangler.toml does not declare it. Exported for the GitHub read cache,
+// which shares the namespace under its own key prefix. Sync mode only reads the context the
 // Worker entrypoint (or initOpenNextCloudflareForDev under `next dev`) already
 // installed, and throws when there is none. Async mode is avoided on purpose:
 // on Node it would start a Wrangler platform proxy and back production
 // preferences with a local Miniflare store.
-async function readCloudflareKVBinding(): Promise<PreferenceStore | undefined> {
+export async function readCloudflareKVBinding(): Promise<
+  PreferenceStore | undefined
+> {
   try {
     const { getCloudflareContext } = await import('@opennextjs/cloudflare');
     const env = getCloudflareContext().env as Record<string, unknown>;

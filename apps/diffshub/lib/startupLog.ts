@@ -7,8 +7,10 @@
 // printed in the clear by default.
 
 import { validateDeploymentConfiguration } from './deploymentConfig';
+import { getGitHubCacheLimits } from './githubCacheStore';
 import {
   getGitHubEnvironment,
+  getTokenEncryptionKey,
   isLoginRequired,
   isPATInputEnabled,
 } from './githubEnvironment';
@@ -39,6 +41,10 @@ const CONFIG_VARIABLES: ConfigVariable[] = [
   { name: 'DIFFSHUB_AVATAR_TOKEN', secret: true },
   // Secret because the URL may embed a password.
   { name: 'DIFFSHUB_REDIS_URL', secret: true },
+  { name: 'DIFFSHUB_GITHUB_CACHE_TTL' },
+  { name: 'DIFFSHUB_GITHUB_CACHE_MAX_BYTES' },
+  { name: 'DIFFSHUB_GITHUB_CACHE_MAX_ENTRY_BYTES' },
+  { name: 'DIFFSHUB_GITHUB_CACHE_MAX_ENTRIES' },
   { name: 'DIFFSHUB_DEFAULT_LIGHT_THEME' },
   { name: 'DIFFSHUB_DEFAULT_DARK_THEME' },
   { name: 'NEXT_PUBLIC_WORKTREE_SLUG' },
@@ -61,8 +67,15 @@ function readConfigValue({ name, secret }: ConfigVariable): string | null {
 function readEffectiveConfig(): Record<string, unknown> {
   validateDeploymentConfiguration();
   const environment = getGitHubEnvironment();
+  const cacheLimits = getGitHubCacheLimits();
   return {
     apiURL: environment.apiURL,
+    // Limits for the GitHub read cache (null when DIFFSHUB_GITHUB_CACHE_TTL=0);
+    // it is active only where a Redis URL or KV binding provides a store.
+    githubCache:
+      cacheLimits == null
+        ? null
+        : { ...cacheLimits, encrypted: getTokenEncryptionKey() != null },
     isGitHubDotCom: environment.isGitHubDotCom,
     patInputEnabled: isPATInputEnabled(),
     rawURL: environment.rawURL,

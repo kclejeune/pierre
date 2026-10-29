@@ -6,6 +6,7 @@ import {
   getGitHubEnvironment,
   type GitHubEnvironment,
 } from '@/lib/githubEnvironment';
+import { githubFetch } from '@/lib/githubFetch';
 import {
   createGitHubFailureResponse,
   createUnreachableResponse,
@@ -36,7 +37,7 @@ function fetchRepoPage(
   token: string,
   page: number
 ): Promise<Response> {
-  return fetch(
+  return githubFetch(
     createGitHubAPIURL(environment, '/user/repos', {
       affiliation: 'owner,collaborator,organization_member',
       page: String(page),
@@ -104,11 +105,11 @@ async function handleGET(request: NextRequest) {
     // The first repos page rides in the same round-trip wave as the viewer
     // and org listings; only accounts past one page need a second wave.
     const [viewerResponse, orgsResponse, firstRepoPage] = await Promise.all([
-      fetch(createGitHubAPIURL(environment, '/user'), {
+      githubFetch(createGitHubAPIURL(environment, '/user'), {
         cache: 'no-store',
         headers: createGitHubJSONHeaders(token),
       }),
-      fetch(
+      githubFetch(
         createGitHubAPIURL(environment, '/user/orgs', { per_page: '100' }),
         { cache: 'no-store', headers: createGitHubJSONHeaders(token) }
       ),

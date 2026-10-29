@@ -16,6 +16,7 @@ import {
   createGitHubJSONHeaders,
   getGitHubEnvironment,
 } from './githubEnvironment';
+import { githubFetch } from './githubFetch';
 import { createJSONResponse } from './jsonResponse';
 import {
   type RepoFileData,
@@ -178,7 +179,7 @@ export async function loadRepoBrowserFile(
   const response = await fetchGitHubFileContents(
     { ...repo, ref },
     file,
-    fetch,
+    githubFetch,
     options.token == null
       ? {}
       : { token: options.token, tokenFromRequest: true }
@@ -305,7 +306,7 @@ async function resolveCommitSha(
   // Branch, tag, and sha names all resolve through the commits API. The sha
   // media type returns the bare commit sha; the default JSON representation
   // would carry the whole patch payload.
-  const response = await fetch(
+  const response = await githubFetch(
     createGitHubAPIURL(
       getGitHubEnvironment(),
       repoPath(repo, `/commits/${encodeURLSegment(ref)}`)

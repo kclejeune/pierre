@@ -364,44 +364,62 @@ function ReviewUIInner({
     viewerKey,
     viewerRef,
   });
-  // Conflict detection: once the pull's diff has loaded, ask the server
-  // whether the branch conflicts with its base. A failed check keeps the
-  // resolve affordance hidden and surfaces GitHub's explanation in a toast.
+  // Conflict detection is lazy: GitHub's `mergeable` flag from pull-info
+  // decides whether the Conflicts button shows (when pull-info caught GitHub
+  // mid-computation, usePullInfo re-asks with `waitMergeable=1` and folds the
+  // answer in), and the merge itself, which fetches every both-changed file,
+  // only runs once the viewer opens the resolver.
+  const pullMergeable = pullInfo?.details?.mergeable;
+  const pullIsOpen = pullInfo?.details?.state === 'open';
   const [conflicts, setConflicts] = useState<PullConflictsResult | null>(null);
   const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
   useEffect(() => {
     setConflicts(null);
     setConflictResolverOpen(false);
-    if (pullRequest == null || !hasGitHubToken || loadState !== 'ready') {
+  }, [githubTokenVersion, loadState, pullMergeable, pullRequest]);
+  // Opening the resolver computes the merge on first open. A failure, or a
+  // pull that no longer conflicts, closes it again with a toast; closing it
+  // mid-request aborts the request.
+  const conflictsLoading = conflictResolverOpen && conflicts == null;
+  useEffect(() => {
+    if (!conflictsLoading || pullRequest == null) {
       return;
     }
     const controller = new AbortController();
     fetchPullConflicts(pullRequest, getGitHubToken(), controller.signal)
-      .then(setConflicts)
-      .catch((error: unknown) => {
-        // Navigating away aborts this best-effort check and should stay
-        // silent. Real failures carry the API route's actionable explanation,
-        // such as the 300-file merge limit, so surface those to the viewer.
-        if (!controller.signal.aborted) {
-          toast.error(
-            error instanceof Error
-              ? error.message
-              : 'Checking for merge conflicts failed.',
-            { id: 'pull-conflicts-error' }
-          );
+      .then((result) => {
+        setConflicts(result);
+        if (!result.conflicted) {
+          setConflictResolverOpen(false);
+          toast.success('This pull request no longer has merge conflicts.');
         }
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setConflictResolverOpen(false);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : 'Checking for merge conflicts failed.',
+          { id: 'pull-conflicts-error' }
+        );
       });
     return () => controller.abort();
-  }, [
-    getGitHubToken,
-    githubTokenVersion,
-    hasGitHubToken,
-    loadState,
-    pullRequest,
-  ]);
+  }, [conflictsLoading, getGitHubToken, pullRequest]);
+  const showConflicts =
+    hasGitHubToken &&
+    pullIsOpen &&
+    pullMergeable === false &&
+    conflicts?.conflicted !== false;
+  const conflictedFileCount =
+    conflicts?.conflicted === true
+      ? conflicts.files.length + conflicts.unsupported.length
+      : undefined;
   // Close and reload — used both when the merge commit lands and when a
   // branch tip moved mid-resolution: either way the loaded diff is stale, and
-  // the detection effect refires on the loadState cycle with fresh tips.
+  // the next open recomputes the merge against fresh tips.
   const handleConflictsSettled = useCallback(() => {
     setConflictResolverOpen(false);
     setConflicts(null);
@@ -925,11 +943,10 @@ function ReviewUIInner({
                   pullInfo={pullInfo}
                   pullRequest={pullRequest}
                 />
-                {conflicts?.conflicted === true && (
+                {showConflicts && (
                   <PullConflictControl
-                    conflictedFileCount={
-                      conflicts.files.length + conflicts.unsupported.length
-                    }
+                    conflictedFileCount={conflictedFileCount}
+                    loading={conflictsLoading}
                     onOpen={() => setConflictResolverOpen(true)}
                   />
                 )}

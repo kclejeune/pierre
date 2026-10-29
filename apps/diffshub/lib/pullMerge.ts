@@ -1,13 +1,24 @@
-import { diff3Merge } from 'node-diff3';
+import { diff3Merge } from './diff3';
 
 // The pure core of merging a pull request's base branch into its head branch
-// server-side. A correct merge commit's tree is the HEAD tree overridden at
-// every path where the base branch diverged from the merge base:
+// server-side. The merge commit's tree can be built from either tip:
 //
-//   unchanged on base  → head's version wins (covered by base_tree = head)
-//   changed base-only  → base's version wins (reuse base's existing blob)
-//   removed base-only  → deleted (null-sha tree entry)
-//   changed both sides → three-way merged content (auto or user-resolved)
+//   onto 'head': the HEAD tree overridden at every path the base branch
+//                changed (needs base's complete change list)
+//   onto 'base': the BASE tree overridden at every path the pull changed
+//                (needs base's status only at the pull's paths)
+//
+// Either way, per path of the incoming side (the one whose changes become
+// tree entries):
+//
+//   untouched by the existing side → the incoming version wins (reuse its
+//                                    blob, or delete when it was removed)
+//   changed on both sides          → three-way merged content
+//   untouched by the incoming side → the existing tree already has it
+//
+// Both directions yield the same tree. The route picks the one with fewer
+// incoming changes, since every incoming change costs a tree lookup and a
+// tree entry when committing.
 //
 // Renames touching contested paths, delete/modify pairs, type changes, and
 // binary conflicts are reported as unsupported and refuse the merge loudly —
@@ -26,64 +37,109 @@ export type ChangeStatus =
 export interface CompareFile {
   filename: string;
   previousFilename?: string;
+  // The file's blob SHA after the change (absent for removals), which lets
+  // its contents be read and cached by SHA.
+  sha?: string;
   status: ChangeStatus;
 }
 
 export type MergeFilePlan =
-  // Base-only add/modify: point the merge tree at base's existing blob (no
-  // content read — binary-safe, mode preserved from base's tree).
+  // An incoming-only add/modify: point the merge tree at that branch's
+  // existing blob (no content read — binary-safe, mode preserved from its
+  // tree). take-base when planning onto head, take-head onto base.
   | { kind: 'take-base'; path: string }
-  // Base-only removal: null-sha tree entry.
+  | { kind: 'take-head'; path: string }
+  // Removal on the incoming side only: null-sha tree entry.
   | { kind: 'delete'; path: string }
   // Changed on both sides: needs diff3 (clean auto-merge or user resolution).
-  // addAdd marks add/add pairs, whose merge base is the empty file.
-  | { kind: 'merge'; path: string; addAdd: boolean }
+  // addAdd marks add/add pairs, whose merge base is the empty file. The blob
+  // SHAs are each tip's version when the change lists carried them.
+  | {
+      kind: 'merge';
+      path: string;
+      addAdd: boolean;
+      baseBlob?: string;
+      headBlob?: string;
+    }
   | { kind: 'unsupported'; path: string; reason: string };
 
 export interface MergeInputs {
-  // compare(mergeBase → base tip).files
+  // compare(mergeBase → base tip).files. When planning onto base, only
+  // entries at the pull's paths (see mergePaths) matter.
   baseChanges: readonly CompareFile[];
   // compare(mergeBase → head tip).files
   headChanges: readonly CompareFile[];
 }
 
-export function planMerge({
-  baseChanges,
-  headChanges,
-}: MergeInputs): MergeFilePlan[] {
-  // Every path the head side touched, including rename sources: a base
-  // change at any of these paths is contested.
-  const headTouched = new Map<string, ChangeStatus>();
-  for (const change of headChanges) {
-    headTouched.set(change.filename, change.status);
-    if (change.previousFilename != null) {
-      // A rename source was effectively removed on the head side.
-      headTouched.set(change.previousFilename, 'removed');
+// Which branch's tree the merge commit starts from.
+export type MergeOnto = 'base' | 'head';
+
+// Every path a change list touches, rename and copy sources included: the
+// paths where base's status decides a plan onto base.
+export function mergePaths(changes: readonly CompareFile[]): string[] {
+  return changes.flatMap((change) =>
+    change.previousFilename == null
+      ? [change.filename]
+      : [change.filename, change.previousFilename]
+  );
+}
+
+const SIDES = {
+  base: { label: 'the base branch', take: 'take-base' },
+  head: { label: 'the pull request', take: 'take-head' },
+} as const;
+
+export function planMerge(
+  { baseChanges, headChanges }: MergeInputs,
+  onto: MergeOnto
+): MergeFilePlan[] {
+  const base = { ...SIDES.base, changes: baseChanges };
+  const head = { ...SIDES.head, changes: headChanges };
+  const [incoming, existing] = onto === 'head' ? [base, head] : [head, base];
+  const incomingSubject = capitalize(incoming.label);
+  const existingSubject = capitalize(existing.label);
+
+  // Every path the existing side touched, including rename sources: an
+  // incoming change at any of these paths is contested. A rename source is
+  // kept apart from a plain removal so an incoming delete of it is still a
+  // rename/delete conflict; a copy leaves its source in place and does not
+  // mark it at all.
+  const existingTouched = new Map<string, ChangeStatus | 'renamed-away'>();
+  const existingByPath = new Map<string, CompareFile>();
+  for (const change of existing.changes) {
+    existingTouched.set(change.filename, change.status);
+    existingByPath.set(change.filename, change);
+    if (change.status === 'renamed' && change.previousFilename != null) {
+      existingTouched.set(change.previousFilename, 'renamed-away');
     }
   }
 
   const plans: MergeFilePlan[] = [];
-  for (const change of baseChanges) {
+  for (const change of incoming.changes) {
     const path = change.filename;
-    const headStatus = headTouched.get(path);
+    const existingStatus = existingTouched.get(path);
+    const refuse = (why: string) =>
+      plans.push({
+        kind: 'unsupported',
+        path,
+        reason: `${why} — resolve with git locally.`,
+      });
 
     if (change.status === 'renamed' || change.status === 'copied') {
       const source = change.previousFilename;
       const sourceContested =
         source != null &&
-        headTouched.has(source) &&
+        existingTouched.has(source) &&
         change.status === 'renamed';
-      if (headStatus != null || sourceContested) {
-        plans.push({
-          kind: 'unsupported',
-          path,
-          reason: `The base branch ${change.status} this file and the pull request also touches it — resolve with git locally.`,
-        });
+      if (existingStatus != null || sourceContested) {
+        refuse(
+          `${incomingSubject} ${change.status} this file and ${existing.label} also touches it`
+        );
         continue;
       }
-      // An uncontested base-side rename/copy is just an add at the new path
-      // (plus a delete of the source for renames).
-      plans.push({ kind: 'take-base', path });
+      // An uncontested rename/copy is just an add at the new path (plus a
+      // delete of the source for renames).
+      plans.push({ kind: incoming.take, path });
       if (change.status === 'renamed' && source != null) {
         plans.push({ kind: 'delete', path: source });
       }
@@ -91,42 +147,53 @@ export function planMerge({
     }
 
     if (change.status === 'removed') {
-      if (headStatus == null) {
+      if (existingStatus == null) {
         plans.push({ kind: 'delete', path });
-      } else if (headStatus === 'removed') {
-        // Deleted on both sides — the head tree already lacks it.
+      } else if (existingStatus === 'removed') {
+        // Deleted on both sides — the existing tree already lacks it.
+      } else if (existingStatus === 'renamed-away') {
+        refuse(
+          `${existingSubject} renamed this file but ${incoming.label} deleted it`
+        );
       } else {
-        plans.push({
-          kind: 'unsupported',
-          path,
-          reason:
-            'The base branch deleted this file but the pull request modified it — resolve with git locally.',
-        });
+        refuse(
+          `${incomingSubject} deleted this file but ${existing.label} modified it`
+        );
       }
       continue;
     }
 
     if (change.status === 'added' || change.status === 'modified') {
-      if (headStatus == null) {
-        plans.push({ kind: 'take-base', path });
-      } else if (headStatus === 'removed') {
-        plans.push({
-          kind: 'unsupported',
-          path,
-          reason:
-            'The pull request deleted this file but the base branch modified it — resolve with git locally.',
-        });
-      } else if (headStatus === 'renamed' || headStatus === 'copied') {
-        plans.push({
-          kind: 'unsupported',
-          path,
-          reason: `The pull request ${headStatus} this file while the base branch changed it — resolve with git locally.`,
-        });
+      if (existingStatus == null) {
+        plans.push({ kind: incoming.take, path });
+      } else if (existingStatus === 'removed') {
+        refuse(
+          `${existingSubject} deleted this file but ${incoming.label} modified it`
+        );
+      } else if (existingStatus === 'renamed-away') {
+        refuse(
+          `${existingSubject} renamed this file while ${incoming.label} changed it`
+        );
+      } else if (existingStatus === 'renamed' || existingStatus === 'copied') {
+        refuse(
+          `${existingSubject} ${existingStatus} this file while ${incoming.label} changed it`
+        );
+      } else if (existingStatus === 'changed') {
+        // A text merge would write the incoming side's mode and drop the
+        // existing side's type change (e.g. replace its symlink).
+        refuse(`The file type changed on ${existing.label}`);
       } else {
+        const existingSha = existingByPath.get(path)?.sha;
+        const [baseBlob, headBlob] =
+          onto === 'head'
+            ? [change.sha, existingSha]
+            : [existingSha, change.sha];
         plans.push({
           kind: 'merge',
           path,
           addAdd: change.status === 'added',
+          ...(baseBlob == null ? {} : { baseBlob }),
+          ...(headBlob == null ? {} : { headBlob }),
         });
       }
       continue;
@@ -134,21 +201,20 @@ export function planMerge({
 
     if (change.status === 'changed') {
       // File-type changes (e.g. file ↔ symlink) are too subtle to merge here.
-      if (headStatus == null) {
-        plans.push({ kind: 'take-base', path });
+      if (existingStatus == null) {
+        plans.push({ kind: incoming.take, path });
       } else {
-        plans.push({
-          kind: 'unsupported',
-          path,
-          reason:
-            'The file type changed on the base branch — resolve with git locally.',
-        });
+        refuse(`The file type changed on ${incoming.label}`);
       }
       continue;
     }
     // 'unchanged' entries need nothing.
   }
   return plans;
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 export interface ConflictMarkerLabels {
@@ -179,11 +245,8 @@ export function renderConflictMarkers(
   const lines: string[] = [];
   let conflictCount = 0;
   for (const region of regions) {
-    if (region.ok != null) {
+    if ('ok' in region) {
       lines.push(...region.ok);
-      continue;
-    }
-    if (region.conflict == null) {
       continue;
     }
     conflictCount += 1;

@@ -29,6 +29,12 @@ services:
       # Per-user preferences (never credentials) live in the valkey service
       # below. Point this at an external Redis/Valkey instead if you have one.
       DIFFSHUB_REDIS_URL: ${DIFFSHUB_REDIS_URL:-redis://valkey:6379}
+      # Cache of immutable GitHub reads for merge-conflict resolution, stored
+      # in the same Redis/Valkey; see the README's GitHub read cache section.
+      DIFFSHUB_GITHUB_CACHE_TTL: ${DIFFSHUB_GITHUB_CACHE_TTL:-}
+      DIFFSHUB_GITHUB_CACHE_MAX_BYTES: ${DIFFSHUB_GITHUB_CACHE_MAX_BYTES:-}
+      DIFFSHUB_GITHUB_CACHE_MAX_ENTRY_BYTES: ${DIFFSHUB_GITHUB_CACHE_MAX_ENTRY_BYTES:-}
+      DIFFSHUB_GITHUB_CACHE_MAX_ENTRIES: ${DIFFSHUB_GITHUB_CACHE_MAX_ENTRIES:-}
     ports:
       - 127.0.0.1:${DIFFSHUB_PORT:-3692}:3000
     depends_on:

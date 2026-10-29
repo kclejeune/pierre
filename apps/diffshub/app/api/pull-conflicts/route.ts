@@ -7,28 +7,27 @@ import {
   createTree,
   createTreeEntryResolver,
   fetchBranchTipSha,
-  fetchGitHubJSON,
   fetchPullData,
-  getCommitTreeSha,
   GitHubCommitError,
   type GitRepoRef,
   type GitTreeWrite,
+  type LeafEntry,
   parsePullRefs,
+  pollPullMergeable,
   type PullRefs,
+  readPullMergeable,
   updateRef,
   waitForPullHead,
 } from '@/lib/githubCommitServer';
-import { createGitHubRawAPIHeaders } from '@/lib/githubDiffFileServer';
-import { encodePath, encodeURLSegment } from '@/lib/githubDiffSource';
-import {
-  createGitHubAPIURL,
-  getGitHubEnvironment,
-  rejectTokenlessRequestWhenLoginRequired,
-} from '@/lib/githubEnvironment';
+import { isSameGitHubRepo } from '@/lib/githubDiffSource';
+import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
+import { createGitHubReads, type GitHubReads } from '@/lib/githubReadCache';
+import { diffTrees } from '@/lib/gitTreeDiff';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import {
-  type CompareFile,
   isBinaryContent,
+  type MergeOnto,
+  mergePaths,
   planMerge,
   renderConflictMarkers,
 } from '@/lib/pullMerge';
@@ -37,23 +36,37 @@ import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
 // Merge-conflict resolution for pull requests.
 //
-// GET detects whether the pull conflicts with its base and, if so, computes
-// the three-way merge server-side: merge base via the compare API, diff3 per
-// both-changed file, and git-style conflict markers for the files needing a
-// human.
+// GET computes the three-way merge server-side: merge base via the compare
+// API, diff3 per both-changed file, and git-style conflict markers for the
+// files needing a human. The client only calls it when the viewer opens the
+// resolver.
 //
 // POST commits the merge: it re-verifies both branch tips, re-runs the merge
 // plan (client-resolved contents are accepted only for genuinely conflicted
 // paths; everything else is recomputed server-side), and writes a two-parent
 // merge commit to the head branch. Requires the requester's own token.
+//
+// Immutable reads (compares between SHAs, trees, file contents) go through
+// lib/githubReadCache, and every GitHub call through lib/githubFetch's
+// per-credential concurrency limit.
 
-// GitHub caps compare-API file listings at 300 entries; beyond that the
-// merge plan would be silently incomplete, so the route refuses instead.
-const COMPARE_FILES_CAP = 300;
+const SYMLINK_MODE = '120000';
+
+const SUBMODULE_REASON =
+  'This submodule changed on both branches — resolve with git locally.';
 
 type PullMergeContext = PullRefs & {
+  baseTreeSha: string;
+  headTreeSha: string;
   mergeBaseSha: string;
+  // Which branch's tree the merge commit starts from; see planMerge.
+  onto: MergeOnto;
   plans: ReturnType<typeof planMerge>;
+  reads: GitHubReads;
+  // Entry lookups in each commit's tree, sharing planning's tree listings.
+  resolveBaseEntry: (path: string) => Promise<LeafEntry | null>;
+  resolveHeadEntry: (path: string) => Promise<LeafEntry | null>;
+  resolveMergeBaseEntry: (path: string) => Promise<LeafEntry | null>;
 };
 
 async function handleGET(request: NextRequest) {
@@ -76,13 +89,14 @@ async function handleGET(request: NextRequest) {
 
   try {
     const repoRef = { owner, repo };
-    const data = await fetchPullDataWithMergeable(repoRef, pull, token);
-    if (data.mergeable !== false) {
+    const payload = await pollPullMergeable(repoRef, pull, token);
+    if (readPullMergeable(payload) !== false) {
       return createJSONResponse({ conflicted: false });
     }
+    // Reading the pull with this token already proved access to its repo.
     const context = await buildMergeContext(
-      await resolveLiveBaseTip(parsePullRefs(data.payload, repoRef), token),
-      token
+      await resolveLiveBaseTip(parsePullRefs(payload, repoRef), token),
+      createGitHubReads(token, { accessibleRepos: [repoRef] })
     );
     const files: {
       conflictCount: number;
@@ -92,11 +106,13 @@ async function handleGET(request: NextRequest) {
     const autoMerged: string[] = [];
     const unsupported: { path: string; reason: string }[] = [];
     // diff3 each both-changed file concurrently — every plan needs its own
-    // contents fetches, so serializing them would stack GitHub round trips.
+    // tree lookups and blob reads, so serializing them would stack GitHub
+    // round trips.
+    // githubFetch bounds how many of those run at once.
     const merged = await Promise.all(
       context.plans.map(async (plan) =>
         plan.kind === 'merge'
-          ? ([plan, await runDiff3ForPlan(context, plan, token)] as const)
+          ? ([plan, await runDiff3ForPlan(context, plan)] as const)
           : ([plan, undefined] as const)
       )
     );
@@ -108,9 +124,11 @@ async function handleGET(request: NextRequest) {
           path: plan.path,
           reason: 'Binary files cannot be merged in DiffsHub.',
         });
-      } else if (result != null && result.conflictCount === 0) {
+      } else if (result?.kind === 'submodule') {
+        unsupported.push({ path: plan.path, reason: SUBMODULE_REASON });
+      } else if (result?.kind === 'text' && result.conflictCount === 0) {
         autoMerged.push(plan.path);
-      } else if (result != null) {
+      } else if (result?.kind === 'text') {
         files.push({
           conflictCount: result.conflictCount,
           markedContents: result.text,
@@ -203,7 +221,10 @@ async function handlePOST(request: NextRequest) {
         { status: 409 }
       );
     }
-    const context = await buildMergeContext(refs, token);
+    const context = await buildMergeContext(
+      refs,
+      createGitHubReads(token, { accessibleRepos: [repoRef] })
+    );
 
     const unsupported = context.plans.filter(
       (plan) => plan.kind === 'unsupported'
@@ -223,15 +244,10 @@ async function handlePOST(request: NextRequest) {
     const resolvedByPath = new Map(
       body.resolvedFiles.map((file) => [file.path, file.contents])
     );
-    const [headTreeSha, baseTreeSha] = await Promise.all([
-      getCommitTreeSha(context.headRepo, token, context.headSha),
-      getCommitTreeSha(context.baseRepo, token, context.baseSha),
-    ]);
-    const resolveHeadEntry = createTreeEntryResolver(context.headRepo, token);
-    const resolveBaseEntry = createTreeEntryResolver(context.baseRepo, token);
+    const { resolveBaseEntry, resolveHeadEntry } = context;
 
-    // Each plan's tree entry is independent (the entry resolvers memoize
-    // directory listings, so parallel walks stay deduplicated). A merge plan
+    // Each plan's tree entry is independent (the entry resolvers share the
+    // planning listers, so parallel walks stay deduplicated). A merge plan
     // resolves to null when its diff3 recompute still conflicts — the
     // client's view was incomplete, so the whole commit refuses.
     const entries = await Promise.all(
@@ -239,31 +255,48 @@ async function handlePOST(request: NextRequest) {
         if (plan.kind === 'delete') {
           return { mode: '100644', path: plan.path, sha: null };
         }
-        if (plan.kind === 'take-base') {
-          const entry = await resolveBaseEntry(baseTreeSha, plan.path);
+        if (plan.kind === 'take-base' || plan.kind === 'take-head') {
+          const fromBase = plan.kind === 'take-base';
+          const entry = await (fromBase ? resolveBaseEntry : resolveHeadEntry)(
+            plan.path
+          );
           if (entry == null) {
             throw new GitHubCommitError(
-              `The base branch entry for ${plan.path} could not be resolved.`,
+              `The ${fromBase ? 'base' : 'head'} branch entry for ${plan.path} could not be resolved.`,
               'github',
               502
             );
           }
-          return { mode: entry.mode, path: plan.path, sha: entry.sha };
+          // Submodule gitlinks carry over like files, as type 'commit'.
+          return {
+            mode: entry.mode,
+            path: plan.path,
+            sha: entry.sha,
+            type: entry.type,
+          };
         }
         if (plan.kind !== 'merge') {
           return null;
         }
         const resolved = resolvedByPath.get(plan.path);
-        const [existing, contents] = await Promise.all([
-          resolveHeadEntry(headTreeSha, plan.path),
-          resolved != null
-            ? Promise.resolve(resolved)
-            : runDiff3ForPlan(context, plan, token).then((merged) =>
-                merged.kind === 'binary' || merged.conflictCount > 0
-                  ? null
-                  : merged.text
-              ),
+        const [existing, merged] = await Promise.all([
+          resolveHeadEntry(plan.path),
+          resolved == null ? runDiff3ForPlan(context, plan) : undefined,
         ]);
+        // GET reports submodules as unsupported; this also refuses
+        // client-supplied text for one.
+        if (existing?.type === 'commit' || merged?.kind === 'submodule') {
+          throw new GitHubCommitError(
+            `${plan.path}: ${SUBMODULE_REASON}`,
+            'github',
+            409
+          );
+        }
+        const contents =
+          resolved ??
+          (merged?.kind === 'text' && merged.conflictCount === 0
+            ? merged.text
+            : null);
         if (contents == null) {
           return null;
         }
@@ -290,7 +323,7 @@ async function handlePOST(request: NextRequest) {
     const treeSha = await createTree(
       context.headRepo,
       token,
-      headTreeSha,
+      context.onto === 'head' ? context.headTreeSha : context.baseTreeSha,
       entries.filter((entry) => entry != null)
     );
     const commitSha = await createCommit(context.headRepo, token, {
@@ -312,28 +345,6 @@ async function handlePOST(request: NextRequest) {
   }
 }
 
-// GitHub computes mergeability lazily; a null `mergeable` means "still
-// computing", so the GET detection path retries briefly before reporting.
-// The POST path skips this — it never reads `mergeable`.
-async function fetchPullDataWithMergeable(
-  repo: GitRepoRef,
-  pull: string,
-  token: string | undefined
-): Promise<{ mergeable: boolean | null; payload: unknown }> {
-  for (let attempt = 0; ; attempt += 1) {
-    const payload = await fetchPullData(repo, pull, token);
-    const raw =
-      typeof payload === 'object' && payload != null
-        ? (payload as Record<string, unknown>).mergeable
-        : undefined;
-    const mergeable = typeof raw === 'boolean' ? raw : null;
-    if (mergeable != null || attempt >= 2) {
-      return { mergeable, payload };
-    }
-    await new Promise((resolve) => setTimeout(resolve, 800));
-  }
-}
-
 // Swaps the pull payload's snapshot `base.sha` for the branch's live tip;
 // see fetchBranchTipSha for why the payload value cannot be trusted.
 async function resolveLiveBaseTip(
@@ -346,88 +357,151 @@ async function resolveLiveBaseTip(
   };
 }
 
+// Plans the merge with as few GitHub requests as the branches allow:
+//
+// 1. The tip compare (base...head) yields the merge base, both root trees, and
+//    the pull's own changes (three-dot compares diff from the merge base).
+// 2. The base compare (mergeBase...base) lists what the base branch changed.
+// 3. The merge is planned onto whichever tip has fewer incoming changes to
+//    write: onto head when the base compare is complete and base changed
+//    fewer files than the pull (a fresh pull), otherwise onto base (a stale
+//    pull against a busy base). Onto base needs base's status only at the
+//    pull's paths, so a capped base compare is replaced by a walk of the two
+//    base-side trees along just those paths.
+//
+// A capped pull-side listing (step 1) is replaced by a tree walk of merge
+// base vs head, so neither side has a file-count limit.
 async function buildMergeContext(
   refs: PullRefs,
-  token: string | undefined
+  reads: GitHubReads
 ): Promise<PullMergeContext> {
   const { baseRepo, baseSha, headRepo, headSha } = refs;
-  const crossRepo =
-    baseRepo.owner.toLowerCase() !== headRepo.owner.toLowerCase() ||
-    baseRepo.repo.toLowerCase() !== headRepo.repo.toLowerCase();
-  const headSide = crossRepo ? `${headRepo.owner}:${headSha}` : headSha;
+  const headSide = isSameGitHubRepo(baseRepo, headRepo)
+    ? headSha
+    : `${headRepo.owner}:${headSha}`;
 
-  const tipCompare = await fetchCompare(
-    baseRepo,
-    `${baseSha}...${headSide}`,
-    token
-  );
-  const mergeBaseSha =
-    typeof tipCompare === 'object' && tipCompare != null
-      ? readMergeBaseSha(tipCompare)
-      : undefined;
-  if (mergeBaseSha == null) {
+  // The head tree depends only on the head commit, so it is read alongside
+  // the tip compare rather than after it.
+  const [tipCompare, headTreeSha] = await Promise.all([
+    reads.compare(baseRepo, `${baseSha}...${headSide}`),
+    reads.commitTreeSha(headRepo, headSha),
+  ]);
+  const { baseTreeSha, mergeBaseSha, mergeBaseTreeSha } = tipCompare;
+  if (mergeBaseSha == null || mergeBaseTreeSha == null || baseTreeSha == null) {
     throw new GitHubCommitError(
       'The compare response did not include a merge base.',
       'github',
       502
     );
   }
-  const [baseCompare, headCompare] = await Promise.all([
-    fetchCompare(baseRepo, `${mergeBaseSha}...${baseSha}`, token),
-    fetchCompare(baseRepo, `${mergeBaseSha}...${headSide}`, token),
+
+  // Listers are per repository, so a same-repo pull shares one: the
+  // merge-base directories both walks start from are listed once.
+  const listBaseTree = reads.treeLister(baseRepo);
+  const listHeadTree = reads.treeLister(headRepo);
+  // The base compare and (when the pull side capped) the head walk are
+  // independent, so they run together.
+  const [baseCompare, headChanges] = await Promise.all([
+    mergeBaseSha === baseSha
+      ? Promise.resolve({ files: [] })
+      : reads.compare(baseRepo, `${mergeBaseSha}...${baseSha}`),
+    tipCompare.files ?? diffTrees(listHeadTree, mergeBaseTreeSha, headTreeSha),
   ]);
-  const baseChanges = readCompareFiles(baseCompare);
-  const headChanges = readCompareFiles(headCompare);
-  if (
-    baseChanges.length >= COMPARE_FILES_CAP ||
-    headChanges.length >= COMPARE_FILES_CAP
-  ) {
-    throw new GitHubCommitError(
-      'Too many changed files to merge in DiffsHub — merge with git locally.',
-      'github',
-      422
-    );
-  }
+
+  const onto: MergeOnto =
+    baseCompare.files != null && baseCompare.files.length < headChanges.length
+      ? 'head'
+      : 'base';
+  const baseChanges =
+    baseCompare.files ??
+    (await diffTrees(
+      listBaseTree,
+      mergeBaseTreeSha,
+      baseTreeSha,
+      mergePaths(headChanges)
+    ));
   return {
     ...refs,
+    baseTreeSha,
+    headTreeSha,
     mergeBaseSha,
-    plans: planMerge({ baseChanges, headChanges }),
+    onto,
+    plans: planMerge({ baseChanges, headChanges }, onto),
+    reads,
+    resolveBaseEntry: createTreeEntryResolver(listBaseTree, baseTreeSha),
+    resolveHeadEntry: createTreeEntryResolver(listHeadTree, headTreeSha),
+    // The merge base is an ancestor of the base tip, so its trees are in the
+    // base repository.
+    resolveMergeBaseEntry: createTreeEntryResolver(
+      listBaseTree,
+      mergeBaseTreeSha
+    ),
   };
 }
 
-function readMergeBaseSha(compare: object): string | undefined {
-  const mergeBase = (compare as Record<string, unknown>).merge_base_commit;
-  const sha =
-    typeof mergeBase === 'object' && mergeBase != null
-      ? (mergeBase as Record<string, unknown>).sha
-      : undefined;
-  return typeof sha === 'string' ? sha : undefined;
-}
-
 type Diff3Result =
-  | { kind: 'binary' }
+  | { kind: 'binary' | 'submodule' }
   | { conflictCount: number; kind: 'text'; text: string };
 
+// Reads the three versions of a both-changed file. Each tip's version is read
+// by the blob SHA its change listing carried, so it stays cached across
+// pushes that leave the file alone (a tree lookup stands in when a listing
+// lacked the SHA); the merge base's version is read at the merge-base commit,
+// which only moves when the base branch is merged in. A missing file reads as
+// empty.
+//
+// Symlinks are the exception: the contents API follows a link to the file it
+// names, while a blob read returns the link's target path. A symlink's merge
+// base is therefore read by blob SHA from the merge-base tree, so diff3
+// compares three target paths.
+//
+// Compare listings carry no modes, so this is also where a submodule changed
+// on both sides is caught, from the head tree entry looked up alongside the
+// reads: its gitlink has no text to merge.
 async function runDiff3ForPlan(
   context: PullMergeContext,
-  plan: { addAdd: boolean; path: string },
-  token: string | undefined
+  plan: {
+    addAdd: boolean;
+    baseBlob?: string;
+    headBlob?: string;
+    path: string;
+  }
 ): Promise<Diff3Result> {
-  const [baseContent, oursContent, theirsContent] = await Promise.all([
-    plan.addAdd
-      ? Promise.resolve('')
-      : fetchFileAtRef(
-          context.baseRepo,
-          context.mergeBaseSha,
-          plan.path,
-          token
-        ),
-    fetchFileAtRef(context.headRepo, context.headSha, plan.path, token),
-    fetchFileAtRef(context.baseRepo, context.baseSha, plan.path, token),
+  const { reads } = context;
+  const readTip = async (
+    repo: GitRepoRef,
+    blobSha: string | undefined,
+    resolveEntry: (path: string) => Promise<LeafEntry | null>
+  ) => {
+    const sha = blobSha ?? (await resolveEntry(plan.path))?.sha;
+    return sha == null ? '' : reads.blob(repo, sha);
+  };
+  const headEntry = context.resolveHeadEntry(plan.path);
+  const tips = Promise.all([
+    readTip(context.headRepo, plan.headBlob, context.resolveHeadEntry),
+    readTip(context.baseRepo, plan.baseBlob, context.resolveBaseEntry),
   ]);
-  const base = baseContent ?? '';
-  const ours = oursContent ?? '';
-  const theirs = theirsContent ?? '';
+  const mergeBaseAtCommit = plan.addAdd
+    ? Promise.resolve('')
+    : reads
+        .fileAtCommit(context.baseRepo, context.mergeBaseSha, plan.path)
+        .then((text) => text ?? '');
+  // Started before the head entry is known, so a failure may go unread: a
+  // submodule's tip reads fail (a gitlink's SHA names a commit), and a
+  // symlink's merge-base read by commit is discarded. Any other failure is
+  // rethrown by the awaits below.
+  tips.catch(() => undefined);
+  mergeBaseAtCommit.catch(() => undefined);
+  const entry = await headEntry;
+  if (entry?.type === 'commit') {
+    return { kind: 'submodule' };
+  }
+  const [[ours, theirs], base] = await Promise.all([
+    tips,
+    entry?.mode === SYMLINK_MODE && !plan.addAdd
+      ? readTip(context.baseRepo, undefined, context.resolveMergeBaseEntry)
+      : mergeBaseAtCommit,
+  ]);
   if (
     isBinaryContent(base) ||
     isBinaryContent(ours) ||
@@ -445,91 +519,6 @@ async function runDiff3ForPlan(
     kind: 'text',
     text: rendered.text,
   };
-}
-
-async function fetchFileAtRef(
-  repo: GitRepoRef,
-  ref: string,
-  path: string,
-  token: string | undefined
-): Promise<string | null> {
-  const url = createGitHubAPIURL(
-    getGitHubEnvironment(),
-    `/repos/${encodeURLSegment(repo.owner)}/${encodeURLSegment(repo.repo)}/contents/${encodePath(path)}`,
-    { ref }
-  );
-  const response = await fetch(url, {
-    cache: 'no-store',
-    headers: createGitHubRawAPIHeaders(token),
-  });
-  if (response.status === 404) {
-    return null;
-  }
-  if (!response.ok) {
-    const detail = (await response.text()).trim();
-    throw new GitHubCommitError(
-      detail === ''
-        ? `Fetching ${path}@${ref} failed (${response.status}).`
-        : detail,
-      'github',
-      response.status
-    );
-  }
-  return response.text();
-}
-
-function fetchCompare(
-  repo: GitRepoRef,
-  range: string,
-  token: string | undefined
-): Promise<unknown> {
-  return fetchGitHubJSON(
-    `/repos/${encodeURLSegment(repo.owner)}/${encodeURLSegment(repo.repo)}/compare/${encodeURLSegment(range)}`,
-    token
-  );
-}
-
-const COMPARE_STATUSES = new Set([
-  'added',
-  'changed',
-  'copied',
-  'modified',
-  'removed',
-  'renamed',
-  'unchanged',
-]);
-
-function readCompareFiles(compare: unknown): CompareFile[] {
-  const files =
-    typeof compare === 'object' && compare != null
-      ? (compare as Record<string, unknown>).files
-      : undefined;
-  if (!Array.isArray(files)) {
-    return [];
-  }
-  return files.flatMap((file) => {
-    if (typeof file !== 'object' || file == null) {
-      return [];
-    }
-    const record = file as Record<string, unknown>;
-    const filename = record.filename;
-    const status = record.status;
-    if (
-      typeof filename !== 'string' ||
-      typeof status !== 'string' ||
-      !COMPARE_STATUSES.has(status)
-    ) {
-      return [];
-    }
-    const entry: CompareFile = {
-      filename,
-      status: status as CompareFile['status'],
-    };
-    if (typeof record.previous_filename === 'string') {
-      entry.previousFilename = record.previous_filename;
-    }
-    return [entry];
-  });
 }
 
 export const GET = withRequestLog(handleGET);

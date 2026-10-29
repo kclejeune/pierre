@@ -6,6 +6,7 @@ import {
   createCommit,
   createTree,
   createTreeEntryResolver,
+  createTreeLister,
   fetchBranchTipSha,
   GitHubCommitError,
   updateRef,
@@ -67,6 +68,7 @@ describe('git data writes', () => {
       [
         { mode: '100755', path: 'bin/run', sha: 'blob1' },
         { mode: '100644', path: 'gone.txt', sha: null },
+        { mode: '160000', path: 'vendor/lib', sha: 'sub1', type: 'commit' },
       ],
       fetcher
     );
@@ -75,6 +77,7 @@ describe('git data writes', () => {
       tree: [
         { mode: '100755', path: 'bin/run', sha: 'blob1', type: 'blob' },
         { mode: '100644', path: 'gone.txt', sha: null, type: 'blob' },
+        { mode: '160000', path: 'vendor/lib', sha: 'sub1', type: 'commit' },
       ],
     });
   });
@@ -148,6 +151,7 @@ describe('createTreeEntryResolver', () => {
       tree: [
         { mode: '040000', path: 'src', sha: 'src-tree', type: 'tree' },
         { mode: '100644', path: 'README.md', sha: 'readme', type: 'blob' },
+        { mode: '160000', path: 'vendor', sha: 'sub1', type: 'commit' },
       ],
     },
     'src-tree': {
@@ -167,30 +171,48 @@ describe('createTreeEntryResolver', () => {
 
   test('walks nested paths and preserves the mode', async () => {
     const { fetcher } = treeFetchStub();
-    const resolve = createTreeEntryResolver(REPO, 'tok', fetcher);
-    expect(await resolve('root', 'src/run.sh')).toEqual({
+    const resolve = createTreeEntryResolver(
+      createTreeLister(REPO, 'tok', fetcher),
+      'root'
+    );
+    expect(await resolve('src/run.sh')).toEqual({
       mode: '100755',
       sha: 'runsh',
+      type: 'blob',
     });
-    expect(await resolve('root', 'README.md')).toEqual({
+    expect(await resolve('README.md')).toEqual({
       mode: '100644',
       sha: 'readme',
+      type: 'blob',
+    });
+    // Submodule gitlinks resolve too, so they can be carried into a tree.
+    expect(await resolve('vendor')).toEqual({
+      mode: '160000',
+      sha: 'sub1',
+      type: 'commit',
     });
   });
 
-  test('returns null for missing paths and non-blob hits', async () => {
+  test('returns null for missing paths and directories', async () => {
     const { fetcher } = treeFetchStub();
-    const resolve = createTreeEntryResolver(REPO, 'tok', fetcher);
-    expect(await resolve('root', 'src/missing.ts')).toBeNull();
-    expect(await resolve('root', 'src')).toBeNull();
+    const resolve = createTreeEntryResolver(
+      createTreeLister(REPO, 'tok', fetcher),
+      'root'
+    );
+    expect(await resolve('src/missing.ts')).toBeNull();
+    expect(await resolve('src')).toBeNull();
+    expect(await resolve('vendor/inner.txt')).toBeNull();
   });
 
   test('memoizes directory listings across resolutions', async () => {
     const { fetcher, requests } = treeFetchStub();
-    const resolve = createTreeEntryResolver(REPO, 'tok', fetcher);
-    await resolve('root', 'src/run.sh');
-    await resolve('root', 'README.md');
-    await resolve('root', 'src/other.ts');
+    const resolve = createTreeEntryResolver(
+      createTreeLister(REPO, 'tok', fetcher),
+      'root'
+    );
+    await resolve('src/run.sh');
+    await resolve('README.md');
+    await resolve('src/other.ts');
     // root and src each listed exactly once despite three resolutions.
     expect(requests).toHaveLength(2);
   });

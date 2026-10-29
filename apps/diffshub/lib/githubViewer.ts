@@ -8,6 +8,7 @@ import {
   createGitHubJSONHeaders,
   getGitHubEnvironment,
 } from './githubEnvironment';
+import { githubFetch } from './githubFetch';
 import {
   createGitHubFailureResponse,
   createUnreachableResponse,
@@ -53,7 +54,7 @@ async function fetchViewerId(token: string): Promise<number> {
   const url = createGitHubAPIURL(environment, '/user');
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await githubFetch(url, {
       cache: 'no-store',
       headers: createGitHubJSONHeaders(token),
     });

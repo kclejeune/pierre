@@ -24,11 +24,14 @@ import {
 } from '@/lib/pullConflictsClient';
 import { countRemainingConflicts } from '@/lib/pullMerge';
 
-// The conflicted:true variant of the detection result.
+// The conflicted:true variant of the merge result.
 export type ConflictedPull = Extract<PullConflictsResult, { conflicted: true }>;
 
 interface PullConflictControlProps {
-  conflictedFileCount: number;
+  // Unknown until the merge has been computed on first open.
+  conflictedFileCount?: number;
+  // The merge is being computed; the button ignores clicks meanwhile.
+  loading?: boolean;
   onOpen(): void;
 }
 
@@ -36,6 +39,7 @@ interface PullConflictControlProps {
 // resolver overlay. Sits alongside the Commit and Review controls.
 export function PullConflictControl({
   conflictedFileCount,
+  loading = false,
   onOpen,
 }: PullConflictControlProps) {
   return (
@@ -45,11 +49,17 @@ export function PullConflictControl({
       size="sm"
       title="This branch has conflicts with the base branch — resolve and merge"
       className={cn(CHROME_ICON_BUTTON_CLASS, 'w-auto gap-1.5 px-2')}
+      aria-busy={loading}
+      disabled={loading}
       onClick={onOpen}
     >
-      <IconCiWarningFill className="size-3.5 text-amber-500" />
+      {loading ? (
+        <IconRefresh className="size-3.5 animate-spin text-amber-500" />
+      ) : (
+        <IconCiWarningFill className="size-3.5 text-amber-500" />
+      )}
       Conflicts
-      {conflictedFileCount > 0 && (
+      {(conflictedFileCount ?? 0) > 0 && (
         <span
           aria-label={`${conflictedFileCount} conflicted files`}
           className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] leading-none font-semibold text-white tabular-nums"

@@ -21,13 +21,11 @@
 // lives in githubEnvironment, and the request-side policy of extracting and
 // decrypting a bearer header lives in resolveBearerToken.
 
+import { openGcm, sealGcm } from './aesGcm';
 import { readNonEmptyString } from './githubOAuthGrant';
 import { type UnwrappedRefreshToken } from './refreshTokenWrap';
 import { SEALED_TOKEN_PREFIX } from './tokenEnvelope';
 import { asRecord } from './untypedJson';
-
-// 96-bit nonce, the standard GCM size.
-const NONCE_BYTES = 12;
 
 type SealedTokenKind = 'access' | 'refresh';
 
@@ -63,15 +61,12 @@ async function seal(
   payload: Record<string, unknown>,
   key: Uint8Array<ArrayBuffer>
 ): Promise<string> {
-  const nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES));
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: nonce, additionalData: SEAL_AAD[kind] },
+  const sealed = await sealGcm(
     await importSealKey(key),
-    textEncoder.encode(JSON.stringify(payload))
+    SEAL_AAD[kind],
+    JSON.stringify(payload)
   );
-  const encodedNonce = Buffer.from(nonce).toString('base64url');
-  const encodedCiphertext = Buffer.from(ciphertext).toString('base64url');
-  return `${SEALED_TOKEN_PREFIX}.${kind}.${encodedNonce}.${encodedCiphertext}`;
+  return `${SEALED_TOKEN_PREFIX}.${kind}.${sealed}`;
 }
 
 // Returns undefined for anything that is not a valid envelope of this kind
@@ -82,35 +77,20 @@ async function open(
   sealed: string,
   key: Uint8Array<ArrayBuffer>
 ): Promise<Record<string, unknown> | undefined> {
-  const parts = sealed.split('.');
-  if (
-    parts.length !== 4 ||
-    parts[0] !== SEALED_TOKEN_PREFIX ||
-    parts[1] !== kind
-  ) {
+  const prefix = `${SEALED_TOKEN_PREFIX}.${kind}.`;
+  if (!sealed.startsWith(prefix)) {
     return undefined;
   }
-  const [, , nonce = '', ciphertext = ''] = parts;
-
-  let plaintext: ArrayBuffer;
-  try {
-    plaintext = await crypto.subtle.decrypt(
-      {
-        name: 'AES-GCM',
-        iv: Buffer.from(nonce, 'base64url'),
-        additionalData: SEAL_AAD[kind],
-      },
-      await importSealKey(key),
-      Buffer.from(ciphertext, 'base64url')
-    );
-  } catch {
+  const plaintext = await openGcm(
+    await importSealKey(key),
+    SEAL_AAD[kind],
+    sealed.slice(prefix.length)
+  );
+  if (plaintext == null) {
     return undefined;
   }
-
   try {
-    return (
-      asRecord(JSON.parse(Buffer.from(plaintext).toString('utf8'))) ?? undefined
-    );
+    return asRecord(JSON.parse(plaintext)) ?? undefined;
   } catch {
     return undefined;
   }

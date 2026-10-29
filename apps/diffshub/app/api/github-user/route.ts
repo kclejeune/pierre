@@ -6,6 +6,7 @@ import {
   getGitHubEnvironment,
   rejectTokenlessRequestWhenLoginRequired,
 } from '@/lib/githubEnvironment';
+import { githubFetch } from '@/lib/githubFetch';
 import {
   createGitHubFailureResponse,
   createUnreachableResponse,
@@ -63,7 +64,7 @@ async function handleGET(request: NextRequest) {
 
   let response: Response;
   try {
-    response = await fetch(url, init);
+    response = await githubFetch(url, init);
   } catch {
     return createUnreachableResponse(environment, url);
   }

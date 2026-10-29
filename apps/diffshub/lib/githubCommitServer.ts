@@ -5,6 +5,7 @@ import {
   createGitHubJSONHeaders,
   getGitHubEnvironment,
 } from './githubEnvironment';
+import { githubFetch } from './githubFetch';
 import {
   describeGitHubFailureBody,
   parseGitHubJSONBody,
@@ -33,6 +34,17 @@ export interface GitTreeWrite {
   path: string;
   mode: string;
   sha: string | null;
+  // 'commit' for a submodule gitlink (mode 160000); defaults to 'blob'.
+  type?: LeafEntryType;
+}
+
+// The tree entries that sit at a path's leaf: files and submodule gitlinks.
+type LeafEntryType = 'blob' | 'commit';
+
+export interface LeafEntry {
+  mode: string;
+  sha: string;
+  type: LeafEntryType;
 }
 
 export type GitHubCommitErrorCode =
@@ -182,7 +194,7 @@ export async function createBlob(
   repo: GitRepoRef,
   token: string,
   contents: string,
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<string> {
   const data = await gitDataRequest(
     repoPath(repo, '/git/blobs'),
@@ -206,7 +218,7 @@ export async function createTree(
   token: string,
   baseTreeSha: string,
   entries: readonly GitTreeWrite[],
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<string> {
   const data = await gitDataRequest(
     repoPath(repo, '/git/trees'),
@@ -219,7 +231,7 @@ export async function createTree(
           mode: entry.mode,
           path: entry.path,
           sha: entry.sha,
-          type: 'blob',
+          type: entry.type ?? 'blob',
         })),
       },
     },
@@ -240,7 +252,7 @@ export async function createCommit(
   repo: GitRepoRef,
   token: string,
   input: { message: string; treeSha: string; parents: readonly string[] },
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<string> {
   const data = await gitDataRequest(
     repoPath(repo, '/git/commits'),
@@ -271,7 +283,7 @@ export async function updateRef(
   token: string,
   branch: string,
   sha: string,
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<void> {
   await gitDataRequest(
     repoPath(repo, `/git/refs/heads/${encodePath(branch)}`),
@@ -285,9 +297,9 @@ export async function updateRef(
 
 export async function getCommitTreeSha(
   repo: GitRepoRef,
-  token: string,
+  token: string | undefined,
   commitSha: string,
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<string> {
   const data = await gitDataRequest(
     repoPath(repo, `/git/commits/${encodeURLSegment(commitSha)}`),
@@ -309,67 +321,94 @@ export async function getCommitTreeSha(
   return treeSha;
 }
 
-// Resolves `{sha, mode}` for a path inside a tree, or null when the path does
-// not exist. Walks one directory level per request and memoizes each listed
-// directory, so resolving many paths in one commit re-fetches nothing.
-export function createTreeEntryResolver(
-  repo: GitRepoRef,
-  token: string,
-  fetcher: PlainFetch = fetch
-): (
-  rootTreeSha: string,
-  path: string
-) => Promise<{ sha: string; mode: string } | null> {
-  const directoryCache = new Map<
-    string,
-    Promise<{ mode: string; path: string; sha: string; type: string }[]>
-  >();
+export interface TreeEntry {
+  mode: string;
+  sha: string;
+  type: string;
+}
 
-  const listTree = (treeSha: string) => {
-    let pending = directoryCache.get(treeSha);
+export type TreeLister = (treeSha: string) => Promise<Map<string, TreeEntry>>;
+
+// Lists one tree level (entries keyed by name). A truncated listing throws
+// rather than silently hiding entries.
+export async function fetchTreeListing(
+  repo: GitRepoRef,
+  token: string | undefined,
+  treeSha: string,
+  fetcher: PlainFetch = githubFetch
+): Promise<Map<string, TreeEntry>> {
+  const record = asRecord(
+    await gitDataRequest(
+      repoPath(repo, `/git/trees/${encodeURLSegment(treeSha)}`),
+      token,
+      { method: 'GET' },
+      fetcher
+    )
+  );
+  if (record?.truncated === true) {
+    throw new GitHubCommitError(
+      `Tree ${treeSha} has too many entries to list — use git locally.`,
+      'github',
+      422
+    );
+  }
+  const entries = new Map<string, TreeEntry>();
+  for (const entry of Array.isArray(record?.tree) ? record.tree : []) {
+    const mode = readString(entry, 'mode');
+    const path = readString(entry, 'path');
+    const sha = readString(entry, 'sha');
+    const type = readString(entry, 'type');
+    if (mode != null && path != null && sha != null && type != null) {
+      entries.set(path, { mode, sha, type });
+    }
+  }
+  return entries;
+}
+
+// Memoizes `load` by tree SHA. Trees are content-addressed, so one lister can
+// be shared by every walk and lookup in the same repository during a
+// request: a directory that several commits share is fetched once.
+export function memoizeTreeLister(load: TreeLister): TreeLister {
+  const cache = new Map<string, Promise<Map<string, TreeEntry>>>();
+  return (treeSha) => {
+    let pending = cache.get(treeSha);
     if (pending == null) {
-      pending = gitDataRequest(
-        repoPath(repo, `/git/trees/${encodeURLSegment(treeSha)}`),
-        token,
-        { method: 'GET' },
-        fetcher
-      ).then((data) => {
-        const entries =
-          typeof data === 'object' && data != null
-            ? (data as Record<string, unknown>).tree
-            : undefined;
-        if (!Array.isArray(entries)) {
-          return [];
-        }
-        return entries.flatMap((entry) => {
-          const mode = readString(entry, 'mode');
-          const path = readString(entry, 'path');
-          const sha = readString(entry, 'sha');
-          const type = readString(entry, 'type');
-          return mode != null && path != null && sha != null && type != null
-            ? [{ mode, path, sha, type }]
-            : [];
-        });
-      });
-      directoryCache.set(treeSha, pending);
+      pending = load(treeSha);
+      cache.set(treeSha, pending);
     }
     return pending;
   };
+}
 
-  return async (rootTreeSha, path) => {
+export function createTreeLister(
+  repo: GitRepoRef,
+  token: string | undefined,
+  fetcher: PlainFetch = githubFetch
+): TreeLister {
+  return memoizeTreeLister((treeSha) =>
+    fetchTreeListing(repo, token, treeSha, fetcher)
+  );
+}
+
+// Resolves the file or submodule gitlink at `path` inside `rootTreeSha`, or
+// null when the path does not exist or is a directory. Walks one directory
+// level per lookup through `list`, so resolving many paths re-fetches
+// nothing.
+export function createTreeEntryResolver(
+  list: TreeLister,
+  rootTreeSha: string
+): (path: string) => Promise<LeafEntry | null> {
+  return async (path) => {
     const segments = path.split('/').filter(Boolean);
     let treeSha = rootTreeSha;
     for (let index = 0; index < segments.length; index += 1) {
-      const entries = await listTree(treeSha);
-      const entry = entries.find(
-        (candidate) => candidate.path === segments[index]
-      );
+      const entry = (await list(treeSha)).get(segments[index]);
       if (entry == null) {
         return null;
       }
       if (index === segments.length - 1) {
-        return entry.type === 'blob'
-          ? { mode: entry.mode, sha: entry.sha }
+        return entry.type === 'blob' || entry.type === 'commit'
+          ? { mode: entry.mode, sha: entry.sha, type: entry.type }
           : null;
       }
       if (entry.type !== 'tree') {
@@ -388,7 +427,7 @@ export function createTreeEntryResolver(
 export function fetchGitHubJSON(
   path: string,
   token: string | undefined,
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<unknown> {
   return gitDataRequest(path, token, { method: 'GET' }, fetcher);
 }
@@ -401,7 +440,7 @@ export function sendGitHubJSON(
   token: string | undefined,
   method: 'DELETE' | 'PATCH' | 'POST' | 'PUT',
   body: unknown,
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<unknown> {
   return gitDataRequest(path, token, { method, body }, fetcher);
 }
@@ -412,7 +451,7 @@ export async function sendGitHubGraphQL(
   query: string,
   variables: Record<string, unknown>,
   token: string,
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<unknown> {
   const payload = asRecord(
     await gitDataRequest(
@@ -491,7 +530,7 @@ export function fetchPullData(
   repo: GitRepoRef,
   pull: string,
   token: string | undefined,
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<unknown> {
   return fetchGitHubJSON(
     repoPath(repo, `/pulls/${encodeURLSegment(pull)}`),
@@ -508,7 +547,7 @@ export async function fetchBranchTipSha(
   repo: GitRepoRef,
   branch: string,
   token: string | undefined,
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<string> {
   const payload = await fetchGitHubJSON(
     repoPath(repo, `/git/ref/heads/${encodePath(branch)}`),
@@ -526,6 +565,56 @@ export async function fetchBranchTipSha(
   return sha;
 }
 
+// GitHub computes a pull's mergeability lazily: `mergeable` is null until it
+// has, and recomputes after either branch moves.
+export function readPullMergeable(payload: unknown): boolean | null {
+  const mergeable = asRecord(payload)?.mergeable;
+  return typeof mergeable === 'boolean' ? mergeable : null;
+}
+
+// Re-reads pulls/{n} until `isSettled` accepts the payload or the attempts run
+// out, and returns the last payload either way. Errors propagate to the
+// caller, which decides whether a failed poll matters.
+async function pollPullData(
+  repo: GitRepoRef,
+  pull: string,
+  token: string | undefined,
+  isSettled: (payload: unknown) => boolean,
+  options: { delayFirst?: boolean; intervalMs: number; maxAttempts: number },
+  fetcher: PlainFetch = githubFetch
+): Promise<unknown> {
+  let payload: unknown;
+  for (let attempt = 0; attempt < options.maxAttempts; attempt += 1) {
+    if (attempt > 0 || options.delayFirst === true) {
+      await new Promise((resolve) => setTimeout(resolve, options.intervalMs));
+    }
+    payload = await fetchPullData(repo, pull, token, fetcher);
+    if (isSettled(payload)) {
+      break;
+    }
+  }
+  return payload;
+}
+
+// Reads pulls/{n}, re-reading briefly (about two seconds) while GitHub is
+// still computing `mergeable`. Returns the last payload either way.
+// `afterUnknownRead` is for callers that just saw it unknown: the first read
+// then waits one interval too, rather than repeating that answer.
+export function pollPullMergeable(
+  repo: GitRepoRef,
+  pull: string,
+  token: string | undefined,
+  { afterUnknownRead = false }: { afterUnknownRead?: boolean } = {}
+): Promise<unknown> {
+  return pollPullData(
+    repo,
+    pull,
+    token,
+    (payload) => readPullMergeable(payload) != null,
+    { delayFirst: afterUnknownRead, intervalMs: 800, maxAttempts: 3 }
+  );
+}
+
 // After a commit lands on the head branch, GitHub updates the pull's head sha
 // and regenerates its diff/mergeability in the background. Reloading before
 // that finishes serves the pre-commit diff, so both commit routes wait until
@@ -538,28 +627,21 @@ export async function waitForPullHead(
   expectedHeadSha: string,
   token: string | undefined,
   options: { intervalMs?: number; maxAttempts?: number } = {},
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<void> {
-  const intervalMs = options.intervalMs ?? 750;
-  const maxAttempts = options.maxAttempts ?? 12;
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    if (attempt > 0) {
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    }
-    try {
-      const payload = await fetchPullData(repo, pull, token, fetcher);
-      const headSha = readStringPath(payload, ['head', 'sha']);
-      const mergeable =
-        typeof payload === 'object' && payload != null
-          ? (payload as Record<string, unknown>).mergeable
-          : undefined;
-      if (headSha === expectedHeadSha && typeof mergeable === 'boolean') {
-        return;
-      }
-    } catch {
-      return;
-    }
-  }
+  await pollPullData(
+    repo,
+    pull,
+    token,
+    (payload) =>
+      readStringPath(payload, ['head', 'sha']) === expectedHeadSha &&
+      readPullMergeable(payload) != null,
+    {
+      intervalMs: options.intervalMs ?? 750,
+      maxAttempts: options.maxAttempts ?? 12,
+    },
+    fetcher
+  ).catch(() => undefined);
 }
 
 // Extracts the ref/sha/repo pairs from a pulls/{n} payload, throwing the 502

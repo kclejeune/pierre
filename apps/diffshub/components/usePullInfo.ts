@@ -35,6 +35,24 @@ interface UsePullInfoResult {
   mergePullDetails(pull: PullRequestRef, fields: Partial<PullDetails>): void;
 }
 
+interface PullInfoState {
+  forPull: PullRequestRef;
+  forViewerKey: number;
+  info: PullInfo;
+}
+
+// Spreads `fields` into the state's current details (left alone when the
+// response carried none), so concurrent updates each keep the others' fields.
+function withDetails(
+  state: PullInfoState,
+  fields: Partial<PullDetails>
+): PullInfoState {
+  const { details } = state.info;
+  return details == null
+    ? state
+    : { ...state, info: { ...state.info, details: { ...details, ...fields } } };
+}
+
 // Loads the pull request's title and base/head branches for the viewer
 // chrome. Best-effort: a failure just leaves the branch display empty, the
 // diff itself is unaffected.
@@ -49,11 +67,7 @@ export function usePullInfo({
   // carries only the number, and two repos' pulls can share a number, so
   // deciding staleness needs the full owner/repo/number ref. `forViewerKey`
   // is the viewer generation whose load fetched it.
-  const [state, setState] = useState<{
-    forPull: PullRequestRef;
-    forViewerKey: number;
-    info: PullInfo;
-  } | null>(null);
+  const [state, setState] = useState<PullInfoState | null>(null);
   const loadedViewerKey = useRef<number | undefined>(undefined);
   useEffect(() => {
     // Keep the current value while the same pull refetches (a reload or token
@@ -81,10 +95,44 @@ export function usePullInfo({
         : 'reload';
     fetchPullInfo(pullRequest, getGitHubToken(), controller.signal, cache)
       .then((info) => {
-        if (!controller.signal.aborted) {
-          loadedViewerKey.current = viewerKey;
-          setState({ forPull: pullRequest, forViewerKey: viewerKey, info });
+        if (controller.signal.aborted) {
+          return;
         }
+        loadedViewerKey.current = viewerKey;
+        setState({ forPull: pullRequest, forViewerKey: viewerKey, info });
+        // GitHub computes mergeability lazily, and recomputes it after either
+        // branch moves. When this load caught it unknown, ask again with a
+        // short server-side wait and fold in just the answer, so the merge
+        // controls and the Conflicts button see it.
+        if (info.details?.state !== 'open' || info.details.mergeable != null) {
+          return;
+        }
+        return fetchPullInfo(
+          pullRequest,
+          getGitHubToken(),
+          controller.signal,
+          'no-store',
+          true
+        ).then((settled) => {
+          const mergeable = settled.details?.mergeable;
+          if (
+            controller.signal.aborted ||
+            mergeable == null ||
+            settled.headSha !== info.headSha
+          ) {
+            return;
+          }
+          // Merged into the current details, not this load's, so an edit
+          // saved meanwhile survives.
+          setState((current) =>
+            current?.info.headSha === info.headSha
+              ? withDetails(current, {
+                  mergeable,
+                  mergeableState: settled.details?.mergeableState ?? null,
+                })
+              : current
+          );
+        });
       })
       .catch(() => undefined);
     return () => controller.abort();
@@ -106,15 +154,8 @@ export function usePullInfo({
         current != null &&
         current.forPull.owner === pull.owner &&
         current.forPull.repo === pull.repo &&
-        current.forPull.number === pull.number &&
-        current.info.details != null
-          ? {
-              ...current,
-              info: {
-                ...current.info,
-                details: { ...current.info.details, ...fields },
-              },
-            }
+        current.forPull.number === pull.number
+          ? withDetails(current, fields)
           : current
       );
     },

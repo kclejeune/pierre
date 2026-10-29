@@ -84,9 +84,16 @@ export async function fetchPullInfo(
   pull: PullRequestRef,
   token: string | undefined,
   signal?: AbortSignal,
-  cache: RequestCache = 'default'
+  cache: RequestCache = 'default',
+  // Asks the route to re-read the pull briefly while GitHub is still
+  // computing its mergeability.
+  waitMergeable = false
 ): Promise<PullInfo> {
-  const payload = await requestJSON(`/api/pull-info?${pullParams(pull)}`, {
+  const params = pullParams(pull);
+  if (waitMergeable) {
+    params.set('waitMergeable', '1');
+  }
+  const payload = await requestJSON(`/api/pull-info?${params}`, {
     cache,
     headers: buildHeaders(token),
     signal,

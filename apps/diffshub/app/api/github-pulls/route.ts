@@ -11,6 +11,7 @@ import {
   getGitHubEnvironment,
   rejectTokenlessRequestWhenLoginRequired,
 } from '@/lib/githubEnvironment';
+import { githubFetch } from '@/lib/githubFetch';
 import {
   createGitHubFailureResponse,
   createUnreachableResponse,
@@ -151,7 +152,7 @@ async function fetchPullsPayload(
 ): Promise<{ payload?: unknown; error?: Response }> {
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await githubFetch(url, {
       headers: createGitHubJSONHeaders(token),
       cache: 'no-store',
     });

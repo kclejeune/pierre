@@ -6,7 +6,7 @@ import {
 } from './pullCommentsClient';
 import { postCommitRequest, type PullCommitResult } from './pullCommitClient';
 
-// Client wrappers for /api/pull-conflicts: conflict detection (with
+// Client wrappers for /api/pull-conflicts: the merge computation (with
 // server-rendered conflict markers per file) and the two-parent merge
 // commit, which shares the pull-commit client's response contract and
 // stale-head error.

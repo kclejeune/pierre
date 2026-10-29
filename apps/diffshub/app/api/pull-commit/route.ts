@@ -6,6 +6,7 @@ import {
   createCommit,
   createTree,
   createTreeEntryResolver,
+  createTreeLister,
   fetchGitHubJSON,
   fetchPullData,
   getCommitTreeSha,
@@ -139,17 +140,21 @@ async function handlePOST(request: NextRequest) {
 
     const headRepo = refs.headRepo;
     const headTreeSha = await getCommitTreeSha(headRepo, token, refs.headSha);
-    const resolveEntry = createTreeEntryResolver(headRepo, token);
+    const resolveEntry = createTreeEntryResolver(
+      createTreeLister(headRepo, token),
+      headTreeSha
+    );
     const entries: GitTreeWrite[] = await Promise.all(
       body.files.map(async (file): Promise<GitTreeWrite> => {
         const [existing, blobSha] = await Promise.all([
-          resolveEntry(headTreeSha, file.path),
+          resolveEntry(file.path),
           createBlob(headRepo, token, file.contents),
         ]);
         return {
           // New files default to a regular blob; existing ones keep their
-          // mode so the executable bit survives.
-          mode: existing?.mode ?? '100644',
+          // mode so the executable bit survives. Edited text replacing a
+          // submodule becomes a regular file.
+          mode: existing?.type === 'blob' ? existing.mode : '100644',
           path: file.path,
           sha: blobSha,
         };

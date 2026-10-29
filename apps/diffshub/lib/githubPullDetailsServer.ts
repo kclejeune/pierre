@@ -12,6 +12,7 @@ import {
   sendGitHubGraphQL,
 } from './githubCommitServer';
 import { encodeURLSegment } from './githubDiffSource';
+import { githubFetch } from './githubFetch';
 import { createJSONResponse } from './jsonResponse';
 import type { PlainFetch } from './plainFetch';
 import type { PullCommitSummary } from './pullCommitsList';
@@ -302,7 +303,7 @@ export async function fetchPullReviewStates(
   repo: GitRepoRef,
   pull: string,
   token: string | undefined,
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<Map<string, { avatarUrl?: string; state: PullReviewerState }>> {
   const reviews = await fetchAllGitHubPages(
     (page) =>
@@ -324,7 +325,7 @@ export async function fetchPullChecks(
   repo: GitRepoRef,
   headSha: string,
   token: string | undefined,
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<PullCheck[]> {
   const [checkRunsResult, statusesResult] = await Promise.allSettled([
     fetchAllCheckRuns(repo, headSha, token, fetcher),
@@ -420,7 +421,7 @@ export function parsePullMergeCapabilities(
 export async function fetchPullMergeCapabilities(
   repo: GitRepoRef,
   token: string | undefined,
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<PullMergeCapabilities> {
   return parsePullMergeCapabilities(
     await fetchGitHubJSON(repoPath(repo, ''), token, fetcher)
@@ -454,7 +455,7 @@ export async function fetchPullViewerPermissions(
   repo: GitRepoRef,
   pull: string,
   token: string,
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<PullViewerPermissions> {
   return parsePullViewerPermissions(
     await sendGitHubGraphQL(
@@ -469,7 +470,7 @@ export async function fetchPullViewerPermissions(
 export async function fetchRepoLabels(
   repo: GitRepoRef,
   token: string | undefined,
-  fetcher: PlainFetch = fetch
+  fetcher: PlainFetch = githubFetch
 ): Promise<PullLabel[]> {
   return parseLabels(
     await fetchAllGitHubPages(

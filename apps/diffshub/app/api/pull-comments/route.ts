@@ -8,6 +8,7 @@ import {
   type GitHubEnvironment,
   rejectTokenlessRequestWhenLoginRequired,
 } from '@/lib/githubEnvironment';
+import { githubFetch } from '@/lib/githubFetch';
 import {
   createGitHubFailureResponse,
   createUnreachableResponse,
@@ -144,7 +145,7 @@ async function fetchAllPages(
   signal: AbortSignal
 ): Promise<{ records: unknown[] } | { failure: Response }> {
   const fetchPage = (page: number) =>
-    fetch(
+    githubFetch(
       createGitHubAPIURL(environment, pathname, {
         page: String(page),
         per_page: String(PER_PAGE),
@@ -227,7 +228,7 @@ async function handlePOST(request: NextRequest) {
   try {
     if (payload?.discussion === true) {
       return await forwardNormalizedResponse(
-        await fetch(
+        await githubFetch(
           createGitHubAPIURL(
             environment,
             `/repos/${owner}/${repo}/issues/${pull}/comments`
@@ -244,7 +245,7 @@ async function handlePOST(request: NextRequest) {
 
     if (typeof inReplyToId === 'number') {
       return await forwardNormalizedResponse(
-        await fetch(
+        await githubFetch(
           createGitHubAPIURL(
             environment,
             `/repos/${owner}/${repo}/pulls/${pull}/comments/${inReplyToId}/replies`
@@ -279,7 +280,7 @@ async function handlePOST(request: NextRequest) {
     }
 
     return await forwardNormalizedResponse(
-      await fetch(
+      await githubFetch(
         createGitHubAPIURL(
           environment,
           `/repos/${owner}/${repo}/pulls/${pull}/comments`
@@ -330,7 +331,7 @@ async function handlePATCH(request: NextRequest) {
     ? `/repos/${owner}/${repo}/issues/comments/${commentId}`
     : `/repos/${owner}/${repo}/pulls/comments/${commentId}`;
   try {
-    const response = await fetch(
+    const response = await githubFetch(
       createGitHubAPIURL(environment, editPathname),
       {
         method: 'PATCH',
@@ -377,7 +378,7 @@ async function handleDELETE(request: NextRequest) {
       ? `/repos/${owner}/${repo}/issues/comments/${commentId}`
       : `/repos/${owner}/${repo}/pulls/comments/${commentId}`;
   try {
-    const response = await fetch(
+    const response = await githubFetch(
       createGitHubAPIURL(environment, deletePathname),
       { method: 'DELETE', headers: buildGitHubHeaders(token) }
     );
@@ -434,7 +435,7 @@ async function submitReview(
     if (typeof commitId !== 'string') {
       return commitId;
     }
-    const response = await fetch(
+    const response = await githubFetch(
       createGitHubAPIURL(
         environment,
         `/repos/${owner}/${repo}/pulls/${pull}/reviews`
@@ -533,7 +534,7 @@ async function resolvePullHeadCommit(
   repo: string,
   pull: string
 ): Promise<string | Response> {
-  const pullResponse = await fetch(
+  const pullResponse = await githubFetch(
     createGitHubAPIURL(environment, `/repos/${owner}/${repo}/pulls/${pull}`),
     { cache: 'no-store', headers: buildGitHubHeaders(token) }
   );

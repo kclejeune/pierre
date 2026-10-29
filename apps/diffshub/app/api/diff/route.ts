@@ -16,6 +16,7 @@ import {
   isTokenlessRequestBlocked,
   LOGIN_REQUIRED_MESSAGE,
 } from '@/lib/githubEnvironment';
+import { githubFetch } from '@/lib/githubFetch';
 import { parseGitHubJSONBody } from '@/lib/githubProxyResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
 import { withRequestLog } from '@/lib/requestLog';
@@ -643,7 +644,7 @@ async function fetchDirectPatchTarget(
   target: DirectPatchFetchTarget,
   signal: AbortSignal
 ): Promise<PatchFetchResult> {
-  const response = await fetch(target.patchURL, {
+  const response = await githubFetch(target.patchURL, {
     cache: 'no-store',
     headers: { 'User-Agent': GITHUB_USER_AGENT, ...target.requestHeaders },
     signal,
@@ -658,7 +659,7 @@ function fetchPullMetadata(
   target: GitHubPullPatchFetchTarget,
   signal: AbortSignal
 ): Promise<Response> {
-  return fetch(target.pullURL, {
+  return githubFetch(target.pullURL, {
     cache: 'no-store',
     headers: { 'User-Agent': GITHUB_USER_AGENT, ...target.requestHeaders },
     signal,
@@ -805,7 +806,7 @@ async function fetchGitHubDiagnosticStatus(
   token: string
 ): Promise<number> {
   try {
-    const response = await fetch(
+    const response = await githubFetch(
       createGitHubAPIURL(getGitHubEnvironment(), path),
       {
         cache: 'no-store',

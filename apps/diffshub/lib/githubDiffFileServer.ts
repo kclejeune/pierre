@@ -16,6 +16,7 @@ import {
   GITHUB_API_VERSION,
   GITHUB_USER_AGENT,
 } from './githubEnvironment';
+import { githubFetch } from './githubFetch';
 import { parseGitHubJSONBody } from './githubProxyResponse';
 import { isGitHubRateLimitResponse } from './githubRateLimit';
 import { type PlainFetch } from './plainFetch';
@@ -95,7 +96,7 @@ export async function loadGitHubDiffFiles(
     throw new Error('Unsupported GitHub diff path.');
   }
 
-  const fetcher = options.fetch ?? fetch;
+  const fetcher = options.fetch ?? githubFetch;
   const cacheScope = credentialCacheScope(options.token);
   // The fetcher, credential options, and cache scope are the same for every
   // file this request touches, so bind them once and let each case below name
@@ -248,7 +249,7 @@ export async function loadGitHubDiffAssetResponse(
   // resolution of a private diff is never served to another viewer.
   const refs = await resolveCachedGitHubDiffRefs(
     source,
-    fetch,
+    githubFetch,
     options,
     credentialCacheScope(options.token)
   );
@@ -259,7 +260,7 @@ export async function loadGitHubDiffAssetResponse(
   return fetchGitHubFileContents(
     ref,
     request.file.replace(/^\/+/, ''),
-    fetch,
+    githubFetch,
     options
   );
 }

@@ -20,6 +20,7 @@ import { githubFetch } from './githubFetch';
 import { parseGitHubJSONBody } from './githubProxyResponse';
 import { isGitHubRateLimitResponse } from './githubRateLimit';
 import { type PlainFetch } from './plainFetch';
+import { toAPICompareRange } from './repoBrowser';
 import { createAsyncLRU, credentialCacheScope } from './serverLRU';
 
 const GITHUB_RAW_MEDIA_TYPE = 'application/vnd.github.raw';
@@ -438,16 +439,23 @@ async function resolveGitHubCompareRefs(
   fetcher: PlainFetch,
   options: GitHubDiffFileServerOptions
 ): Promise<GitHubDiffRefs> {
+  const apiRange = toAPICompareRange(range);
   const data = await fetchGitHubJSON(
     createEnvironmentAPIURL(
       getGitHubEnvironment(),
-      `/repos/${encodeURLSegment(repo.owner)}/${encodeURLSegment(repo.repo)}/compare/${encodeURLSegment(range)}`
+      `/repos/${encodeURLSegment(repo.owner)}/${encodeURLSegment(repo.repo)}/compare/${encodeURLSegment(apiRange)}`
     ),
     fetcher,
     options
   );
   const baseSha = readStringPath(data, ['base_commit', 'sha']);
-  const headSha = await readCompareHeadSha(repo, range, data, fetcher, options);
+  const headSha = await readCompareHeadSha(
+    repo,
+    apiRange,
+    data,
+    fetcher,
+    options
+  );
 
   if (baseSha == null || headSha == null) {
     throw new Error(

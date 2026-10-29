@@ -19,6 +19,7 @@ import {
 import { githubFetch } from '@/lib/githubFetch';
 import { parseGitHubJSONBody } from '@/lib/githubProxyResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
+import { toAPICompareRange } from '@/lib/repoBrowser';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
@@ -458,7 +459,7 @@ function createGitHubDiffAPIURL(source: GitHubDiffSource): string {
     case 'compare':
       return createGitHubAPIURL(
         environment,
-        `/repos/${encodeURLSegment(source.repo.owner)}/${encodeURLSegment(source.repo.repo)}/compare/${encodeURLSegment(source.range)}`
+        `/repos/${encodeURLSegment(source.repo.owner)}/${encodeURLSegment(source.repo.repo)}/compare/${encodeURLSegment(toAPICompareRange(source.range))}`
       );
   }
 }
@@ -796,6 +797,12 @@ async function getGitHubAuthFailureHint(
 
   if (source.kind === 'pull') {
     return ` GitHub accepted the token and repository access, but pull request #${source.number} was not readable. Grant Pull requests: read or confirm the PR exists.`;
+  }
+  if (source.kind === 'commit') {
+    return ` GitHub accepted the token and repository access, but commit ${source.sha} was not found in ${source.repo.owner}/${source.repo.repo}.`;
+  }
+  if (source.kind === 'compare') {
+    return ` GitHub accepted the token and repository access, but could not compare ${source.range}. Check that both refs exist in ${source.repo.owner}/${source.repo.repo}.`;
   }
 
   return ' GitHub accepted the token, but the requested diff was not readable.';

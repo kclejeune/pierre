@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
-import { buildComparePath, splitKnownRepoRef } from '../lib/repoBrowser';
+import {
+  buildComparePath,
+  splitKnownRepoRef,
+  toAPICompareRange,
+} from '../lib/repoBrowser';
 
 describe('buildComparePath', () => {
   const repo = { owner: 'acme', repo: 'widgets' };
@@ -15,6 +19,19 @@ describe('buildComparePath', () => {
     expect(buildComparePath(repo, null, 'topic')).toBe(
       '/acme/widgets/compare/topic'
     );
+  });
+});
+
+describe('toAPICompareRange', () => {
+  test('fills a missing base with HEAD, the default branch', () => {
+    expect(toAPICompareRange('klejeune/topic')).toBe('HEAD...klejeune/topic');
+    expect(toAPICompareRange('...topic')).toBe('HEAD...topic');
+    expect(toAPICompareRange('octocat:topic')).toBe('HEAD...octocat:topic');
+  });
+
+  test('passes ranges that name a base through unchanged', () => {
+    expect(toAPICompareRange('main...feat/thing')).toBe('main...feat/thing');
+    expect(toAPICompareRange('v6.0..v7.0')).toBe('v6.0..v7.0');
   });
 });
 

@@ -57,8 +57,9 @@ import {
   FILE_TREE_DENSITY_STYLES,
 } from '@/lib/constants';
 import {
+  DEFAULT_DISPLAY_SETTINGS,
   loadDisplaySettings,
-  saveDisplaySettings,
+  updateDisplaySettings,
 } from '@/lib/displaySettings';
 import { encodePath } from '@/lib/githubDiffSource';
 import { isMarkdownFileName } from '@/lib/isMarkdownFileName';
@@ -72,6 +73,7 @@ import {
   rehypeGitHubHeadingIds,
   scrollToDocFragment,
 } from '@/lib/markdownHeadingIds';
+import { onPreferencesRestored } from '@/lib/preferenceSync';
 import { recordRecentDiff } from '@/lib/recentDiffs';
 import {
   buildBrowseBlobPath,
@@ -130,17 +132,25 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
 
   // Shares the diff viewer's persisted rendered/raw markdown preference, so
   // toggling in either surface carries to the other.
-  const [markdownView, setMarkdownView] = useState<'rendered' | 'raw'>('raw');
+  const [markdownView, setMarkdownView] = useState<'rendered' | 'raw'>(
+    DEFAULT_DISPLAY_SETTINGS.markdownView
+  );
+  // Re-read when lib/preferenceSync restores settings from the server; a
+  // restored object without the field means the default.
   useEffect(() => {
-    const stored = loadDisplaySettings().markdownView;
-    if (stored != null) {
-      setMarkdownView(stored);
-    }
+    const restore = () => {
+      setMarkdownView(
+        loadDisplaySettings().markdownView ??
+          DEFAULT_DISPLAY_SETTINGS.markdownView
+      );
+    };
+    restore();
+    return onPreferencesRestored(['displaySettings'], restore);
   }, []);
   const toggleMarkdownView = useCallback(() => {
     setMarkdownView((current) => {
       const next = current === 'rendered' ? 'raw' : 'rendered';
-      saveDisplaySettings({ ...loadDisplaySettings(), markdownView: next });
+      updateDisplaySettings({ markdownView: next });
       return next;
     });
   }, []);

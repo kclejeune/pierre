@@ -15,11 +15,16 @@ import { emitLogLine, formatError } from './serverLog';
 
 // Exactly the subset of the Workers KVNamespace binding used here, so a KV
 // binding is a PreferenceStore as-is and the app does not need
-// @cloudflare/workers-types for one interface.
+// @cloudflare/workers-types for one interface. `expirationTtl` (seconds)
+// makes the key expire that long after this write; omitted, it never does.
 export interface PreferenceStore {
   delete(key: string): Promise<void>;
   get(key: string): Promise<string | null>;
-  put(key: string, value: string): Promise<void>;
+  put(
+    key: string,
+    value: string,
+    options?: { expirationTtl?: number }
+  ): Promise<void>;
 }
 
 // How long a request waits for Redis before answering 503. The client keeps
@@ -46,7 +51,11 @@ export interface RedisClient {
     options: { arguments: string[]; keys: string[] }
   ): Promise<unknown>;
   get(key: string): Promise<string | null>;
-  set(key: string, value: string): Promise<unknown>;
+  set(
+    key: string,
+    value: string,
+    options?: { expiration: { type: 'EX'; value: number } }
+  ): Promise<unknown>;
 }
 
 let redisConnectionPromise: Promise<RedisConnection> | undefined;
@@ -75,8 +84,13 @@ export async function getPreferenceStore(): Promise<
         await run((client) => client.del(key));
       },
       get: (key) => run((client) => client.get(key)),
-      async put(key, value) {
-        await run((client) => client.set(key, value));
+      async put(key, value, options) {
+        const ttl = options?.expirationTtl;
+        await run((client) =>
+          ttl == null
+            ? client.set(key, value)
+            : client.set(key, value, { expiration: { type: 'EX', value: ttl } })
+        );
       },
     };
   }

@@ -1,11 +1,17 @@
 import type { FileDiffMetadata } from '@pierre/diffs';
 
+import {
+  noteReviewedFilesChanged,
+  restoreReviewedFiles,
+} from './reviewedFilesSync';
 import { readStoredJSON, writeStoredJSON } from './storedJSON';
 
 // Persistence for per-file "Viewed" marks, GitHub-style: each diff source
 // (PR, commit, patch URL) stores a map of file path → content fingerprint in
 // localStorage. A mark only holds while the file's fingerprint still matches,
 // so new commits touching a reviewed file clear its mark automatically.
+// Signed-in viewers' marks are also mirrored to the server (see
+// lib/reviewedFilesSync), so they follow the viewer across browsers.
 
 const STORAGE_PREFIX = 'diffshub.reviewed.';
 
@@ -52,8 +58,33 @@ export function saveReviewedFiles(
   sourceKey: string,
   reviewed: ReadonlyMap<string, string>
 ): void {
+  const record = Object.fromEntries(reviewed);
   writeStoredJSON(
     STORAGE_PREFIX + sourceKey,
-    reviewed.size === 0 ? null : Object.fromEntries(reviewed)
+    reviewed.size === 0 ? null : record
+  );
+  noteReviewedFilesChanged(sourceKey, record);
+}
+
+// Fetches the server's marks for a source as it opens. When they should
+// replace `local`, they are written to localStorage and passed to onRestored.
+// Returns a cancel function for when the source closes before they arrive.
+export function syncReviewedFiles(
+  sourceKey: string,
+  local: ReadonlyMap<string, string>,
+  getToken: () => string,
+  onRestored: (reviewed: Map<string, string>) => void
+): () => void {
+  return restoreReviewedFiles(
+    sourceKey,
+    Object.fromEntries(local),
+    getToken,
+    (files) => {
+      writeStoredJSON(
+        STORAGE_PREFIX + sourceKey,
+        Object.keys(files).length === 0 ? null : files
+      );
+      onRestored(new Map(Object.entries(files)));
+    }
   );
 }

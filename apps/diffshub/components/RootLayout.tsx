@@ -8,6 +8,7 @@ import { AppEditProvider } from '@/components/AppEditProvider';
 import { CommandPalette } from '@/components/CommandPalette';
 import { GitHubEnvironmentProvider } from '@/components/GitHubEnvironmentProvider';
 import { GitHubSessionRefresher } from '@/components/GitHubSessionRefresher';
+import { PreferenceSync } from '@/components/PreferenceSync';
 import { PreloadHighlighter } from '@/components/PreloadHighlighter';
 import { RequireLoginGate } from '@/components/RequireLoginGate';
 import { ScrollbarGutterVariables } from '@/components/ScrollbarGutterVariables';
@@ -170,6 +171,7 @@ export async function RootLayout({
               <ThemeProvider attribute="class">
                 <RequireLoginGate>{children}</RequireLoginGate>
                 <GitHubSessionRefresher />
+                <PreferenceSync />
                 <CommandPalette />
                 <Toaster />
                 <div

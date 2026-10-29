@@ -9,8 +9,9 @@
 // (or nested object key) containing a string shaped like a GitHub token, a
 // DiffsHub sealed or wrapped token, a JWT, or a bearer header is refused, and
 // so is a top-level key that is itself such a string. What a key is called
-// does not matter: `authorFilter` or `oauthHint` are ordinary preferences. The route also passes the caller's own credential as a forbidden
-// substring, whatever its shape.
+// does not matter: `authorFilter` or `oauthHint` are ordinary preferences.
+// The route also passes the caller's own credential as a forbidden substring,
+// whatever its shape.
 
 import {
   SEALED_TOKEN_PREFIX,
@@ -27,9 +28,13 @@ export type PreferenceValue =
 
 export type UserPreferences = Record<string, PreferenceValue>;
 
-export const MAX_PREFERENCE_KEYS = 100;
-const MAX_PREFERENCE_VALUE_BYTES = 8 * 1024;
-const MAX_PREFERENCES_TOTAL_BYTES = 64 * 1024;
+// The whole map is read on every page load and rewritten on every change, so
+// it is capped well below the stores' own limits (25 MiB per Workers KV
+// value). Data that grows with use, like reviewed-file marks, gets its own
+// keys instead (lib/reviewedFilesPayload).
+export const MAX_PREFERENCE_KEYS = 200;
+const MAX_PREFERENCE_VALUE_BYTES = 32 * 1024;
+const MAX_PREFERENCES_TOTAL_BYTES = 256 * 1024;
 const MAX_VALUE_DEPTH = 8;
 
 const KEY_PATTERN = /^[A-Za-z0-9][\w.-]{0,63}$/;
@@ -129,7 +134,7 @@ function findValueProblem(
   return null;
 }
 
-function isForbiddenString(
+export function isForbiddenString(
   value: string,
   forbidden: readonly string[]
 ): boolean {
@@ -141,7 +146,7 @@ function isForbiddenString(
 
 const encoder = new TextEncoder();
 
-function byteLength(value: string): number {
+export function byteLength(value: string): number {
   return encoder.encode(value).length;
 }
 

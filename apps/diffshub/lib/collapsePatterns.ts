@@ -4,9 +4,10 @@
 // stay within one segment — and a pattern with no glob characters matches as
 // a directory prefix, so plain `vendor` collapses everything under vendor/.
 // The list is a personal viewer preference (not per-repo), so it persists
-// under a single localStorage key.
+// as one synced preference (lib/preferenceSync), so it follows signed-in
+// viewers across browsers.
 
-const STORAGE_KEY = 'diffshub.collapse-patterns';
+import { readSyncedItem, writeSyncedItem } from './preferenceSync';
 
 export function parseCollapsePatterns(text: string): string[] {
   return text
@@ -69,22 +70,9 @@ function escapeRegExpChar(char: string): string {
 }
 
 export function loadCollapsePatternsText(): string {
-  try {
-    return window.localStorage.getItem(STORAGE_KEY) ?? '';
-  } catch {
-    return '';
-  }
+  return readSyncedItem('collapsePatterns') ?? '';
 }
 
 export function saveCollapsePatternsText(text: string): void {
-  try {
-    if (text.trim() === '') {
-      window.localStorage.removeItem(STORAGE_KEY);
-    } else {
-      window.localStorage.setItem(STORAGE_KEY, text);
-    }
-  } catch {
-    // Storage unavailable (private mode, quota); the patterns still apply for
-    // this session.
-  }
+  writeSyncedItem('collapsePatterns', text.trim() === '' ? null : text);
 }

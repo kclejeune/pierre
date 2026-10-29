@@ -142,9 +142,18 @@ logged.
 
 ### User preferences
 
-`/api/preferences` stores a small key/value map per GitHub user, so display
-preferences can follow a viewer across browsers. The backend is chosen at
-runtime:
+Signed-in viewers' display preferences follow them across browsers: the theme
+(mode and light/dark picks), display settings, auto-collapse patterns, pinned
+repositories, and reviewed-file marks. The browser keeps using localStorage and
+mirrors it to the server (`lib/preferenceSync`, `lib/reviewedFilesSync`). After
+sign-in, values the server holds replace the local ones, values only that
+browser holds are uploaded, and changes the server has not confirmed yet (made
+while loading, signed out, or offline) win and are uploaded. Later changes are
+uploaded after a one-second debounce, one request at a time per store key.
+
+`/api/preferences` stores a small key/value map per GitHub user, and
+`/api/preferences/reviewed` stores reviewed-file marks in a separate key per
+diff source. The backend is chosen at runtime:
 
 - **Redis or Valkey** when `DIFFSHUB_REDIS_URL` is set. `docker compose up`
   starts a `valkey` service with append-only persistence and points DiffsHub at
@@ -160,13 +169,21 @@ never written to the store. Writes are refused when any key or string in the
 value looks like a credential: GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`,
 `ghr_`, `github_pat_`), DiffsHub sealed or wrapped tokens, JWTs, bearer headers,
 or the caller's own credential. Key names are not screened, so `authorFilter` is
-an ordinary preference. Each value is capped at 8 KiB, and each user at 100 keys
-and 64 KiB.
+an ordinary preference. Each value is capped at 32 KiB, and each user's map at
+200 keys and 256 KiB. The whole map is read on every page load, so data that
+grows with use stays out of it.
 
 `PUT {"preferences": {"key": value}}` merges into the stored map, with `null`
-deleting a key; `DELETE` removes everything stored for the caller. Concurrent
-writes are last-write-wins, and Workers KV reads may lag a write made from
-another region by up to a minute.
+deleting a key; `DELETE` removes the caller's map. Concurrent writes are
+last-write-wins, and Workers KV reads may lag a write made from another region
+by up to a minute.
+
+Reviewed-file marks are a map of file path to content fingerprint per diff
+source: `GET ?source=…` and `PUT {"source": …, "files": {…}}`, which replaces
+the source's map. Each source's key expires 90 days after its last change, which
+bounds storage for PRs nobody revisits; a source holds at most 20,000 files and
+2 MiB. Entries whose path looks like a credential are dropped rather than
+stored.
 
 ### GitHub read cache
 

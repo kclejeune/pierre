@@ -156,18 +156,12 @@ export async function getGitHubCacheStore(): Promise<CacheStore | undefined> {
   return kv == null ? undefined : kvCacheStore(kv);
 }
 
-// The KV binding's put accepts an expiration option the PreferenceStore
-// interface leaves out.
+// Entries expire by TTL, clamped to the minimum Workers KV accepts.
 function kvCacheStore(kv: PreferenceStore): CacheStore {
-  const put = kv.put.bind(kv) as (
-    key: string,
-    value: string,
-    options: { expirationTtl: number }
-  ) => Promise<void>;
   return {
     get: (key) => kv.get(key),
     put: (key, value, limits) =>
-      put(key, value, {
+      kv.put(key, value, {
         expirationTtl: Math.max(KV_MIN_TTL_SECONDS, limits.ttlSeconds),
       }),
   };

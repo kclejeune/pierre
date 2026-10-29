@@ -78,6 +78,7 @@ function makeController(initial: ThemeControllerState): ThemeController & {
     },
     setColorMode() {},
     setThemeNameForScheme() {},
+    reloadFromPersistence() {},
     destroy() {},
     set(next) {
       state = { ...state, ...next };

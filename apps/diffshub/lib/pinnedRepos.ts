@@ -1,9 +1,11 @@
 // Repositories the user has pinned to the /pulls dashboard, stored as one
 // localStorage array of "owner/name" strings. Pins are shared across surfaces
 // (dashboard, viewer header, command palette), so saves broadcast a window
-// event that lets other mounted consumers refresh without a reload.
+// event that lets other mounted consumers refresh without a reload. Stored as
+// a synced preference (lib/preferenceSync), so pins follow signed-in viewers
+// across browsers.
 
-const STORAGE_KEY = 'diffshub.pinned-repos';
+import { readSyncedItem, writeSyncedItem } from './preferenceSync';
 
 export const MAX_PINNED_REPOS = 10;
 export const PINNED_REPOS_EVENT = 'diffshub:pinned-repos';
@@ -15,12 +17,12 @@ export function isValidRepoName(repo: string): boolean {
 }
 
 export function loadPinnedRepos(): string[] {
+  const raw = readSyncedItem('pinnedRepos');
+  if (raw == null) {
+    return [];
+  }
   let parsed: unknown;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (raw == null) {
-      return [];
-    }
     parsed = JSON.parse(raw);
   } catch {
     return [];
@@ -45,15 +47,11 @@ export function loadPinnedRepos(): string[] {
 }
 
 export function savePinnedRepos(repos: string[]): void {
-  try {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(repos.slice(0, MAX_PINNED_REPOS))
-    );
-    window.dispatchEvent(new CustomEvent(PINNED_REPOS_EVENT));
-  } catch {
-    // Storage unavailable; pins still hold for this session.
-  }
+  writeSyncedItem(
+    'pinnedRepos',
+    JSON.stringify(repos.slice(0, MAX_PINNED_REPOS))
+  );
+  window.dispatchEvent(new CustomEvent(PINNED_REPOS_EVENT));
 }
 
 export function isRepoPinned(repos: readonly string[], repo: string): boolean {

@@ -8,11 +8,13 @@ import {
   savePinnedRepos,
   togglePinnedRepo,
 } from '@/lib/pinnedRepos';
+import { onPreferencesRestored } from '@/lib/preferenceSync';
 
 // Shared view of the pinned-repo list. Loads after mount (SSR renders no
 // pins), and re-loads whenever any other consumer saves — savePinnedRepos
 // broadcasts a window event — so the dashboard, viewer header, and palette
-// stay in sync without threading state between them.
+// stay in sync without threading state between them. Pins restored from the
+// server after sign-in (lib/preferenceSync) re-load the same way.
 export function usePinnedRepos(): {
   hydrated: boolean;
   pinned: string[];
@@ -26,7 +28,14 @@ export function usePinnedRepos(): {
     setHydrated(true);
     const onChange = () => setPinned(loadPinnedRepos());
     window.addEventListener(PINNED_REPOS_EVENT, onChange);
-    return () => window.removeEventListener(PINNED_REPOS_EVENT, onChange);
+    const stopRestoreListener = onPreferencesRestored(
+      ['pinnedRepos'],
+      onChange
+    );
+    return () => {
+      window.removeEventListener(PINNED_REPOS_EVENT, onChange);
+      stopRestoreListener();
+    };
   }, []);
 
   const toggle = useCallback((repo: string) => {

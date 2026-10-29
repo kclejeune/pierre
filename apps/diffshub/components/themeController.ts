@@ -2,6 +2,11 @@ import { createThemeController, type ThemePersistence } from '@pierre/theming';
 
 import { docsThemeCatalog } from './themeCatalog';
 import {
+  onPreferencesRestored,
+  readSyncedItem,
+  writeSyncedItem,
+} from '@/lib/preferenceSync';
+import {
   applyThemeBootstrapStyle,
   buildThemeBootstrapStyle,
   persistThemeBootstrapSnapshot,
@@ -19,39 +24,18 @@ export { docsThemeCatalog } from './themeCatalog';
 // browser guards make it a constant) and once per page-load on the client,
 // surviving client-side navigations.
 
-// The persistence keys the pre-paint no-flash bootstrap script (which reads
-// `theme`) and existing users' saved selections depend on, so changing them
-// would orphan saved preferences.
+// Maps the controller's selection onto three synced preferences
+// (lib/preferenceSync), which keeps them under the legacy localStorage keys
+// the pre-paint no-flash bootstrap script reads: mode as a plain
+// `light`/`dark`/`system` string under `theme`, and the theme names under the
+// diffshub-prefixed keys.
 // TODO(theming): migrate off these legacy keys and use
 // createThemeController's built-in `storageKey` persistence shape instead.
-const MODE_KEY = 'theme';
-const LIGHT_THEME_KEY = 'diffshub-light-theme';
-const DARK_THEME_KEY = 'diffshub-dark-theme';
-
-function readKey(key: string): string | null {
-  try {
-    return globalThis.localStorage?.getItem(key) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function writeKey(key: string, value: string): void {
-  try {
-    globalThis.localStorage?.setItem(key, value);
-  } catch {
-    // Storage may be unavailable (private mode / denied) — non-fatal.
-  }
-}
-
-// Maps the controller's selection onto the app's three storage keys: mode as a
-// plain `light`/`dark`/`system` string under `theme` (what the bootstrap script
-// reads), and the theme names under the diffshub-prefixed keys.
 const docsPersistence: ThemePersistence = {
   load() {
-    const mode = readKey(MODE_KEY);
-    const light = readKey(LIGHT_THEME_KEY);
-    const dark = readKey(DARK_THEME_KEY);
+    const mode = readSyncedItem('colorMode');
+    const light = readSyncedItem('lightTheme');
+    const dark = readSyncedItem('darkTheme');
     if (mode == null && light == null && dark == null) return null;
     const validMode =
       mode === 'light' || mode === 'dark' || mode === 'system'
@@ -64,9 +48,9 @@ const docsPersistence: ThemePersistence = {
     };
   },
   save(selection) {
-    writeKey(MODE_KEY, selection.mode);
-    writeKey(LIGHT_THEME_KEY, selection.lightThemeName);
-    writeKey(DARK_THEME_KEY, selection.darkThemeName);
+    writeSyncedItem('colorMode', selection.mode);
+    writeSyncedItem('lightTheme', selection.lightThemeName);
+    writeSyncedItem('darkTheme', selection.darkThemeName);
   },
 };
 
@@ -104,5 +88,13 @@ function syncThemeBootstrap(): void {
 
 syncThemeBootstrap();
 themeController.subscribe(syncThemeBootstrap);
+
+// A selection restored from the server after sign-in lands in localStorage
+// after the controller loaded; apply it as one change, without saving it back.
+if (typeof window !== 'undefined') {
+  onPreferencesRestored(['colorMode', 'darkTheme', 'lightTheme'], () => {
+    themeController.reloadFromPersistence();
+  });
+}
 
 export const docsThemeResolver = themeController.resolver;

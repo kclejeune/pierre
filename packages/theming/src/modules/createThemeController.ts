@@ -57,6 +57,11 @@ export interface ThemeController {
   // Updates the theme name assigned to one color-scheme slot. It does not switch
   // modes; setColorMode chooses which slot is currently active.
   setThemeNameForScheme(scheme: ColorScheme, name: string): void;
+  // Re-reads the persistence adapter and applies its selection as one change,
+  // without saving it back. For hosts whose stored selection was replaced
+  // after the controller loaded (e.g. synced from a server): going through the
+  // setters instead would save a partial selection after each one.
+  reloadFromPersistence(): void;
   subscribe(listener: () => void): () => void;
 }
 
@@ -490,6 +495,19 @@ export function createThemeController(
       const key = scheme === 'light' ? 'lightThemeName' : 'darkThemeName';
       if (isSelectedValue(key, name)) return;
       setInactiveThemeName(scheme, key, name);
+    },
+    reloadFromPersistence() {
+      const loaded = persistence?.load();
+      if (loaded == null) return;
+      resolveActive(
+        {
+          darkThemeName: loaded.darkThemeName,
+          lightThemeName: loaded.lightThemeName,
+          mode: loaded.mode,
+          resolvedColorScheme: resolveColorScheme(loaded.mode),
+        },
+        { notifyPending: true }
+      );
     },
     subscribe(listener) {
       listeners.add(listener);

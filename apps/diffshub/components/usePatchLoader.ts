@@ -46,6 +46,7 @@ import {
   getFileDiffFingerprint,
   loadReviewedFiles,
   saveReviewedFiles,
+  syncReviewedFiles,
 } from '@/lib/reviewedFiles';
 import {
   cancelDocTargetScroll,
@@ -175,7 +176,8 @@ export function usePatchLoader({
   const markdownViewRef = useRef(markdownView);
   markdownViewRef.current = markdownView;
   // Reviewed-file marks for the current diff source, loaded from localStorage
-  // when a load starts and kept authoritative in memory afterwards.
+  // when a load starts (and replaced once if the server holds newer ones) and
+  // kept authoritative in memory afterwards.
   const reviewedFilesRef = useRef<Map<string, string>>(new Map());
   const reviewedSourceKeyRef = useRef('');
   // Ids the sidebar currently filters out of the file tree (Git-status filter
@@ -394,6 +396,29 @@ export function usePatchLoader({
         reviewedFilesRef.current.get(item.fileDiff.name) ===
         getFileDiffFingerprint(item.fileDiff)
       );
+    }
+  );
+
+  // Swaps in reviewed marks restored from the server after the diff began
+  // loading. Files that just became reviewed collapse, like a manual mark;
+  // files that lost their mark only re-render their Viewed checkbox and keep
+  // their current collapse state.
+  const applyRestoredReviewedFiles = useStableCallback(
+    (restored: Map<string, string>) => {
+      const previous = reviewedFilesRef.current;
+      reviewedFilesRef.current = restored;
+      applyToLoadedItems((item) => {
+        const fingerprint = getFileDiffFingerprint(item.fileDiff);
+        const wasReviewed = previous.get(item.fileDiff.name) === fingerprint;
+        const isReviewed = restored.get(item.fileDiff.name) === fingerprint;
+        if (wasReviewed === isReviewed) {
+          return false;
+        }
+        if (isReviewed) {
+          item.collapsed = true;
+        }
+        return true;
+      });
     }
   );
 
@@ -616,6 +641,16 @@ export function usePatchLoader({
     filterCollapsedIdsRef.current = new Set();
     reviewedSourceKeyRef.current = patchRequestKey;
     reviewedFilesRef.current = loadReviewedFiles(patchRequestKey);
+    const stopReviewedFilesSync = syncReviewedFiles(
+      patchRequestKey,
+      reviewedFilesRef.current,
+      () => getGitHubToken?.() ?? '',
+      (restored) => {
+        if (isCurrentRequest()) {
+          applyRestoredReviewedFiles(restored);
+        }
+      }
+    );
     setViewerKey(requestId);
     setInitialItems([]);
     setTreeSource(null);
@@ -889,8 +924,10 @@ export function usePatchLoader({
 
     return () => {
       controller.abort();
+      stopReviewedFilesSync();
     };
   }, [
+    applyRestoredReviewedFiles,
     domain,
     getGitHubToken,
     githubTokenVersion,

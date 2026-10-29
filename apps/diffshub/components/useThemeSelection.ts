@@ -51,6 +51,7 @@ const FALLBACK_CONTROLLER: ThemeController = {
   getState: () => FALLBACK_STATE,
   setColorMode: () => {},
   setThemeNameForScheme: () => {},
+  reloadFromPersistence: () => {},
   destroy: () => {},
 };
 

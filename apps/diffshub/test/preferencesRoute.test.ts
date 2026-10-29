@@ -1,60 +1,21 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
 import { NextRequest } from 'next/server';
 
 import { DELETE, GET, PUT } from '../app/api/preferences/route';
 import { resetGitHubEnvironmentCache } from '../lib/githubEnvironment';
 import {
   getPreferenceStore,
-  type PreferenceStore,
   setPreferenceStoreOverride,
   validatePreferenceStoreConfiguration,
 } from '../lib/preferenceStore';
+import {
+  createMemoryStore,
+  mockGitHubUser,
+  nextToken,
+  useCleanPreferenceRouteEnvironment,
+} from './helpers/preferenceRouteKit';
 
-const originalFetch = globalThis.fetch;
-const CONFIG_KEYS = [
-  'DIFFSHUB_GITHUB_URL',
-  'DIFFSHUB_REDIS_URL',
-  'NEXT_RUNTIME',
-  'DIFFSHUB_REQUIRE_LOGIN',
-  'DIFFSHUB_TOKEN_ENCRYPTION_KEY',
-] as const;
-const originalEnvironment = new Map(
-  CONFIG_KEYS.map((key) => [key, process.env[key]] as const)
-);
-
-// In-memory stand-in for Redis / Workers KV.
-function createMemoryStore(): PreferenceStore & { data: Map<string, string> } {
-  const data = new Map<string, string>();
-  return {
-    data,
-    delete: (key) => {
-      data.delete(key);
-      return Promise.resolve();
-    },
-    get: (key) => Promise.resolve(data.get(key) ?? null),
-    put: (key, value) => {
-      data.set(key, value);
-      return Promise.resolve();
-    },
-  };
-}
-
-// Answers GET /user with a fixed id for any token and counts the calls.
-function mockGitHubUser(id: number) {
-  const fetchMock = mock(() =>
-    Promise.resolve(Response.json({ id, login: 'octocat' }))
-  );
-  globalThis.fetch = fetchMock as unknown as typeof fetch;
-  return fetchMock;
-}
-
-// Each test uses its own token so the route's identity cache cannot leak
-// a lookup between tests.
-let tokenCounter = 0;
-function nextToken(): string {
-  tokenCounter += 1;
-  return `test-token-${tokenCounter}`;
-}
+useCleanPreferenceRouteEnvironment();
 
 function request(
   method: string,
@@ -74,27 +35,6 @@ function request(
     method,
   });
 }
-
-beforeEach(() => {
-  for (const key of CONFIG_KEYS) {
-    delete process.env[key];
-  }
-  resetGitHubEnvironmentCache();
-});
-
-afterEach(() => {
-  globalThis.fetch = originalFetch;
-  setPreferenceStoreOverride(null);
-  for (const key of CONFIG_KEYS) {
-    const value = originalEnvironment.get(key);
-    if (value == null) {
-      delete process.env[key];
-    } else {
-      process.env[key] = value;
-    }
-  }
-  resetGitHubEnvironmentCache();
-});
 
 describe('/api/preferences', () => {
   test('reports itself disabled when no store is configured', async () => {

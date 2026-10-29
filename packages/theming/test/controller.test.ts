@@ -426,4 +426,36 @@ describe('createThemeController', () => {
     });
     expect(second.getState().mode).toBe('dark');
   });
+
+  test('reloadFromPersistence applies a replaced selection without saving', async () => {
+    const store: { sel?: unknown } = {};
+    const saves: unknown[] = [];
+    const controller = createThemeController({
+      resolver: makeResolver(),
+      persistence: {
+        load: () => (store.sel ?? null) as never,
+        save: (s: unknown) => {
+          saves.push(s);
+        },
+      },
+      defaultMode: 'light',
+      defaultLightThemeName: 'test-light',
+      defaultDarkThemeName: 'test-dark',
+    });
+    await tick();
+
+    store.sel = {
+      mode: 'dark',
+      lightThemeName: 'test-light',
+      darkThemeName: 'test-dark',
+    };
+    controller.reloadFromPersistence();
+    await tick();
+
+    const state = controller.getState();
+    expect(state.mode).toBe('dark');
+    expect(state.resolvedColorScheme).toBe('dark');
+    expect(state.resolvedTheme?.name).toBe('test-dark');
+    expect(saves).toEqual([]);
+  });
 });

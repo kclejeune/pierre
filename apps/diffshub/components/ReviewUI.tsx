@@ -54,13 +54,15 @@ import {
 import { MOBILE_MEDIA_QUERY } from '@/lib/constants';
 import { describeDiffRefs, formatDiffSourceShorthand } from '@/lib/diffRefs';
 import {
+  DEFAULT_DISPLAY_SETTINGS,
   loadDisplaySettings,
-  saveDisplaySettings,
+  updateDisplaySettings,
 } from '@/lib/displaySettings';
 import { parseGitHubDiffSource } from '@/lib/githubDiffSource';
 import { incrementItemVersion } from '@/lib/incrementItemVersion';
 import { isDiffItem } from '@/lib/isDiffItem';
 import { getOpenDocDiff } from '@/lib/isDocAnnotation';
+import { onPreferencesRestored } from '@/lib/preferenceSync';
 import {
   createCommentAnchor,
   deletePullDiscussionComment,
@@ -138,12 +140,15 @@ function ReviewUIInner({
   const handleSetDiffStyle = useCallback((style: 'split' | 'unified') => {
     setDiffStylePreference(style);
     setDiffStyle(style);
+    updateDisplaySettings({ diffStyle: style });
   }, []);
   const [collapseMode, setCollapseMode] = useState<'expanded' | 'collapsed'>(
-    'expanded'
+    DEFAULT_DISPLAY_SETTINGS.collapseMode
   );
   const [fileTreeOverlayOpen, setFileTreeOverlayOpen] = useState(false);
-  const [markdownView, setMarkdownView] = useState<'rendered' | 'raw'>('raw');
+  const [markdownView, setMarkdownView] = useState<'rendered' | 'raw'>(
+    DEFAULT_DISPLAY_SETTINGS.markdownView
+  );
   // Auto-collapse patterns are a persisted personal preference; load them
   // after mount so the SSR markup stays deterministic.
   const [collapsePatternsText, setCollapsePatternsText] = useState('');
@@ -154,10 +159,36 @@ function ReviewUIInner({
     () => compileCollapsePatterns(parseCollapsePatterns(collapsePatternsText)),
     [collapsePatternsText]
   );
-  const [overflow, setOverflow] = useState<'wrap' | 'scroll'>('scroll');
-  const [showBackgrounds, setShowBackgrounds] = useState(true);
-  const [diffIndicators, setDiffIndicators] = useState<DiffIndicators>('bars');
-  const [lineNumbers, setLineNumbers] = useState(true);
+  const [overflow, setOverflow] = useState<'wrap' | 'scroll'>(
+    DEFAULT_DISPLAY_SETTINGS.overflow
+  );
+  const [showBackgrounds, setShowBackgrounds] = useState<boolean>(
+    DEFAULT_DISPLAY_SETTINGS.showBackgrounds
+  );
+  const [diffIndicators, setDiffIndicators] = useState<DiffIndicators>(
+    DEFAULT_DISPLAY_SETTINGS.diffIndicators
+  );
+  const [lineNumbers, setLineNumbers] = useState<boolean>(
+    DEFAULT_DISPLAY_SETTINGS.lineNumbers
+  );
+  // Header controls for the display settings with no other side effects:
+  // each updates state and persists only the changed field.
+  const handleSetDiffIndicators = useCallback((value: DiffIndicators) => {
+    setDiffIndicators(value);
+    updateDisplaySettings({ diffIndicators: value });
+  }, []);
+  const handleSetLineNumbers = useCallback((value: boolean) => {
+    setLineNumbers(value);
+    updateDisplaySettings({ lineNumbers: value });
+  }, []);
+  const handleSetOverflow = useCallback((value: 'wrap' | 'scroll') => {
+    setOverflow(value);
+    updateDisplaySettings({ overflow: value });
+  }, []);
+  const handleSetShowBackgrounds = useCallback((value: boolean) => {
+    setShowBackgrounds(value);
+    updateDisplaySettings({ showBackgrounds: value });
+  }, []);
   const {
     clearToken: clearGitHubToken,
     hasToken: hasGitHubToken,
@@ -429,65 +460,70 @@ function ReviewUIInner({
   // Restore persisted display settings after mount (the server render uses
   // the defaults, so hydrating in an effect keeps SSR markup deterministic —
   // same pattern as the theme controller). The apply* calls also rewrite any
-  // items that may have loaded before this effect ran. Saving is gated on
-  // hydration so the defaults never clobber stored values.
-  const [settingsHydrated, setSettingsHydrated] = useState(false);
+  // items that may have loaded before this effect ran. Settings are saved only
+  // by the user-action handlers, so restoring never writes defaults back.
+  // The collapse mode and markdown view currently applied to loaded files.
+  // A restore re-walks the files only when one of these actually changes,
+  // since re-applying would also expand files collapsed by a reviewed mark or
+  // a pattern and reset per-file markdown toggles.
+  const collapseModeRef = useRef(collapseMode);
+  const markdownViewRef = useRef(markdownView);
   useEffect(() => {
-    const stored = loadDisplaySettings();
-    if (stored.diffStyle != null) {
-      setDiffStylePreference(stored.diffStyle);
-      if (!window.matchMedia(MOBILE_MEDIA_QUERY).matches) {
-        setDiffStyle(stored.diffStyle);
-      }
+    collapseModeRef.current = collapseMode;
+    markdownViewRef.current = markdownView;
+  }, [collapseMode, markdownView]);
+  // Applies the stored settings, with the defaults for any field the stored
+  // object lacks (a restored server copy can carry fewer fields than this
+  // browser had set).
+  const restoreDisplaySettings = useCallback(() => {
+    const stored = { ...DEFAULT_DISPLAY_SETTINGS, ...loadDisplaySettings() };
+    const diffStylePick = stored.diffStyle ?? null;
+    setDiffStylePreference(diffStylePick);
+    if (!window.matchMedia(MOBILE_MEDIA_QUERY).matches) {
+      setDiffStyle(diffStylePick ?? 'split');
     }
-    if (stored.collapseMode != null) {
-      setCollapseMode(stored.collapseMode);
+    setCollapseMode(stored.collapseMode);
+    if (stored.collapseMode !== collapseModeRef.current) {
+      collapseModeRef.current = stored.collapseMode;
       applyCollapseModeToLoaded(stored.collapseMode);
     }
-    if (stored.markdownView != null) {
-      setMarkdownView(stored.markdownView);
+    setMarkdownView(stored.markdownView);
+    if (stored.markdownView !== markdownViewRef.current) {
+      markdownViewRef.current = stored.markdownView;
       applyMarkdownViewToLoaded(stored.markdownView);
     }
-    if (stored.diffIndicators != null) {
-      setDiffIndicators(stored.diffIndicators);
-    }
-    if (stored.lineNumbers != null) {
-      setLineNumbers(stored.lineNumbers);
-    }
-    if (stored.overflow != null) {
-      setOverflow(stored.overflow);
-    }
-    if (stored.showBackgrounds != null) {
-      setShowBackgrounds(stored.showBackgrounds);
-    }
-    setSettingsHydrated(true);
+    setDiffIndicators(stored.diffIndicators);
+    setLineNumbers(stored.lineNumbers);
+    setOverflow(stored.overflow);
+    setShowBackgrounds(stored.showBackgrounds);
   }, [applyCollapseModeToLoaded, applyMarkdownViewToLoaded]);
   useEffect(() => {
-    if (!settingsHydrated) {
-      return;
-    }
-    saveDisplaySettings({
-      collapseMode,
-      diffIndicators,
-      lineNumbers,
-      markdownView,
-      overflow,
-      showBackgrounds,
-      ...(diffStylePreference != null
-        ? { diffStyle: diffStylePreference }
-        : {}),
-    });
-  }, [
-    collapseMode,
-    diffIndicators,
-    diffStylePreference,
-    lineNumbers,
-    markdownView,
-    overflow,
-    settingsHydrated,
-    showBackgrounds,
-  ]);
-
+    restoreDisplaySettings();
+  }, [restoreDisplaySettings]);
+  const applyCollapsePatternsText = useCallback(
+    (text: string) => {
+      applyCollapsePatternsToLoaded(
+        compileCollapsePatterns(parseCollapsePatterns(text))
+      );
+    },
+    [applyCollapsePatternsToLoaded]
+  );
+  // Display settings and auto-collapse patterns restored from the server after
+  // sign-in (lib/preferenceSync) land in localStorage after the mount-time
+  // reads above, so re-read and re-apply them.
+  useEffect(
+    () => onPreferencesRestored(['displaySettings'], restoreDisplaySettings),
+    [restoreDisplaySettings]
+  );
+  useEffect(
+    () =>
+      onPreferencesRestored(['collapsePatterns'], () => {
+        const text = loadCollapsePatternsText();
+        setCollapsePatternsText(text);
+        applyCollapsePatternsText(text);
+      }),
+    [applyCollapsePatternsText]
+  );
   // Re-runs when the preference changes; that just re-applies the style the
   // setter already set, and keeps the breakpoint restore reading one source
   // of truth.
@@ -567,11 +603,13 @@ function ReviewUIInner({
     const next = collapseMode === 'expanded' ? 'collapsed' : 'expanded';
     setCollapseMode(next);
     applyCollapseModeToLoaded(next);
+    updateDisplaySettings({ collapseMode: next });
   }, [applyCollapseModeToLoaded, collapseMode]);
   const handleToggleMarkdownView = useCallback(() => {
     const next = markdownView === 'rendered' ? 'raw' : 'rendered';
     setMarkdownView(next);
     applyMarkdownViewToLoaded(next);
+    updateDisplaySettings({ markdownView: next });
   }, [applyMarkdownViewToLoaded, markdownView]);
   // The textarea updates per keystroke, but persisting and re-walking every
   // loaded item is debounced — intermediate prefixes like "ven" are valid
@@ -595,12 +633,10 @@ function ReviewUIInner({
       collapsePatternsApplyTimeoutRef.current = window.setTimeout(() => {
         collapsePatternsApplyTimeoutRef.current = null;
         saveCollapsePatternsText(text);
-        applyCollapsePatternsToLoaded(
-          compileCollapsePatterns(parseCollapsePatterns(text))
-        );
+        applyCollapsePatternsText(text);
       }, 500);
     },
-    [applyCollapsePatternsToLoaded]
+    [applyCollapsePatternsText]
   );
   const handleCommentSaved = useCallback(
     (comment: DiffsHubSavedCommentEvent) => {
@@ -976,12 +1012,12 @@ function ReviewUIInner({
           onToggleMarkdownView={handleToggleMarkdownView}
           setColorMode={setColorMode}
           setDarkThemeName={setDarkThemeName}
-          setDiffIndicators={setDiffIndicators}
+          setDiffIndicators={handleSetDiffIndicators}
           setDiffStyle={handleSetDiffStyle}
           setLightThemeName={setLightThemeName}
-          setLineNumbers={setLineNumbers}
-          setOverflow={setOverflow}
-          setShowBackgrounds={setShowBackgrounds}
+          setLineNumbers={handleSetLineNumbers}
+          setOverflow={handleSetOverflow}
+          setShowBackgrounds={handleSetShowBackgrounds}
           showBackgrounds={showBackgrounds}
         />
         {viewerAvailable && treeSource != null ? (

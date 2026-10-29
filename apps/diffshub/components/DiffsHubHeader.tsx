@@ -25,10 +25,8 @@ import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import {
   type CSSProperties,
-  type Dispatch,
   memo,
   type ReactNode,
-  type SetStateAction,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -112,12 +110,12 @@ interface HeaderProps {
   onToggleMarkdownView(): void;
   setColorMode(mode: ColorMode): void;
   setDarkThemeName(name: DarkThemeName): void;
-  setDiffIndicators: Dispatch<SetStateAction<DiffIndicators>>;
+  setDiffIndicators(value: DiffIndicators): void;
   setDiffStyle(style: 'split' | 'unified'): void;
   setLightThemeName(name: LightThemeName): void;
-  setLineNumbers: Dispatch<SetStateAction<boolean>>;
-  setOverflow: Dispatch<SetStateAction<'wrap' | 'scroll'>>;
-  setShowBackgrounds: Dispatch<SetStateAction<boolean>>;
+  setLineNumbers(value: boolean): void;
+  setOverflow(value: 'wrap' | 'scroll'): void;
+  setShowBackgrounds(value: boolean): void;
   showBackgrounds: boolean;
 }
 

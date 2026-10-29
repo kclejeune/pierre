@@ -86,9 +86,18 @@ describe('user preference validation', () => {
   test('refuses non-JSON values and oversized maps', () => {
     expect(mergePreferenceChanges({}, { n: Number.NaN }).error).toBeDefined();
     expect(mergePreferenceChanges({}, { f: () => 1 }).error).toBeDefined();
+    // Per-value cap is 32 KiB.
     expect(
-      mergePreferenceChanges({}, { big: 'x'.repeat(9000) }).error
+      mergePreferenceChanges({}, { fits: 'x'.repeat(30_000) }).error
+    ).toBeUndefined();
+    expect(
+      mergePreferenceChanges({}, { big: 'x'.repeat(33_000) }).error
     ).toBeDefined();
+    // Total cap is 256 KiB, across values each under the per-value cap.
+    const wide = Object.fromEntries(
+      Array.from({ length: 9 }, (_, i) => [`v${i}`, 'x'.repeat(30_000)])
+    );
+    expect(mergePreferenceChanges({}, wide).error).toContain('in total');
     const many = Object.fromEntries(
       Array.from({ length: MAX_PREFERENCE_KEYS + 1 }, (_, i) => [`k${i}`, i])
     );

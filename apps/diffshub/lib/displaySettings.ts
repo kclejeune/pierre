@@ -1,11 +1,12 @@
 import type { DiffIndicators } from '@pierre/diffs';
 
-// Persisted viewer display preferences, stored as one localStorage object so
-// they survive reloads like the theme picks do. Every field is optional: only
+import { readSyncedItem, writeSyncedItem } from './preferenceSync';
+
+// Persisted viewer display preferences, stored as one synced preference
+// (lib/preferenceSync) so they survive reloads and follow signed-in viewers
+// across browsers, like the theme picks do. Every field is optional: only
 // values the user has actually set are written, and unknown/invalid stored
 // values fall back to the in-app defaults on load.
-
-const STORAGE_KEY = 'diffshub.display-settings';
 
 export interface DiffsHubDisplaySettings {
   collapseMode?: 'expanded' | 'collapsed';
@@ -17,13 +18,25 @@ export interface DiffsHubDisplaySettings {
   showBackgrounds?: boolean;
 }
 
+// What the viewer shows for a setting nobody has picked. diffStyle has no
+// entry: without a pick it follows the viewport (split on desktop, unified on
+// mobile).
+export const DEFAULT_DISPLAY_SETTINGS = {
+  collapseMode: 'expanded',
+  diffIndicators: 'bars',
+  lineNumbers: true,
+  markdownView: 'raw',
+  overflow: 'scroll',
+  showBackgrounds: true,
+} as const satisfies Required<Omit<DiffsHubDisplaySettings, 'diffStyle'>>;
+
 export function loadDisplaySettings(): DiffsHubDisplaySettings {
+  const raw = readSyncedItem('displaySettings');
+  if (raw == null) {
+    return {};
+  }
   let parsed: unknown;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (raw == null) {
-      return {};
-    }
     parsed = JSON.parse(raw);
   } catch {
     return {};
@@ -64,10 +77,12 @@ export function loadDisplaySettings(): DiffsHubDisplaySettings {
   return settings;
 }
 
-export function saveDisplaySettings(settings: DiffsHubDisplaySettings): void {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  } catch {
-    // Storage unavailable; settings still hold for this session.
-  }
+// Records settings the viewer just changed, on top of what is already stored.
+// Called from user actions only (never to save defaults on load), so only
+// values the viewer actually picked are written and synced.
+export function updateDisplaySettings(patch: DiffsHubDisplaySettings): void {
+  writeSyncedItem(
+    'displaySettings',
+    JSON.stringify({ ...loadDisplaySettings(), ...patch })
+  );
 }

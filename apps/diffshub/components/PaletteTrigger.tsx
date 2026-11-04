@@ -1,7 +1,9 @@
 'use client';
 
-import { type ReactNode, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 
+import { openPalette, type PaletteId } from './PaletteDialog';
+import { ShortcutHint } from './ShortcutHint';
 import { cn } from '@/lib/cn';
 
 interface PaletteTriggerProps {
@@ -9,7 +11,8 @@ interface PaletteTriggerProps {
   children: ReactNode;
   className?: string;
   icon: ReactNode;
-  onClick(): void;
+  // The palette this opens, whose shortcut the hint shows.
+  paletteId: PaletteId;
   shortcutKey: string;
 }
 
@@ -21,14 +24,9 @@ export function PaletteTrigger({
   children,
   className,
   icon,
-  onClick,
+  paletteId,
   shortcutKey,
 }: PaletteTriggerProps) {
-  const [modifier, setModifier] = useState<string | null>(null);
-  useEffect(() => {
-    setModifier(/mac/i.test(navigator.platform) ? '⌘' : 'Ctrl');
-  }, []);
-
   return (
     <button
       type="button"
@@ -37,22 +35,11 @@ export function PaletteTrigger({
         'bg-background/70 text-muted-foreground hover:border-foreground/25 inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm shadow-xs backdrop-blur-sm transition-colors',
         className
       )}
-      onClick={onClick}
+      onClick={() => openPalette(paletteId)}
     >
       {icon}
       <span className="min-w-0 flex-1 truncate text-left">{children}</span>
-      <kbd
-        aria-hidden="true"
-        className={cn(
-          'bg-muted/80 pointer-events-none inline-flex h-5 shrink-0 items-center gap-0.5 rounded border px-1.5 font-mono text-[10px] font-medium',
-          modifier == null && 'opacity-0'
-        )}
-      >
-        <span className={cn((modifier ?? '⌘') === '⌘' && 'text-xs')}>
-          {modifier ?? '⌘'}
-        </span>
-        {shortcutKey.toUpperCase()}
-      </kbd>
+      <ShortcutHint paletteId={paletteId} shortcutKey={shortcutKey} />
     </button>
   );
 }

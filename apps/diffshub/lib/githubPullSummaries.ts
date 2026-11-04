@@ -1,9 +1,16 @@
-// Normalizes GitHub pull request payloads into the row shape the /pulls
-// dashboard renders. Two upstream shapes feed it: GraphQL search nodes (the
-// "active" list, which also reports the viewer's involvement per pull) and
-// /repos/{o}/{r}/pulls items (repo cards, where the caller already knows the
-// repo).
+// Builds the /pulls dashboard's GitHub search and normalizes its GraphQL
+// results into the row shape the dashboard renders. One search shape covers
+// every view: the viewer's involvement terms (or none, for "anyone"), an
+// optional set of repositories, and the GitHub search text typed in the
+// page's query bar.
 
+import type { PullLabel } from './pullInfoClient';
+import {
+  DEFAULT_PULL_SORT,
+  hasOrOperator,
+  hasQualifier,
+  splitPullSort,
+} from './pullSearchQuery';
 import { asRecord } from './untypedJson';
 
 // The ways a viewer can be involved in a pull. The /pulls "active" list is
@@ -56,12 +63,17 @@ export interface PullSummary {
   repo: string;
   authorLogin?: string;
   authorAvatarUrl?: string;
-  state: 'open' | 'draft';
+  state: 'open' | 'draft' | 'closed' | 'merged';
   updatedAt: string;
   viewerPath: string;
-  // Only set on "active" rows, whose GraphQL search reports it.
+  labels?: PullLabel[];
+  // How the viewer is involved, as reported by the GraphQL search.
   activity?: PullActivity[];
 }
+
+// "anyone" drops the involvement terms entirely: every pull matching the rest
+// of the search, which is what a repository's own pull request list shows.
+export type PullAudience = readonly PullInvolvement[] | 'anyone';
 
 // Rows per active-list section.
 const PULLS_PAGE_SIZE = 25;
@@ -161,20 +173,26 @@ function involvementTerm(
     : qualifier;
 }
 
-type SearchScope = {
-  excludeRepos?: readonly string[];
-  // Normalized; empty means every involvement.
-  involves: readonly PullInvolvement[];
-  repo?: string;
+interface PullSearchScope {
+  // Normalized involvements (empty means every involvement), or "anyone".
+  involves: PullAudience;
+  // Restricts the search to these "owner/name" repositories (OR'd).
+  repos?: readonly string[];
   // Defaults to 'direct'.
   reviewRequests?: ReviewRequestScope;
-};
+  // The query bar's GitHub search text, e.g. "is:open label:bug". Its last
+  // sort: qualifier (if any) replaces the default recently-updated order.
+  text?: string;
+}
 
 // The selected involvements as one search qualifier: a single term as-is,
 // several as a parenthesized OR group (terms that skip own pulls grouped
 // with NOT_OWN too), so the group can't swallow the qualifiers appended
-// after it.
-function activeQualifier(scope: SearchScope): string {
+// after it. Undefined for "anyone".
+function audienceQualifier(scope: PullSearchScope): string | undefined {
+  if (scope.involves === 'anyone') {
+    return undefined;
+  }
   const involves = effectivePullInvolvements(scope.involves);
   const reviewRequests = scope.reviewRequests ?? 'direct';
   const [only] = involves;
@@ -188,62 +206,59 @@ function activeQualifier(scope: SearchScope): string {
   return `(${terms.join(' OR ')})`;
 }
 
-// The active-list search: open pulls matching any selected involvement,
-// optionally scoped to one "owner/name" repository (pinned-repo cards) or
-// excluding a set of them (the main list, which drops pulls already shown in
-// the pinned cards above it). `extra` narrows the involvement match further.
+function reposQualifier(repos: readonly string[]): string | undefined {
+  if (repos.length === 0) {
+    return undefined;
+  }
+  const terms = repos.map((repo) => `repo:${repo}`);
+  return terms.length === 1 ? terms[0] : `(${terms.join(' OR ')})`;
+}
+
+// The dashboard search, minus its sort: the typed text first (grouped when it
+// has its own OR, so the AND-ed scope terms after it apply to every branch),
+// then is:pr, the audience, `extra` (which narrows the audience further), and
+// the repository scope. Archived repos are skipped unless the text says
+// otherwise.
 export function buildActiveSearchQuery(
-  scope: SearchScope,
+  scope: PullSearchScope,
   extra?: string
 ): string {
-  let query = `is:open is:pr archived:false ${activeQualifier(scope)}`;
+  const { rest } = splitPullSort(scope.text ?? '');
+  const parts: string[] = [];
+  if (rest !== '') {
+    parts.push(hasOrOperator(rest) ? `(${rest})` : rest);
+  }
+  parts.push('is:pr');
+  if (!hasQualifier(rest, 'archived')) {
+    parts.push('archived:false');
+  }
+  const audience = audienceQualifier(scope);
+  if (audience != null) {
+    parts.push(audience);
+  }
   if (extra != null) {
-    query += ` ${extra}`;
+    parts.push(extra);
   }
-  if (scope.repo != null) {
-    query += ` repo:${scope.repo}`;
+  const repos = reposQualifier(scope.repos ?? []);
+  if (repos != null) {
+    parts.push(repos);
   }
-  for (const repo of scope.excludeRepos ?? []) {
-    query += ` -repo:${repo}`;
-  }
-  return query;
+  return parts.join(' ');
 }
 
-function parsePullItem(
-  value: unknown,
-  repoRef: { owner: string; repo: string }
-): PullSummary | undefined {
-  if (typeof value !== 'object' || value == null) {
-    return undefined;
-  }
-  const record = value as Record<string, unknown>;
-  if (
-    typeof record.number !== 'number' ||
-    typeof record.title !== 'string' ||
-    typeof record.updated_at !== 'string'
-  ) {
-    return undefined;
-  }
-  const user = asRecord(record.user);
-  return buildPullSummary({
-    ...repoRef,
-    number: record.number,
-    title: record.title,
-    isDraft: record.draft === true,
-    updatedAt: record.updated_at,
-    authorLogin: user?.login,
-    authorAvatarUrl: user?.avatar_url,
-  });
+// The sort the search runs with: the typed one, or recently updated first.
+function readSearchSort(scope: PullSearchScope): string {
+  return splitPullSort(scope.text ?? '').sort ?? DEFAULT_PULL_SORT;
 }
 
-// Assembles the row once both payload shapes have been read into the same
-// field names: derives state and viewerPath, and drops empty author fields.
+// Assembles the row from a search node's fields: derives viewerPath and
+// drops empty author fields.
 function buildPullSummary(fields: {
   owner: string;
   repo: string;
   number: number;
   title: string;
-  isDraft: boolean;
+  state: PullSummary['state'];
   updatedAt: string;
   authorLogin: unknown;
   authorAvatarUrl: unknown;
@@ -254,7 +269,7 @@ function buildPullSummary(fields: {
     title: fields.title,
     owner,
     repo,
-    state: fields.isDraft ? 'draft' : 'open',
+    state: fields.state,
     updatedAt: fields.updatedAt,
     viewerPath: `/${owner}/${repo}/pull/${number}`,
   };
@@ -267,36 +282,27 @@ function buildPullSummary(fields: {
   return summary;
 }
 
-export function parseRepoPullsPayload(
-  owner: string,
-  repo: string,
-  payload: unknown
-): PullSummary[] {
-  if (!Array.isArray(payload)) {
-    return [];
-  }
-  return payload
-    .map((item) => parsePullItem(item, { owner, repo }))
-    .filter((pull): pull is PullSummary => pull != null);
-}
-
-// One GraphQL request for an active-list section: the pull list itself plus a
-// commenter:@me subset (ids only) that marks which rows the viewer commented
-// on, since no per-pull viewer field reports conversation comments. The
-// subset is the main search narrowed by the "commented" term, sorted the same
-// way, so every commented pull in the main page also lands in the subset's
-// page. $withCommented skips the subset when it can't match anything.
-// ISSUE_ADVANCED opts into the search syntax that understands the OR group.
-export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: String!, $withCommented: Boolean!, $first: Int!) {
-  pulls: search(query: $query, type: ISSUE_ADVANCED, first: $first) {
+// One GraphQL request for a page of the dashboard list: the pull page itself
+// plus a commenter:@me subset (ids only) that marks which rows the viewer
+// commented on, since no per-pull viewer field reports conversation comments.
+// The subset is the main search narrowed by the "commented" term, sorted the
+// same way, so every commented pull in the main page also lands in the
+// subset's page (see buildActivePullsVariables for later pages).
+// $withCommented skips the subset when it can't match anything.
+// ISSUE_ADVANCED opts into the search syntax that understands OR groups.
+export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: String!, $withCommented: Boolean!, $first: Int!, $commentedFirst: Int!, $after: String) {
+  pulls: search(query: $query, type: ISSUE_ADVANCED, first: $first, after: $after) {
     issueCount
+    pageInfo { endCursor hasNextPage }
     nodes {
       ... on PullRequest {
         id
         number
         title
         isDraft
+        state
         updatedAt
+        labels(first: 6) { nodes { name color } }
         author { login avatarUrl }
         repository { name owner { login } }
         viewerDidAuthor
@@ -306,32 +312,110 @@ export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: Stri
       }
     }
   }
-  commented: search(query: $commentedQuery, type: ISSUE_ADVANCED, first: $first) @include(if: $withCommented) {
+  commented: search(query: $commentedQuery, type: ISSUE_ADVANCED, first: $commentedFirst) @include(if: $withCommented) {
     nodes { ... on PullRequest { id } }
   }
 }`;
 
-export function buildActivePullsVariables(scope: SearchScope): {
+// Where the next page starts: GitHub's search cursor, the updatedAt of the
+// last row already shown (which bounds the commented subset on that page),
+// and how many shown rows share that timestamp (the subset's overlap with
+// what's already on screen). Serialized opaquely so the client just echoes
+// it back.
+interface PullsPageCursor {
+  after: string;
+  lastUpdatedAt: string;
+  boundaryRows: number;
+}
+
+export function encodePullsCursor(cursor: PullsPageCursor): string {
+  return btoa(
+    JSON.stringify([cursor.after, cursor.lastUpdatedAt, cursor.boundaryRows])
+  );
+}
+
+export function decodePullsCursor(value: string): PullsPageCursor | undefined {
+  try {
+    const parsed: unknown = JSON.parse(atob(value));
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 3 &&
+      typeof parsed[0] === 'string' &&
+      typeof parsed[1] === 'string' &&
+      /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(parsed[1]) &&
+      Number.isInteger(parsed[2]) &&
+      parsed[2] >= 1 &&
+      parsed[2] <= PULLS_PAGE_SIZE
+    ) {
+      return {
+        after: parsed[0],
+        lastUpdatedAt: parsed[1],
+        boundaryRows: parsed[2] as number,
+      };
+    }
+  } catch {
+    // Fall through: a malformed cursor reads as no cursor.
+  }
+  return undefined;
+}
+
+// The commented subset on a later page. The subset can't share the main
+// search's cursor, so it restarts from the previous page's last updatedAt
+// instead. The bound is inclusive (rows on this page can share that
+// timestamp), so the subset can also return already-shown rows at the
+// boundary; buildActivePullsVariables widens it by that many so they can't
+// crowd out this page's last rows. Only the updated sorts have such a bound;
+// other sorts skip the chips' commented detail past page one.
+function laterPageCommentedBound(
+  sort: string,
+  cursor: PullsPageCursor
+): string | undefined {
+  if (sort === 'updated' || sort === DEFAULT_PULL_SORT) {
+    return `updated:<=${cursor.lastUpdatedAt}`;
+  }
+  if (sort === 'updated-asc') {
+    return `updated:>=${cursor.lastUpdatedAt}`;
+  }
+  return undefined;
+}
+
+export function buildActivePullsVariables(
+  scope: PullSearchScope,
+  cursor?: PullsPageCursor
+): {
+  after?: string;
+  commentedFirst: number;
   commentedQuery: string;
   first: number;
   query: string;
   withCommented: boolean;
 } {
-  const sorted = (query: string) => `${query} sort:updated-desc`;
+  const sort = readSearchSort(scope);
+  const sorted = (query: string) => `${query} sort:${sort}`;
+  const commentedTerm = involvementTerm(
+    'commented',
+    scope.reviewRequests ?? 'direct'
+  );
+  const bound =
+    cursor == null ? undefined : laterPageCommentedBound(sort, cursor);
+  const commentedExtra =
+    bound == null ? commentedTerm : `${commentedTerm} ${bound}`;
+  // The commented term skips own pulls, so an Authored-only selection can
+  // never overlap it.
+  const audienceCanComment =
+    scope.involves === 'anyone' ||
+    !effectivePullInvolvements(scope.involves).every(
+      (involvement) => involvement === 'authored'
+    );
+  // An undefined `after` drops out of the serialized variables.
   return {
-    commentedQuery: sorted(
-      buildActiveSearchQuery(
-        scope,
-        involvementTerm('commented', scope.reviewRequests ?? 'direct')
-      )
-    ),
+    after: cursor?.after,
+    commentedFirst:
+      PULLS_PAGE_SIZE + (bound == null ? 0 : (cursor?.boundaryRows ?? 0)),
+    commentedQuery: sorted(buildActiveSearchQuery(scope, commentedExtra)),
     first: PULLS_PAGE_SIZE,
     query: sorted(buildActiveSearchQuery(scope)),
-    // The commented term skips own pulls, so an Authored-only selection can
-    // never overlap it.
-    withCommented: !effectivePullInvolvements(scope.involves).every(
-      (involvement) => involvement === 'authored'
-    ),
+    withCommented: audienceCanComment && (cursor == null || bound != null),
   };
 }
 
@@ -402,27 +486,63 @@ function parseGraphQLPullNode(
     return undefined;
   }
   const author = asRecord(record.author);
-  return {
+  const summary: PullSummary = {
     ...buildPullSummary({
       owner,
       repo,
       number: record.number,
       title: record.title,
-      isDraft: record.isDraft === true,
+      state: readPullState(record),
       updatedAt: record.updatedAt,
       authorLogin: author?.login,
       authorAvatarUrl: author?.avatarUrl,
     }),
     activity: readViewerActivity(record, commentedIds),
   };
+  const labels = readLabels(record);
+  if (labels.length > 0) {
+    summary.labels = labels;
+  }
+  return summary;
 }
 
-// Reads ACTIVE_PULLS_QUERY's `data` into the { pulls, totalCount } shape the
-// dashboard sections render.
-export function parseActivePullsPayload(data: unknown): {
+// Merged and closed win over draft: a closed draft reads as closed on GitHub.
+function readPullState(record: Record<string, unknown>): PullSummary['state'] {
+  if (record.state === 'MERGED') {
+    return 'merged';
+  }
+  if (record.state === 'CLOSED') {
+    return 'closed';
+  }
+  return record.isDraft === true ? 'draft' : 'open';
+}
+
+function readLabels(record: Record<string, unknown>): PullLabel[] {
+  const nodes = asRecord(record.labels)?.nodes;
+  const labels: PullLabel[] = [];
+  for (const node of Array.isArray(nodes) ? nodes : []) {
+    const label = asRecord(node);
+    if (
+      typeof label?.name === 'string' &&
+      typeof label.color === 'string' &&
+      /^[0-9a-f]{6}$/i.test(label.color)
+    ) {
+      labels.push({ name: label.name, color: label.color });
+    }
+  }
+  return labels;
+}
+
+export interface PullsPage {
   pulls: PullSummary[];
   totalCount: number;
-} {
+  // Present while GitHub reports another page.
+  nextCursor?: string;
+}
+
+// Reads ACTIVE_PULLS_QUERY's `data` into the page shape the dashboard
+// renders.
+export function parseActivePullsPayload(data: unknown): PullsPage {
   const pullsSearch = asRecord(asRecord(data)?.pulls);
   const commentedNodes = asRecord(asRecord(data)?.commented)?.nodes;
   const commentedIds = new Set<string>();
@@ -440,5 +560,23 @@ export function parseActivePullsPayload(data: unknown): {
     typeof pullsSearch?.issueCount === 'number'
       ? pullsSearch.issueCount
       : pulls.length;
+  const pageInfo = asRecord(pullsSearch?.pageInfo);
+  const last = pulls.at(-1);
+  if (
+    pageInfo?.hasNextPage === true &&
+    typeof pageInfo.endCursor === 'string' &&
+    last != null
+  ) {
+    return {
+      pulls,
+      totalCount,
+      nextCursor: encodePullsCursor({
+        after: pageInfo.endCursor,
+        lastUpdatedAt: last.updatedAt,
+        boundaryRows: pulls.filter((pull) => pull.updatedAt === last.updatedAt)
+          .length,
+      }),
+    };
+  }
   return { pulls, totalCount };
 }

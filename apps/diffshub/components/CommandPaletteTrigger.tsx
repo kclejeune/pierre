@@ -2,7 +2,6 @@
 
 import { IconSearch } from '@pierre/icons';
 
-import { openCommandPalette } from './CommandPalette';
 import { PaletteTrigger } from './PaletteTrigger';
 
 // A search-input lookalike that opens the command palette, with the
@@ -15,8 +14,8 @@ export function CommandPaletteTrigger({ className }: { className?: string }) {
       aria-label="Search repositories and pull requests"
       className={className}
       icon={<IconSearch className="size-4 shrink-0 opacity-60" />}
+      paletteId="command"
       shortcutKey="k"
-      onClick={openCommandPalette}
     >
       Search…
     </PaletteTrigger>

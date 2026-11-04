@@ -3,9 +3,9 @@ import type { Metadata } from 'next';
 import { PullsDashboard } from './PullsDashboard';
 
 export const metadata: Metadata = {
-  title: 'Your pull requests · DiffsHub',
+  title: 'Pull requests · DiffsHub',
   description:
-    'Browse your open pull requests, assigned reviews, and pinned repositories.',
+    'Search pull requests across your repositories or within one, with GitHub search filters and pinned repositories.',
 };
 
 // The /pulls dashboard. All data is client-fetched with the viewer's stored

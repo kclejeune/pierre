@@ -33,8 +33,10 @@ const ITEM_ICONS: Record<PaletteItem['kind'], typeof IconBranch> = {
 
 // Fired by UI affordances (e.g. the home page's search bar) to open the
 // palette without a keyboard shortcut; the mounted palette listens globally.
-export function openCommandPalette(): void {
-  openPalette('command');
+// `initialQuery` starts it on that text (the /pulls repo switcher's "search
+// everywhere" item).
+export function openCommandPalette(initialQuery?: string): void {
+  openPalette('command', initialQuery);
 }
 
 // Global cmd+K / ctrl+K switcher: recent diffs and pinned repos when idle,
@@ -56,13 +58,16 @@ export function CommandPalette() {
     []
   );
 
-  const handleOpenChange = useCallback((nextOpen: boolean) => {
-    setOpen(nextOpen);
-    if (nextOpen) {
-      setQuery('');
-      setRecents(loadRecentDiffs());
-    }
-  }, []);
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean, initialQuery?: string) => {
+      setOpen(nextOpen);
+      if (nextOpen) {
+        setQuery(initialQuery ?? '');
+        setRecents(loadRecentDiffs());
+      }
+    },
+    []
+  );
 
   const sections = useMemo(
     () =>

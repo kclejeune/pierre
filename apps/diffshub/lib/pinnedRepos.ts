@@ -16,6 +16,29 @@ export function isValidRepoName(repo: string): boolean {
   return REPO_PATTERN.test(repo);
 }
 
+// Reads a stored "owner/name" list (pins, the /pulls recents): valid names
+// only, de-duplicated case-insensitively keeping the first, capped at `max`.
+// Anything that isn't an array reads as empty.
+export function parseRepoList(value: unknown, max: number): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const repos: string[] = [];
+  for (const entry of value) {
+    if (
+      typeof entry === 'string' &&
+      isValidRepoName(entry) &&
+      !isRepoPinned(repos, entry)
+    ) {
+      repos.push(entry);
+    }
+    if (repos.length >= max) {
+      break;
+    }
+  }
+  return repos;
+}
+
 export function loadPinnedRepos(): string[] {
   const raw = readSyncedItem('pinnedRepos');
   if (raw == null) {
@@ -27,23 +50,7 @@ export function loadPinnedRepos(): string[] {
   } catch {
     return [];
   }
-  if (!Array.isArray(parsed)) {
-    return [];
-  }
-  const repos: string[] = [];
-  for (const entry of parsed) {
-    if (
-      typeof entry === 'string' &&
-      isValidRepoName(entry) &&
-      !isRepoPinned(repos, entry)
-    ) {
-      repos.push(entry);
-    }
-    if (repos.length >= MAX_PINNED_REPOS) {
-      break;
-    }
-  }
-  return repos;
+  return parseRepoList(parsed, MAX_PINNED_REPOS);
 }
 
 export function savePinnedRepos(repos: string[]): void {

@@ -22,7 +22,11 @@ import type { DiffSearchController } from './useDiffSearchController';
 import { useSymbolHoverPreview } from './useSymbolHoverPreview';
 import type { DiffLocation, DiffSearchQuery } from '@/lib/diffSearch';
 import { NavigationHistory } from '@/lib/navigationHistory';
-import { getNavigateBackShortcutLabel, isMacPlatform } from '@/lib/platform';
+import {
+  getNavigateBackShortcutLabel,
+  isEditableEventTarget,
+  isMacPlatform,
+} from '@/lib/platform';
 import { findSymbolDefinitions, isSameLine } from '@/lib/symbolSearch';
 
 // How long the highlight on a jumped-to location stays up.
@@ -307,16 +311,5 @@ function isFindBarFocused(): boolean {
     document.activeElement?.closest(
       '[role="search"][aria-label="Find in file"]'
     ) != null
-  );
-}
-
-function isEditableEventTarget(event: KeyboardEvent): boolean {
-  const [target] = event.composedPath();
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-  return (
-    target.isContentEditable ||
-    target.closest('input, textarea, select, [contenteditable]') != null
   );
 }

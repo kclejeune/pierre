@@ -1,6 +1,6 @@
 'use client';
 
-import { IconBranch, IconDraft } from '@pierre/icons';
+import { IconBranch, IconDraft, IconMerged } from '@pierre/icons';
 import Link from 'next/link';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
@@ -11,6 +11,7 @@ import {
   type PullActivity,
   type PullSummary,
 } from '@/lib/githubPullSummaries';
+import type { PullLabel } from '@/lib/pullInfoClient';
 import { recordRecentDiff } from '@/lib/recentDiffs';
 
 // Chip colors for the viewer's involvement on "active" rows. Pending
@@ -30,6 +31,34 @@ const ACTIVITY_CHIP_CLASSES: Record<PullActivity, string> = {
   commented: MUTED,
 };
 
+// The state glyph, in GitHub's state colors: open green, merged purple,
+// closed red, drafts muted.
+const STATE_DISPLAY: Record<
+  PullSummary['state'],
+  { icon: typeof IconBranch; className: string; label: string }
+> = {
+  open: {
+    icon: IconBranch,
+    className: 'text-[#18a46c]',
+    label: 'Open pull request',
+  },
+  draft: {
+    icon: IconDraft,
+    className: 'text-muted-foreground',
+    label: 'Draft pull request',
+  },
+  merged: {
+    icon: IconMerged,
+    className: 'text-violet-600 dark:text-violet-400',
+    label: 'Merged pull request',
+  },
+  closed: {
+    icon: IconBranch,
+    className: 'text-red-600 dark:text-red-400',
+    label: 'Closed pull request',
+  },
+};
+
 interface PullRequestRowProps {
   pull: PullSummary;
   // Hide the owner/repo label inside sections already scoped to one repo.
@@ -39,7 +68,8 @@ interface PullRequestRowProps {
 // One dashboard pull row. Clicking records the diff in recents with its title,
 // which the patch stream lacks.
 export function PullRequestRow({ pull, showRepo = true }: PullRequestRowProps) {
-  const StateIcon = pull.state === 'draft' ? IconDraft : IconBranch;
+  const stateDisplay = STATE_DISPLAY[pull.state];
+  const StateIcon = stateDisplay.icon;
   return (
     <Link
       href={pull.viewerPath}
@@ -50,19 +80,14 @@ export function PullRequestRow({ pull, showRepo = true }: PullRequestRowProps) {
       className="hover:bg-accent/60 focus-visible:ring-ring flex items-center gap-3 border-b p-3 transition-colors outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 focus-visible:ring-2 focus-visible:ring-inset"
     >
       <StateIcon
-        className={cn(
-          'size-4 shrink-0',
-          pull.state === 'draft' ? 'text-muted-foreground' : 'text-[#18a46c]'
-        )}
-        aria-label={
-          pull.state === 'draft' ? 'Draft pull request' : 'Open pull request'
-        }
+        className={cn('size-4 shrink-0', stateDisplay.className)}
+        aria-label={stateDisplay.label}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <span className="text-foreground truncate text-sm font-medium">
           {pull.title}
         </span>
-        <div className="flex min-w-0 items-center gap-1.5">
+        <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
           <span className="text-muted-foreground truncate text-xs">
             {showRepo ? `${pull.owner}/${pull.repo} ` : ''}#{pull.number}
           </span>
@@ -76,6 +101,9 @@ export function PullRequestRow({ pull, showRepo = true }: PullRequestRowProps) {
             >
               {PULL_ACTIVITY_LABELS[activity]}
             </span>
+          ))}
+          {pull.labels?.map((label) => (
+            <LabelChip key={label.name} label={label} />
           ))}
         </div>
       </div>
@@ -96,5 +124,20 @@ export function PullRequestRow({ pull, showRepo = true }: PullRequestRowProps) {
         </span>
       )}
     </Link>
+  );
+}
+
+// A repository label: the label's own color as a dot, with the name in the
+// row's muted text so arbitrary label colors never decide legibility.
+function LabelChip({ label }: { label: PullLabel }) {
+  return (
+    <span className="text-muted-foreground inline-flex max-w-40 shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] leading-none">
+      <span
+        aria-hidden="true"
+        className="size-1.5 shrink-0 rounded-full"
+        style={{ backgroundColor: `#${label.color}` }}
+      />
+      <span className="truncate">{label.name}</span>
+    </span>
   );
 }

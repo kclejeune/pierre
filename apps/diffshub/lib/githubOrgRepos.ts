@@ -1,4 +1,4 @@
-// Organization repository listings for the /pulls repo switcher's search,
+// Organization repository listings for the command palette's repo search,
 // cached once per organization for every viewer, with access checked per
 // viewer before any name is returned.
 //
@@ -421,7 +421,7 @@ export async function filterAccessibleRepos(
   return candidates.filter((fullName) => access.get(fullName) === true);
 }
 
-// A switcher query split for the two-pass search: "owner/name" narrows to
+// A palette query split for the two-pass search: "owner/name" narrows to
 // orgs whose login contains the owner part, then matches the name part;
 // anything else matches whole "org/name" paths.
 export interface OrgRepoQuery {

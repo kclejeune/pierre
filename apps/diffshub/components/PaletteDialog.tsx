@@ -1,11 +1,6 @@
 'use client';
 
-import {
-  type ComponentProps,
-  type ReactNode,
-  useEffect,
-  useSyncExternalStore,
-} from 'react';
+import { type ComponentProps, type ReactNode, useEffect } from 'react';
 
 import { Command } from './Command';
 import {
@@ -37,51 +32,8 @@ interface PaletteDialogProps {
   footer?: ReactNode;
 }
 
-export type PaletteId = 'command' | 'file' | 'repo-scope';
+export type PaletteId = 'command' | 'file';
 const OPEN_PALETTE_EVENT = 'diffshub:open-palette';
-
-// Which palette each shortcut key opens. Palettes claim their key on mount
-// and the most recent claim wins, so a page-level palette (the /pulls repo
-// switcher) can take over cmd+K from the global diff switcher while that
-// page is mounted, handing it back on unmount.
-const shortcutClaims = new Map<string, PaletteId[]>();
-const claimListeners = new Set<() => void>();
-
-function claimShortcut(key: string, paletteId: PaletteId): () => void {
-  shortcutClaims.set(key, [...(shortcutClaims.get(key) ?? []), paletteId]);
-  claimListeners.forEach((listener) => listener());
-  return () => {
-    const claims = shortcutClaims.get(key) ?? [];
-    const index = claims.lastIndexOf(paletteId);
-    if (index >= 0) {
-      shortcutClaims.set(
-        key,
-        claims.filter((_, position) => position !== index)
-      );
-    }
-    claimListeners.forEach((listener) => listener());
-  };
-}
-
-function shortcutOwner(key: string): PaletteId | undefined {
-  return shortcutClaims.get(key)?.at(-1);
-}
-
-function subscribeToClaims(listener: () => void): () => void {
-  claimListeners.add(listener);
-  return () => claimListeners.delete(listener);
-}
-
-// Whether `paletteId` currently answers its shortcut, for triggers that show
-// the shortcut as a hint. True during SSR, where no page palette has claimed
-// anything yet.
-export function useOwnsShortcut(key: string, paletteId: PaletteId): boolean {
-  return useSyncExternalStore(
-    subscribeToClaims,
-    () => (shortcutOwner(key) ?? paletteId) === paletteId,
-    () => true
-  );
-}
 
 interface OpenPaletteDetail {
   initialQuery?: string;
@@ -89,8 +41,8 @@ interface OpenPaletteDetail {
 }
 
 // Opens `paletteId` (closing any other open palette), optionally starting it
-// on `initialQuery`, e.g. the /pulls repo switcher handing its text to the
-// diff switcher.
+// on `initialQuery`, e.g. a URL field handing typed text that isn't a URL to
+// the command palette.
 export function openPalette(paletteId: PaletteId, initialQuery?: string): void {
   window.dispatchEvent(
     new CustomEvent<OpenPaletteDetail>(OPEN_PALETTE_EVENT, {
@@ -99,7 +51,15 @@ export function openPalette(paletteId: PaletteId, initialQuery?: string): void {
   );
 }
 
-// The shared shell of the command palettes (cmd+K diff switcher, cmd+P
+// Focuses the search input of the palette rendered inside `container`.
+// Shared by the dialog's initial focus and controls that unmount while
+// focused (the command palette's repository chip), so focus never strands on
+// the dialog itself, where typing does nothing.
+export function focusPaletteInput(container: Element | null): void {
+  container?.querySelector<HTMLInputElement>('[cmdk-input]')?.focus();
+}
+
+// The shared shell of the command palettes (cmd+K command palette, cmd+P
 // go-to-file): the global shortcut listener and the top-anchored dialog
 // wrapping an unfiltered Command — every palette ranks its own results, so
 // cmdk's built-in fuzzy filter stays off.
@@ -114,17 +74,9 @@ export function PaletteDialog({
   shortcutKey,
   title,
 }: PaletteDialogProps) {
-  // Separate from the listener effect below, whose dependencies change on
-  // every open: re-claiming there would reorder the claim stack.
-  useEffect(
-    () => claimShortcut(shortcutKey, paletteId),
-    [paletteId, shortcutKey]
-  );
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (
-        shortcutOwner(shortcutKey) === paletteId &&
         (event.metaKey || event.ctrlKey) &&
         !event.shiftKey &&
         !event.altKey &&
@@ -161,6 +113,12 @@ export function PaletteDialog({
       <DialogContent
         className="top-[20%] translate-y-0 overflow-hidden p-0"
         showCloseButton={false}
+        // Focus the search input, not whatever tabbable control renders
+        // first (the command palette's repository chip sits before it).
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          focusPaletteInput(event.currentTarget as HTMLElement | null);
+        }}
       >
         <DialogHeader className="sr-only">
           <DialogTitle>{title}</DialogTitle>

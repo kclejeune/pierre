@@ -4,6 +4,7 @@ import { type DiffIndicators } from '@pierre/diffs';
 import { type CodeViewHandle } from '@pierre/diffs/react';
 import { type ColorMode } from '@pierre/theming';
 import { useThemeController } from '@pierre/theming/react';
+import { useRouter } from 'next/navigation';
 import {
   type ReactNode,
   useCallback,
@@ -14,6 +15,11 @@ import {
 } from 'react';
 import { toast } from 'sonner';
 
+import {
+  type CommandPaletteContextValue,
+  type PaletteRunnableEntry,
+  useCommandPaletteContext,
+} from './commandPaletteContext';
 import { DiffFindBar } from './DiffFindBar';
 import type { DiscussionActions } from './DiffsHubCommentsList';
 import { DiffsHubHeader } from './DiffsHubHeader';
@@ -254,6 +260,7 @@ function ReviewUIInner({
     setColorMode,
   });
 
+  const router = useRouter();
   // GitHub-instance sources (pull, commit, compare) drive review threads,
   // pinning, and the edit flows; arbitrary-domain patch URLs get none of
   // these.
@@ -927,6 +934,100 @@ function ReviewUIInner({
     },
     [recordViewTarget]
   );
+  const paletteCommands = useMemo((): PaletteRunnableEntry[] => {
+    const commands: PaletteRunnableEntry[] = [
+      {
+        id: 'diff-style',
+        label: diffStyle === 'split' ? 'Unified view' : 'Split view',
+        keywords: 'diff layout split unified side by side',
+        run: () =>
+          handleSetDiffStyle(diffStyle === 'split' ? 'unified' : 'split'),
+      },
+      {
+        id: 'collapse-files',
+        label:
+          collapseMode === 'expanded'
+            ? 'Collapse all files'
+            : 'Expand all files',
+        keywords: 'collapse expand files',
+        run: handleToggleCollapseMode,
+      },
+      {
+        id: 'markdown-view',
+        label:
+          markdownView === 'rendered'
+            ? 'Show raw markdown'
+            : 'Show rendered markdown',
+        keywords: 'markdown rendered raw preview',
+        run: handleToggleMarkdownView,
+      },
+      {
+        id: 'line-numbers',
+        label: lineNumbers ? 'Hide line numbers' : 'Show line numbers',
+        keywords: 'line numbers gutter',
+        run: () => handleSetLineNumbers(!lineNumbers),
+      },
+      {
+        id: 'line-wrap',
+        label: overflow === 'wrap' ? 'Scroll long lines' : 'Wrap long lines',
+        keywords: 'wrap overflow scroll lines',
+        run: () => handleSetOverflow(overflow === 'wrap' ? 'scroll' : 'wrap'),
+      },
+    ];
+    if (browseFilesPath != null) {
+      commands.push({
+        id: 'browse-head',
+        label: 'Browse files at the head',
+        icon: 'open',
+        keywords: 'browse files tree',
+        run: () => router.push(browseFilesPath),
+      });
+    }
+    if (returnToPullPath != null) {
+      commands.push({
+        id: 'back-to-pull',
+        label: 'Back to the pull request',
+        icon: 'pull',
+        keywords: 'return pull request',
+        run: () => router.push(returnToPullPath),
+      });
+    }
+    return commands;
+  }, [
+    browseFilesPath,
+    collapseMode,
+    diffStyle,
+    handleSetDiffStyle,
+    handleSetLineNumbers,
+    handleSetOverflow,
+    handleToggleCollapseMode,
+    handleToggleMarkdownView,
+    lineNumbers,
+    markdownView,
+    overflow,
+    returnToPullPath,
+    router,
+  ]);
+  // cmd+K here opens inside this diff's repository (its open pull requests
+  // first on a pull, its branches and tags first on a commit or compare),
+  // with this view's display settings as commands.
+  const paletteContext = useMemo(
+    (): CommandPaletteContextValue =>
+      githubSource == null
+        ? { commands: paletteCommands }
+        : {
+            commands: paletteCommands,
+            currentPull:
+              githubSource.kind === 'pull'
+                ? Number(githubSource.number)
+                : undefined,
+            prefer: githubSource.kind === 'pull' ? 'pulls' : 'refs',
+            repo: pinnableRepo,
+          },
+    [githubSource, paletteCommands, pinnableRepo]
+  );
+  useCommandPaletteContext(paletteContext);
+
   // Withhold the viewer until the persisted themes have been read from
   // localStorage. Otherwise on client-side navigation back into a diff the
   // CodeView would mount during the brief render where lightThemeName/darkThemeName

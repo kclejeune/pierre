@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 
-import { type PaletteId, useOwnsShortcut } from './PaletteDialog';
 import { cn } from '@/lib/cn';
 import { isMacPlatform } from '@/lib/platform';
 
@@ -25,25 +24,17 @@ export function formatShortcut(
   return modifier === 'Ctrl' ? `Ctrl+${key}` : `⌘${key}`;
 }
 
-// The "⌘K" / "Ctrl K" badge on a palette's trigger. Renders nothing while
-// another palette has claimed the shortcut (the /pulls repo switcher takes
-// cmd+K from the diff switcher), so a hint never names a key that opens
-// something else. The modifier is resolved after mount: SSR can't know the
-// platform, so the badge holds its space invisibly until then.
+// The "⌘K" / "Ctrl K" badge on a palette's trigger. The modifier is
+// resolved after mount: SSR can't know the platform, so the badge holds its
+// space invisibly until then.
 export function ShortcutHint({
   className,
-  paletteId,
   shortcutKey,
 }: {
   className?: string;
-  paletteId: PaletteId;
   shortcutKey: string;
 }) {
-  const ownsShortcut = useOwnsShortcut(shortcutKey, paletteId);
   const modifier = useModifierKey();
-  if (!ownsShortcut) {
-    return null;
-  }
   return (
     <kbd
       aria-hidden="true"

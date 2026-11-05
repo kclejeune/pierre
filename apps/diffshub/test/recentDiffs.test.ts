@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { createFakeWindow } from './helpers/fakeWindow';
 import {
+  isRecentDiffPath,
   loadRecentDiffs,
   MAX_RECENT_DIFFS,
   mergeRecentDiff,
@@ -85,5 +86,27 @@ describe('loadRecentDiffs / recordRecentDiff', () => {
     expect(loadRecentDiffs()).toEqual([
       { path: '/ok/path', viewedAt: 1, title: 'Ok' },
     ]);
+  });
+});
+
+describe('isRecentDiffPath', () => {
+  test('dashboards and the home page are not views', () => {
+    for (const path of [
+      '/',
+      '/pulls',
+      '/pulls?repo=a%2Fb',
+      '/browse',
+      '/browse/?repo=a%2Fb',
+    ]) {
+      expect(isRecentDiffPath(path)).toBe(false);
+    }
+    for (const path of [
+      '/a/b/pull/1',
+      '/a/b/tree/main',
+      '/pulls-of-x/y/pull/2',
+      '/a.patch?domain=x.test',
+    ]) {
+      expect(isRecentDiffPath(path)).toBe(true);
+    }
   });
 });

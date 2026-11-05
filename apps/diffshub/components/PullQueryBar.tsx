@@ -142,7 +142,8 @@ export function PullQueryBar({
   );
 }
 
-// The bar's left half: what's being searched, opening the repo switcher.
+// The bar's left half: what's being searched, opening the command palette
+// to switch repositories.
 function ScopeButton({
   onClick,
   scope,
@@ -167,7 +168,6 @@ function ScopeButton({
       <IconChevronSm className="text-muted-foreground size-3 shrink-0 rotate-90" />
       <ShortcutHint
         className="text-muted-foreground hidden md:inline-flex"
-        paletteId="repo-scope"
         shortcutKey="k"
       />
     </button>

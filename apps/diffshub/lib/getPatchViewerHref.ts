@@ -12,10 +12,13 @@ const BARE_GITHUB_PATH_PATTERN = /^([^/\s.]+)\/([^/\s.]+)(\/[^\s]*)?$/;
 // input can't be mapped to a supported diff URL. Accepts full URLs, URLs
 // without a protocol (e.g. "github.com/..."), bare "owner/repo/..." paths, and
 // GitHub shorthand ("owner/repo#123"). `githubHost` selects which hostname
-// counts as "the" GitHub instance for self-hosted deployments.
+// counts as "the" GitHub instance for self-hosted deployments. `appHost` is
+// this app's own host: a pasted link to it opens in place instead of being
+// read as a patch to fetch from that domain.
 export function getPatchViewerHref(
   input: string,
-  githubHost?: string
+  githubHost?: string,
+  appHost?: string
 ): string | undefined {
   const trimmed = input.trim();
   if (trimmed === '') return undefined;
@@ -28,13 +31,7 @@ export function getPatchViewerHref(
 
   // Full URL with protocol (most common case).
   try {
-    const parsedURL = new URL(trimmed);
-    const githubPath = getGitHubPathFromURL(parsedURL, githubHost);
-    if (githubPath != null) return githubPath;
-    if (parsedURL.pathname !== '/') {
-      return `${parsedURL.pathname}?domain=${encodeURIComponent(parsedURL.hostname)}`;
-    }
-    return undefined;
+    return resolveParsedURL(new URL(trimmed), githubHost, appHost);
   } catch {
     // Not a fully-qualified URL; try other interpretations.
   }
@@ -46,12 +43,12 @@ export function getPatchViewerHref(
   const firstSegment = trimmed.split('/')[0] ?? '';
   if (firstSegment.includes('.')) {
     try {
-      const parsedURL = new URL(`https://${trimmed}`);
-      const githubPath = getGitHubPathFromURL(parsedURL, githubHost);
-      if (githubPath != null) return githubPath;
-      if (parsedURL.pathname !== '/') {
-        return `${parsedURL.pathname}?domain=${encodeURIComponent(parsedURL.hostname)}`;
-      }
+      const href = resolveParsedURL(
+        new URL(`https://${trimmed}`),
+        githubHost,
+        appHost
+      );
+      if (href != null) return href;
     } catch {
       // Not parseable even with https:// prefix.
     }
@@ -71,4 +68,20 @@ export function getPatchViewerHref(
   }
 
   return undefined;
+}
+
+// A parsed URL as a viewer href: a GitHub view, a page of this app, or a
+// patch fetched from another domain. Undefined for a bare origin.
+function resolveParsedURL(
+  url: URL,
+  githubHost: string | undefined,
+  appHost: string | undefined
+): string | undefined {
+  const githubPath = getGitHubPathFromURL(url, githubHost);
+  if (githubPath != null) return githubPath;
+  if (url.pathname === '/') return undefined;
+  if (appHost != null && url.host === appHost) {
+    return `${url.pathname}${url.search}${url.hash}`;
+  }
+  return `${url.pathname}?domain=${encodeURIComponent(url.hostname)}`;
 }

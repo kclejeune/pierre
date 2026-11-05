@@ -5,6 +5,7 @@ import { IconBook, IconBrandGithub, IconShare } from '@pierre/icons';
 import type { FileTree as FileTreeModel } from '@pierre/trees';
 import { useFileTree } from '@pierre/trees/react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   type CSSProperties,
   memo,
@@ -18,6 +19,11 @@ import type { Components } from 'react-markdown';
 
 import { Button } from './Button';
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
+import {
+  type CommandPaletteContextValue,
+  type PaletteRunnableEntry,
+  useCommandPaletteContext,
+} from './commandPaletteContext';
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { DiffsHubLogo } from './DiffsHubLogo';
 import {
@@ -42,6 +48,7 @@ import {
   RefPillMenu,
   useLazyRepoRefs,
 } from './RefPicker';
+import { RepoPaletteButton } from './RepoPaletteButton';
 import { themeController } from './themeController';
 import { ThemedCodeView } from './ThemedCodeView';
 import { ThemedFileTree } from './ThemedFileTree';
@@ -115,6 +122,7 @@ type TreeState =
   | { kind: 'ready'; data: RepoTreeData };
 
 function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
+  const router = useRouter();
   const tokenState = useGitHubToken();
   const token = tokenState.token === '' ? undefined : tokenState.token;
   const { webURL } = useGitHubEnvironment();
@@ -270,6 +278,62 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
         ? `${webURL}${buildBrowseBlobPath({ owner, repo }, treeData.ref, selectedPath)}`
         : `${webURL}${buildBrowseTreePath({ owner, repo }, treeData.ref)}`;
 
+  // cmd+K here opens on this repository's branches and tags, with this
+  // view's actions as commands.
+  const browsedRef = treeData?.ref;
+  const browsedSha = treeData?.sha;
+  // Stable across file selections, so picking a file doesn't rebuild the
+  // palette's context.
+  const openOnGitHub = useStableCallback(() => {
+    window.open(githubURL, '_blank', 'noopener');
+  });
+  const paletteContext = useMemo((): CommandPaletteContextValue => {
+    const commands: PaletteRunnableEntry[] = [
+      {
+        id: 'markdown-view',
+        label:
+          markdownView === 'rendered'
+            ? 'Show raw markdown'
+            : 'Show rendered markdown',
+        keywords: 'markdown rendered raw preview',
+        run: toggleMarkdownView,
+      },
+      {
+        id: 'open-github',
+        label: 'Open on GitHub',
+        icon: 'open',
+        keywords: 'github web link',
+        run: openOnGitHub,
+      },
+    ];
+    if (browsedSha != null) {
+      commands.push({
+        id: 'commit-diff',
+        label: `View commit diff (${browsedSha.slice(0, 7)})`,
+        icon: 'commit',
+        keywords: 'commit diff changes',
+        run: () =>
+          router.push(buildCommitDiffPath({ owner, repo }, browsedSha)),
+      });
+    }
+    return {
+      commands,
+      currentRef: browsedRef,
+      prefer: 'refs',
+      repo: `${owner}/${repo}`,
+    };
+  }, [
+    browsedRef,
+    browsedSha,
+    markdownView,
+    openOnGitHub,
+    owner,
+    repo,
+    router,
+    toggleMarkdownView,
+  ]);
+  useCommandPaletteContext(paletteContext);
+
   return (
     <div
       className={cn(
@@ -286,12 +350,7 @@ function BrowseUIInner({ owner, repo, view, refAndPath }: BrowseUIProps) {
           <DiffsHubLogo />
         </Link>
         <div className="flex min-w-0 flex-1 items-center gap-2 font-sans text-[13px]">
-          <a
-            className="whitespace-nowrap hover:underline"
-            href={`/${repoSlug}`}
-          >
-            {owner}/{repo}
-          </a>
+          <RepoPaletteButton repo={`${owner}/${repo}`} />
           {treeData != null && (
             <BrowseRefsBadge
               owner={owner}

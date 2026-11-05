@@ -11,9 +11,12 @@ interface PaletteTriggerProps {
   children: ReactNode;
   className?: string;
   icon: ReactNode;
-  // The palette this opens, whose shortcut the hint shows.
+  // The palette this opens, and the key of its shortcut for the hint.
   paletteId: PaletteId;
   shortcutKey: string;
+  // The query the palette opens on; '' opens the command palette at its top
+  // level even on a page that names a repository.
+  initialQuery?: string;
 }
 
 // Search-input chrome for keyboard-first palettes. It is intentionally a
@@ -24,6 +27,7 @@ export function PaletteTrigger({
   children,
   className,
   icon,
+  initialQuery,
   paletteId,
   shortcutKey,
 }: PaletteTriggerProps) {
@@ -35,11 +39,11 @@ export function PaletteTrigger({
         'bg-background/70 text-muted-foreground hover:border-foreground/25 inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm shadow-xs backdrop-blur-sm transition-colors',
         className
       )}
-      onClick={() => openPalette(paletteId)}
+      onClick={() => openPalette(paletteId, initialQuery)}
     >
       {icon}
       <span className="min-w-0 flex-1 truncate text-left">{children}</span>
-      <ShortcutHint paletteId={paletteId} shortcutKey={shortcutKey} />
+      <ShortcutHint shortcutKey={shortcutKey} />
     </button>
   );
 }

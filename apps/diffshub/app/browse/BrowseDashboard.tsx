@@ -1,11 +1,16 @@
 'use client';
 
-import { IconPin } from '@pierre/icons';
+import { IconSearch } from '@pierre/icons';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { memo, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 
 import { Button } from '@/components/Button';
+import { openCommandPaletteAtTop } from '@/components/CommandPalette';
+import {
+  type CommandPaletteContextValue,
+  useCommandPaletteContext,
+} from '@/components/commandPaletteContext';
 import {
   DashboardSectionState,
   SectionMessage,
@@ -14,16 +19,16 @@ import {
 import {
   DashboardShell,
   SECTION_CARD_CLASS,
-  useRevealDashboardSection,
 } from '@/components/DashboardShell';
 import { Input } from '@/components/Input';
-import { RepoDirectory } from '@/components/RepoDirectory';
-import { RepoNameInput } from '@/components/RepoNameInput';
+import { PaletteTrigger } from '@/components/PaletteTrigger';
+import { RepoPinStrip } from '@/components/RepoPinStrip';
 import { useGitHubToken } from '@/components/useGitHubToken';
 import { usePinnedRepos } from '@/components/usePinnedRepos';
 import { useRepoRefs } from '@/components/useRepoRefs';
 import type { GitHubRepo } from '@/lib/githubDiffSource';
-import { isValidRepoName } from '@/lib/pinnedRepos';
+import { isValidRepoName, splitRepoName } from '@/lib/pinnedRepos';
+import { recordRecentRepo } from '@/lib/recentRepos';
 import {
   buildBrowseTreePath,
   buildComparePath,
@@ -35,11 +40,11 @@ interface BrowseDashboardProps {
   initialRepo?: string;
 }
 
-// The /browse dashboard: pick a repository (free text with live suggestions,
-// or a pinned repo), then open its file tree at any branch, tag, or commit —
-// or jump to the diff a ref carries (commit diff for shas, ref vs. the
-// default branch otherwise). The file-tree and diff flows are deliberately
-// side by side: every listed ref offers both.
+// The /browse dashboard: pick a repository (the command palette, or a
+// pinned repo), then open its file tree at any branch, tag, or commit — or
+// jump to the diff a ref carries (commit diff for shas, ref vs. the default
+// branch otherwise). The file-tree and diff flows are deliberately side by
+// side: every listed ref offers both.
 export function BrowseDashboard({ initialRepo }: BrowseDashboardProps) {
   const tokenState = useGitHubToken();
   const token = tokenState.token === '' ? undefined : tokenState.token;
@@ -48,81 +53,69 @@ export function BrowseDashboard({ initialRepo }: BrowseDashboardProps) {
   );
   // Keep ?repo= in the URL so refresh and shared links restore the picker
   // without a navigation.
-  const selectRepo = (next: string | null) => {
+  const selectRepo = useCallback((next: string) => {
+    recordRecentRepo(next);
     setRepo(next);
     window.history.replaceState(
       window.history.state,
       '',
-      next == null ? '/browse' : `/browse?repo=${encodeURIComponent(next)}`
+      `/browse?repo=${encodeURIComponent(next)}`
     );
-  };
-
-  // Directory picks scroll to the refs panel above.
-  const refsPanel = useRevealDashboardSection<HTMLElement>();
+  }, []);
+  // Picking a repository in the palette opens its refs here rather than
+  // stepping into it.
+  const paletteContext = useMemo(
+    (): CommandPaletteContextValue => ({ onSelectRepo: selectRepo }),
+    [selectRepo]
+  );
+  useCommandPaletteContext(paletteContext);
 
   return (
     <DashboardShell section="browse" tokenState={tokenState}>
       <RepoPicker selected={repo} onSelect={selectRepo} />
       {repo != null && tokenState.hydrated && (
         <section
-          ref={refsPanel.ref}
-          tabIndex={-1}
           aria-label={`Branches and tags in ${repo}`}
-          className="scroll-mt-4 outline-none"
+          className="outline-none"
         >
           <RepoRefsPanel key={repo} repoName={repo} token={token} />
-        </section>
-      )}
-      {tokenState.hydrated && tokenState.hasToken && (
-        <section className="space-y-3">
-          <h3 className="text-sm font-medium">Your repositories</h3>
-          <RepoDirectory
-            onSelectRepo={(next) => {
-              selectRepo(next);
-              refsPanel.requestReveal();
-            }}
-            selectedRepo={repo}
-            tokenVersion={tokenState.tokenVersion}
-          />
         </section>
       )}
     </DashboardShell>
   );
 }
 
-// Repo selection: the shared free-text input plus the pinned repos as
-// one-click chips.
+// Repo selection: a search-box trigger for the command palette, plus the
+// pinned repos as one-click chips.
 function RepoPicker({
   onSelect,
   selected,
 }: {
-  onSelect: (repo: string | null) => void;
+  onSelect: (repo: string) => void;
   selected: string | null;
 }) {
-  const { pinned } = usePinnedRepos();
+  const { pinned, toggle } = usePinnedRepos();
   return (
     <section className="space-y-2">
-      <RepoNameInput
-        placeholder="Open a repository (owner/name)"
-        submitLabel="Open"
-        onSubmit={onSelect}
+      <PaletteTrigger
+        aria-label="Open a repository"
+        className="w-full"
+        icon={<IconSearch className="size-4 shrink-0 opacity-60" />}
+        paletteId="command"
+        shortcutKey="k"
+        initialQuery=""
+      >
+        {selected ?? 'Open a repository…'}
+      </PaletteTrigger>
+      <RepoPinStrip
+        addPinLabel="Pin repositories you browse often"
+        ariaLabel="Pinned repositories"
+        pinned={pinned}
+        selectedRepo={selected}
+        onAddPin={openCommandPaletteAtTop}
+        onSelectRepo={onSelect}
+        onTogglePin={toggle}
       />
-      {pinned.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1">
-          <IconPin className="text-muted-foreground size-3.5" />
-          {pinned.map((pin) => (
-            <Button
-              key={pin}
-              variant={pin === selected ? 'secondary' : 'ghost'}
-              size="xs"
-              className={pin === selected ? undefined : 'text-muted-foreground'}
-              onClick={() => onSelect(pin)}
-            >
-              {pin}
-            </Button>
-          ))}
-        </div>
-      )}
     </section>
   );
 }
@@ -134,10 +127,7 @@ function RepoRefsPanel({
   repoName: string;
   token: string | undefined;
 }) {
-  const repo = useMemo((): GitHubRepo => {
-    const [owner, name] = repoName.split('/');
-    return { owner, repo: name };
-  }, [repoName]);
+  const repo = useMemo(() => splitRepoName(repoName), [repoName]);
   const [reloadToken, setReloadToken] = useState(0);
   const state = useRepoRefs(repo, token, true, reloadToken);
 

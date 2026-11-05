@@ -57,6 +57,30 @@ describe('createCachedLookup', () => {
     }
   });
 
+  test('a typed failure gets the failure TTL', async () => {
+    let calls = 0;
+    const lookup = createCachedLookup(
+      () => {
+        calls += 1;
+        return Promise.resolve({ ok: false });
+      },
+      { failureTTL: 1_000, isFailure: (value) => !value.ok }
+    );
+
+    try {
+      setSystemTime(new Date('2026-09-08T12:00:00Z'));
+      await lookup.load('repo');
+      await lookup.load('repo');
+      expect(calls).toBe(1);
+
+      setSystemTime(new Date('2026-09-08T12:00:02Z'));
+      await lookup.load('repo');
+      expect(calls).toBe(2);
+    } finally {
+      setSystemTime();
+    }
+  });
+
   test('evicts the least recently used resolved value', async () => {
     let calls = 0;
     const lookup = createCachedLookup(

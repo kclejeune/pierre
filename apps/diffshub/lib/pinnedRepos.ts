@@ -16,6 +16,12 @@ export function isValidRepoName(repo: string): boolean {
   return REPO_PATTERN.test(repo);
 }
 
+// A valid "owner/name" split into its parts, shaped like GitHubRepo.
+export function splitRepoName(repo: string): { owner: string; repo: string } {
+  const separator = repo.indexOf('/');
+  return { owner: repo.slice(0, separator), repo: repo.slice(separator + 1) };
+}
+
 // Reads a stored "owner/name" list (pins, the /pulls recents): valid names
 // only, de-duplicated case-insensitively keeping the first, capped at `max`.
 // Anything that isn't an array reads as empty.

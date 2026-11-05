@@ -20,7 +20,7 @@ interface FileSearchPaletteProps {
 }
 
 // The go-to-file palette for views that hold a file listing (repo browser,
-// diff viewer): cmd+P / ctrl+P — cmd+K stays the global diff switcher —
+// diff viewer): cmd+P / ctrl+P — cmd+K stays the command palette —
 // fuzzy-filters the listing and selecting a file jumps to it in place.
 // Mounted only by those views, so the shortcut does nothing elsewhere.
 export function FileSearchPalette({

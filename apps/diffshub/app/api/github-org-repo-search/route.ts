@@ -18,11 +18,11 @@ import { resolveBearerToken } from '@/lib/resolveBearerToken';
 import { emitLogLine, formatError } from '@/lib/serverLog';
 
 // Fuzzy repository search across the organizations the viewer belongs to,
-// for the /pulls repo switcher. Ranks the shared org listings
+// for the command palette's repository search. Ranks the shared org listings
 // (lib/githubOrgRepos) with the go-to-file matcher and returns only the
 // matches the viewer can read. A stale or missing listing is rebuilt after
 // the response with this viewer's token; until then that org contributes
-// nothing and `pending` tells the switcher to fall back to GitHub search and
+// nothing and `pending` tells the palette to fall back to GitHub search and
 // ask again shortly. Pending responses are never cached, so that retry
 // reaches the server, and neither are failed ones, so a transient GitHub
 // error isn't remembered as "no matches".
@@ -64,7 +64,7 @@ async function handleGET(request: NextRequest) {
   const parsed = parseOrgRepoQuery(query);
   // Narrowed before searchOrgListings caps the org count, so "owner/name"
   // reaches any membership. `pending`: some org is still being listed, so
-  // the switcher keeps GitHub search on.
+  // the palette keeps GitHub search on.
   const { candidates, pending, stale } = await searchOrgListings(
     narrowOrgs(orgs, parsed),
     parsed,

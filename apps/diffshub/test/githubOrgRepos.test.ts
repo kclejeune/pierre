@@ -392,7 +392,7 @@ describe('GET /api/github-org-repo-search', () => {
     expect(((await response.json()) as { repos: string[] }).repos).toEqual([]);
   });
 
-  test('a pending search is not cached, so the switcher can retry', async () => {
+  test('a pending search is not cached, so the palette can retry', async () => {
     stubGitHub({ orgs: ['unlisted-org'] });
     const response = await search('anything', 'token-pending');
     expect(await response.json()).toEqual({ pending: true, repos: [] });

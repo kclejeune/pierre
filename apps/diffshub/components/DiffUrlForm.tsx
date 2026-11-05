@@ -13,15 +13,32 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
-import {
-  type DiffUrlSuggestion,
-  useDiffUrlSuggestions,
-} from './useDiffUrlSuggestions';
+import { openCommandPalette } from './CommandPalette';
 import { useResettableState } from './useResettableState';
 import { Button } from '@/components/Button';
 import { useGitHubEnvironment } from '@/components/GitHubEnvironmentProvider';
 import { cn } from '@/lib/cn';
 import { getPatchViewerHref } from '@/lib/getPatchViewerHref';
+import { parseRepoShorthand } from '@/lib/paletteItems';
+
+// Repository shorthand the palette reads ("owner/repo@main", "owner/repo#fix",
+// "owner/repo#") and the link resolver would otherwise turn into a bare,
+// broken path. "owner/repo#123" is left to the resolver: it names a pull.
+function isPaletteShorthand(text: string): boolean {
+  const shorthand = parseRepoShorthand(text);
+  return (
+    shorthand != null &&
+    !(shorthand.prefer === 'pulls' && /^\d+$/.test(shorthand.rest))
+  );
+}
+
+// Whether text that didn't resolve was meant as a link (and so deserves the
+// error) rather than a search: it has a protocol, or a dotted host followed
+// by a path ("example.com/"). A lone dotted word ("next.js") stays a search,
+// since repository names look the same.
+function looksLikeURL(text: string): boolean {
+  return text.includes('://') || /^[^/\s]+\.[^/\s]+\//.test(text);
+}
 
 // The only validation message the form shows. The error popover keeps rendering
 // it while fading out, after `validationError` has already been cleared.
@@ -46,10 +63,12 @@ interface DiffUrlFormProps {
   children?: (isPending: boolean, url: string) => ReactNode;
 }
 
-// Shared URL input form used in both the viewer header and the home page.
-// Handles URL state, validation via getPatchViewerHref, router navigation,
-// the validation error popover (portal-based to escape contain-paint), and
-// escape/blur restore behavior.
+// Shared URL input form used in both the viewer header and the home page: an
+// address bar for pasting or editing a link. Searching lives in the command
+// palette, so text that isn't a link (a repository name, "owner/repo@main")
+// opens the palette on it instead of failing validation; only something
+// URL-shaped that can't be opened shows the error popover (portal-based to
+// escape contain-paint). Also handles escape/blur restore behavior.
 export function DiffUrlForm({
   className,
   initialUrl = '',
@@ -69,29 +88,10 @@ export function DiffUrlForm({
   const isSubmittingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Shorthand autocompletion: repo names while "owner/rep…" is typed, open
-  // pull requests once a repo is complete. Only active while focused so the
-  // dropdown never lingers after navigation.
-  const [isFocused, setIsFocused] = useState(false);
-  const suggestions = useDiffUrlSuggestions(isFocused ? url : '');
-  // Highlighted row, remembered with the list it belongs to so a fresh
-  // suggestion list naturally resets the highlight without an effect.
-  const [activeEntry, setActiveEntry] = useState<{
-    list: DiffUrlSuggestion[];
-    index: number;
-  } | null>(null);
-  const activeSuggestion =
-    activeEntry !== null && activeEntry.list === suggestions
-      ? activeEntry.index
-      : -1;
-  const suggestionsOpen =
-    isFocused && suggestions.length > 0 && validationError === null;
-
-  // Both popovers (suggestions list, error message) are fixed-position portals
-  // anchored under the input to escape contain-paint boundaries. One shared
-  // measurement covers both; resize (including DevTools opening) and scroll
-  // change the input's viewport position, so re-measure on those events.
-  const anchorNeeded = suggestionsOpen || errorVisible;
+  // The error popover is a fixed-position portal anchored under the input to
+  // escape contain-paint boundaries; resize (including DevTools opening) and
+  // scroll change the input's viewport position, so re-measure on those
+  // events.
   const [anchor, setAnchor] = useState<{
     top: number;
     left: number;
@@ -99,7 +99,7 @@ export function DiffUrlForm({
   } | null>(null);
 
   useEffect(() => {
-    if (!anchorNeeded) {
+    if (!errorVisible) {
       setAnchor(null);
       return;
     }
@@ -116,27 +116,7 @@ export function DiffUrlForm({
       window.removeEventListener('resize', updatePosition);
       window.removeEventListener('scroll', updatePosition, true);
     };
-  }, [anchorNeeded]);
-
-  const acceptSuggestion = useStableCallback(
-    (suggestion: DiffUrlSuggestion) => {
-      setURL(suggestion.fill);
-      setValidationError(null);
-      // Pull suggestions fill a complete shorthand that resolves to a viewer
-      // path; repo suggestions fill "owner/repo#", which doesn't resolve yet,
-      // so keep focus for the pull-number pass.
-      const viewerHref = getPatchViewerHref(suggestion.fill, githubHost);
-      if (viewerHref != null) {
-        isSubmittingRef.current = true;
-        inputRef.current?.blur();
-        startTransition(() => {
-          router.push(viewerHref);
-        });
-      } else {
-        inputRef.current?.focus();
-      }
-    }
-  );
+  }, [errorVisible]);
 
   useEffect(() => {
     onUrlChange?.(url);
@@ -147,8 +127,18 @@ export function DiffUrlForm({
       event.preventDefault();
       isSubmittingRef.current = false;
       const normalizedURL = url.trim();
-      const viewerHref = getPatchViewerHref(normalizedURL, githubHost);
+      const viewerHref = isPaletteShorthand(normalizedURL)
+        ? undefined
+        : getPatchViewerHref(normalizedURL, githubHost, window.location.host);
       if (viewerHref == null) {
+        if (normalizedURL !== '' && !looksLikeURL(normalizedURL)) {
+          // A search, not a link: hand it to the palette and put the field
+          // back on what's being viewed.
+          setURL(initialUrl);
+          inputRef.current?.blur();
+          openCommandPalette(normalizedURL);
+          return;
+        }
         setValidationError(INVALID_URL_MESSAGE);
         setErrorVisible(true);
         return;
@@ -193,16 +183,11 @@ export function DiffUrlForm({
         autoCapitalize="off"
         autoCorrect="off"
         spellCheck={false}
-        role="combobox"
-        aria-autocomplete="list"
-        aria-expanded={suggestionsOpen}
         onChange={({ currentTarget }) => {
           setURL(currentTarget.value);
           if (validationError) setValidationError(null);
         }}
-        onFocus={() => setIsFocused(true)}
         onBlur={() => {
-          setIsFocused(false);
           if (isSubmittingRef.current) return;
           // Only restore the committed URL when the field is empty — if the
           // user typed something and clicked away, keep their draft.
@@ -212,29 +197,6 @@ export function DiffUrlForm({
           }
         }}
         onKeyDown={(e) => {
-          if (suggestionsOpen && e.key === 'ArrowDown') {
-            e.preventDefault();
-            setActiveEntry({
-              index: (activeSuggestion + 1) % suggestions.length,
-              list: suggestions,
-            });
-            return;
-          }
-          if (suggestionsOpen && e.key === 'ArrowUp') {
-            e.preventDefault();
-            setActiveEntry({
-              index:
-                (activeSuggestion - 1 + suggestions.length) %
-                suggestions.length,
-              list: suggestions,
-            });
-            return;
-          }
-          if (suggestionsOpen && e.key === 'Enter' && activeSuggestion >= 0) {
-            e.preventDefault();
-            acceptSuggestion(suggestions[activeSuggestion]);
-            return;
-          }
           if (e.key === 'Escape') {
             setURL(initialUrl);
             setValidationError(null);
@@ -264,43 +226,6 @@ export function DiffUrlForm({
       {children?.(isPending, url)}
       {/* Hidden submit ensures Enter triggers form submission in all browsers */}
       <button type="submit" hidden />
-      {suggestionsOpen &&
-        anchor !== null &&
-        createPortal(
-          <ul
-            role="listbox"
-            style={{
-              left: anchor.left,
-              minWidth: Math.max(anchor.width, 320),
-              top: anchor.top + 6,
-            }}
-            className="bg-background border-border fixed z-50 max-h-80 max-w-[560px] overflow-y-auto rounded-md border py-1 shadow-lg"
-          >
-            {suggestions.map((suggestion, index) => (
-              <li key={suggestion.key}>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={index === activeSuggestion}
-                  className={cn(
-                    'block w-full cursor-pointer truncate px-3 py-1.5 text-left text-sm',
-                    index === activeSuggestion && 'bg-muted'
-                  )}
-                  // preventDefault keeps focus in the input so the blur
-                  // handler doesn't close the list before click lands.
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => acceptSuggestion(suggestion)}
-                  onMouseEnter={() =>
-                    setActiveEntry({ index, list: suggestions })
-                  }
-                >
-                  {suggestion.label}
-                </button>
-              </li>
-            ))}
-          </ul>,
-          document.body
-        )}
       {errorVisible &&
         anchor !== null &&
         createPortal(

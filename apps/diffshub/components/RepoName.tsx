@@ -32,8 +32,7 @@ export function RepoName({
   );
 }
 
-// The icon each kind of scope wears in the bar's scope button and the repo
-// switcher.
+// The icon each kind of scope wears in the bar's scope button.
 export function ScopeIcon({
   className,
   scope,

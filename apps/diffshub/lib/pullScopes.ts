@@ -9,9 +9,8 @@ import {
   type PullInvolvement,
   type ReviewRequestScope,
 } from './githubPullSummaries';
-import { isValidRepoName, parseRepoList } from './pinnedRepos';
+import { isValidRepoName } from './pinnedRepos';
 import { hasNarrowingQualifier } from './pullSearchQuery';
-import { readStoredJSON, writeStoredJSON } from './storedJSON';
 
 export type PullScope =
   // Every repository the viewer's search can see.
@@ -183,23 +182,18 @@ export function writePullsPageState(url: URL, state: PullsPageState): URL {
   return next;
 }
 
-// Recently viewed repository scopes, most recent first, for the repo
-// switcher's idle list. Device-local: unlike pins, this is history rather
-// than a choice worth syncing.
-const RECENT_REPOS_KEY = 'diffshub:recent-pull-repos';
-const MAX_RECENT_REPOS = 6;
-
-export function loadRecentRepos(): string[] {
-  return parseRepoList(readStoredJSON(RECENT_REPOS_KEY), MAX_RECENT_REPOS);
-}
-
-export function recordRecentRepo(repo: string): void {
-  const needle = repo.toLowerCase();
-  writeStoredJSON(
-    RECENT_REPOS_KEY,
-    [
-      repo,
-      ...loadRecentRepos().filter((entry) => entry.toLowerCase() !== needle),
-    ].slice(0, MAX_RECENT_REPOS)
+// The /pulls URL (path and query) scoped to one repository, with every other
+// filter at its default, as the dashboard itself would write it.
+export function buildPullsRepoPath(repo: string): string {
+  const scope: PullScope = { kind: 'repo', repo };
+  const url = writePullsPageState(
+    new URL('/pulls', 'https://diffshub.invalid'),
+    {
+      involves: defaultAudience(scope),
+      reviewRequests: DEFAULT_REVIEW_REQUESTS,
+      scope,
+      text: DEFAULT_QUERY_TEXT,
+    }
   );
+  return `${url.pathname}${url.search}`;
 }

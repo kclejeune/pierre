@@ -74,10 +74,21 @@ export function mergeRecentDiff(
   ].slice(0, MAX_RECENT_DIFFS);
 }
 
+// The app's own dashboards and home page, which are where views are picked
+// from rather than views worth listing.
+const NOT_A_VIEW = /^\/(pulls|browse)?\/?(?:[?#]|$)/;
+
+export function isRecentDiffPath(path: string): boolean {
+  return !NOT_A_VIEW.test(path);
+}
+
 export function recordRecentDiff(entry: {
   path: string;
   title?: string;
 }): void {
+  if (!isRecentDiffPath(entry.path)) {
+    return;
+  }
   try {
     const merged = mergeRecentDiff(loadRecentDiffs(), entry, Date.now());
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));

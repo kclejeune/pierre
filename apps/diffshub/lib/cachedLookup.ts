@@ -11,8 +11,12 @@ export interface CachedLookup<K, V> {
   useValue(key: K | null): V | null;
 }
 
-interface CachedLookupOptions {
+interface CachedLookupOptions<V> {
   failureTTL?: number;
+  // Which settled values count as failures (and so get `failureTTL`). Null
+  // always does; a fetcher that returns a typed failure (so callers can tell
+  // it apart from loading) marks it here.
+  isFailure?: (value: V) => boolean;
   maxEntries?: number;
   valueTTL?: number;
 }
@@ -31,8 +35,12 @@ interface ResolvedEntry<V> {
 // synchronously.
 export function createCachedLookup<K, V>(
   fetcher: (key: K) => Promise<V | null>,
-  options: CachedLookupOptions = {}
+  options: CachedLookupOptions<V> = {}
 ): CachedLookup<K, V> {
+  const ttlFor = (value: V | null) =>
+    value == null || options.isFailure?.(value) === true
+      ? (options.failureTTL ?? 30_000)
+      : (options.valueTTL ?? 5 * 60_000);
   const pendingByKey = new Map<K, Promise<V | null>>();
   const resolvedByKey = new Map<K, ResolvedEntry<V>>();
 
@@ -72,11 +80,7 @@ export function createCachedLookup<K, V>(
       void pending.then((value) => {
         pendingByKey.delete(key);
         resolvedByKey.set(key, {
-          expiresAt:
-            Date.now() +
-            (value == null
-              ? (options.failureTTL ?? 30_000)
-              : (options.valueTTL ?? 5 * 60_000)),
+          expiresAt: Date.now() + ttlFor(value),
           value,
         });
         trimResolved();
@@ -104,14 +108,12 @@ export function createCachedLookup<K, V>(
             return;
           }
           setState({ key, value: resolvedValue });
-          const expiresAt = resolvedByKey.get(key)?.expiresAt;
-          const ttl =
-            resolvedValue == null
-              ? (options.failureTTL ?? 30_000)
-              : (options.valueTTL ?? 5 * 60_000);
+          const expiresAt =
+            resolvedByKey.get(key)?.expiresAt ??
+            Date.now() + ttlFor(resolvedValue);
           refreshTimer = setTimeout(
             refresh,
-            Math.max(1, (expiresAt ?? Date.now() + ttl) - Date.now())
+            Math.max(1, expiresAt - Date.now())
           );
         });
       };

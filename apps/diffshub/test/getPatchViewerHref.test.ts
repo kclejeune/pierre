@@ -185,4 +185,29 @@ describe('getPatchViewerHref', () => {
       expect(getPatchViewerHref('https://github.com')).toBeUndefined();
     });
   });
+
+  describe('links to this app', () => {
+    test('open in place rather than as an external patch', () => {
+      expect(
+        getPatchViewerHref(
+          'https://diffs.example/oven-sh/bun/pull/12?file=a.ts',
+          undefined,
+          'diffs.example'
+        )
+      ).toBe('/oven-sh/bun/pull/12?file=a.ts');
+      expect(
+        getPatchViewerHref(
+          'diffs.example/oven-sh/bun/tree/main',
+          undefined,
+          'diffs.example'
+        )
+      ).toBe('/oven-sh/bun/tree/main');
+    });
+
+    test('another host is still a patch to fetch', () => {
+      expect(
+        getPatchViewerHref('https://other.example/a.patch', undefined, 'x.test')
+      ).toBe('/a.patch?domain=other.example');
+    });
+  });
 });

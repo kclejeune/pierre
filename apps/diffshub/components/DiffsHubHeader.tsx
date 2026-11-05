@@ -34,6 +34,7 @@ import {
 } from 'react';
 
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
+import { CommandPaletteTrigger } from './CommandPaletteTrigger';
 import { DiffRefsBadge } from './DiffRefsBadge';
 import { DiffsHubLogo } from './DiffsHubLogo';
 import { DiffUrlForm } from './DiffUrlForm';
@@ -253,6 +254,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
           <IconFileTreeFill className="size-4 md:size-3" />
         </Button>
         <div className="flex items-center gap-2">
+          <CommandPaletteTrigger className="hidden w-36 2xl:inline-flex" />
           {fileSearchAvailable && (
             <FileSearchPaletteTrigger className="hidden w-36 2xl:inline-flex" />
           )}

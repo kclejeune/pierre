@@ -1,10 +1,16 @@
 'use client';
 
-import { IconCheck, IconChevronSm, IconPin, IconPlus } from '@pierre/icons';
-import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import { IconCheck, IconChevronSm, IconPin } from '@pierre/icons';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { Button } from '@/components/Button';
 import { ButtonGroup, ButtonGroupItem } from '@/components/ButtonGroup';
+import { openCommandPaletteAtTop } from '@/components/CommandPalette';
+import {
+  type CommandPaletteContextValue,
+  type PaletteRunnableEntry,
+  useCommandPaletteContext,
+} from '@/components/commandPaletteContext';
 import {
   DashboardSectionState,
   SectionError,
@@ -21,10 +27,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/DropdownMenu';
 import { GitHubTokenControl } from '@/components/GitHubTokenControl';
-import { openPalette } from '@/components/PaletteDialog';
 import { PullQueryBar } from '@/components/PullQueryBar';
 import { PullRequestRow } from '@/components/PullRequestRow';
-import { RepoScopePalette } from '@/components/RepoScopePalette';
+import { RepoPinStrip, ScopeChip } from '@/components/RepoPinStrip';
 import { formatShortcut, useModifierKey } from '@/components/ShortcutHint';
 import { Switch } from '@/components/Switch';
 import {
@@ -33,6 +38,7 @@ import {
   useDashboardPulls,
 } from '@/components/useDashboardPulls';
 import { useGitHubToken } from '@/components/useGitHubToken';
+import { useLatestValueRef } from '@/components/useLatestValueRef';
 import { usePinnedRepos } from '@/components/usePinnedRepos';
 import { cn } from '@/lib/cn';
 import {
@@ -43,7 +49,6 @@ import {
   type PullAudience,
   type PullInvolvement,
 } from '@/lib/githubPullSummaries';
-import { isRepoPinned, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
 import {
   audienceAnyoneAllowed,
   DEFAULT_QUERY_TEXT,
@@ -51,7 +56,6 @@ import {
   type PullScope,
   type PullsPageState,
   readPullsPageState,
-  recordRecentRepo,
   resolveAudience,
   scopeRepos,
   scopesEqual,
@@ -65,7 +69,7 @@ import {
   writePullSort,
   writePullStateFilter,
 } from '@/lib/pullSearchQuery';
-import { splitPath } from '@/lib/splitPath';
+import { recordRecentRepo } from '@/lib/recentRepos';
 
 export function PullsDashboard() {
   const tokenState = useGitHubToken();
@@ -134,23 +138,10 @@ function usePullsPageState() {
   return [state, update] as const;
 }
 
-// Click opens go through the same open request as cmd+K, so the switcher's
-// per-open setup (clearing the query, loading recents) runs for both.
-function openRepoSwitcher() {
-  openPalette('repo-scope');
-}
-
 function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   const modifier = useModifierKey();
   const [page, updatePage] = usePullsPageState();
-  const [paletteOpen, setPaletteOpen] = useState(false);
   const { hydrated, pinned, toggle } = usePinnedRepos();
-
-  // Wait for the single post-mount pin read: the pinned scope searches the
-  // pinned list, and fetching before it loads would search everything.
-  if (!hydrated) {
-    return null;
-  }
 
   const selectScope = (scope: PullScope) => {
     if (scope.kind === 'repo') {
@@ -164,6 +155,14 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
     updatePage({ ...page, involves: defaultAudience(scope), scope }, 'push');
   };
   const applyText = (text: string) => updatePage({ ...page, text });
+  usePullsPaletteContext(pinned.length, selectScope, page.text, applyText);
+
+  // Wait for the single post-mount pin read: the pinned scope searches the
+  // pinned list, and fetching before it loads would search everything.
+  if (!hydrated) {
+    return null;
+  }
+
   const involves = resolveAudience(page);
   const repos = scopeRepos(page.scope, pinned);
   // Only searches with a review-request term carry the switch's value, so
@@ -183,13 +182,21 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
         appliedText={page.text}
         scope={page.scope}
         onApply={applyText}
-        onOpenScope={openRepoSwitcher}
+        onOpenScope={openCommandPaletteAtTop}
       />
-      <ScopeStrip
+      <RepoPinStrip
+        ariaLabel="Repository scopes"
         pinned={pinned}
-        scope={page.scope}
-        onAddPin={openRepoSwitcher}
-        onSelect={selectScope}
+        selectedRepo={page.scope.kind === 'repo' ? page.scope.repo : null}
+        leading={
+          <BroadScopeChips
+            pinnedCount={pinned.length}
+            scope={page.scope}
+            onSelect={selectScope}
+          />
+        }
+        onAddPin={openCommandPaletteAtTop}
+        onSelectRepo={(repo) => selectScope({ kind: 'repo', repo })}
         onTogglePin={toggle}
       />
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-1">
@@ -234,203 +241,109 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
           onApplyText={applyText}
         />
       )}
-      <RepoScopePalette
-        open={paletteOpen}
-        pinned={pinned}
-        tokenVersion={tokenVersion}
-        onOpenChange={setPaletteOpen}
-        onSelectScope={selectScope}
-        onTogglePin={toggle}
-      />
     </div>
   );
 }
 
-// Pins as bookmarks: one-click scopes for the repositories you return to,
-// next to the two broad scopes. A repository opened from the switcher but
-// not pinned shows as a dashed chip at the end, with its pin button, so
-// pinning is something you do to what you're looking at.
-function ScopeStrip({
-  onAddPin,
+// Tells the command palette that picking a repository here scopes the list
+// to it, offers the broad scopes first, and adds the state toggle and sort
+// menu as commands. The callbacks are read through refs so the context
+// object only changes when the pin count or the search text does.
+function usePullsPaletteContext(
+  pinnedCount: number,
+  selectScope: (scope: PullScope) => void,
+  text: string,
+  applyText: (text: string) => void
+) {
+  const select = useLatestValueRef(selectScope);
+  const apply = useLatestValueRef(applyText);
+  const context = useMemo((): CommandPaletteContextValue => {
+    const state = readPullStateFilter(text);
+    const sort = readPullSort(text);
+    const commands: PaletteRunnableEntry[] = [
+      ...STATE_TOGGLES.filter((option) => option.value !== state).map(
+        (option): PaletteRunnableEntry => ({
+          id: `state-${option.value}`,
+          label:
+            option.value === 'all'
+              ? 'Show pull requests in every state'
+              : `Show ${option.label.toLowerCase()} pull requests`,
+          keywords: 'state filter open closed merged',
+          run: () => apply.current(writePullStateFilter(text, option.value)),
+        })
+      ),
+      ...PULL_SORT_OPTIONS.filter((option) => option.value !== sort).map(
+        (option): PaletteRunnableEntry => ({
+          id: `sort-${option.value}`,
+          label: `Sort: ${option.label}`,
+          keywords: 'sort order',
+          run: () => apply.current(writePullSort(text, option.value)),
+        })
+      ),
+    ];
+    const scopes: PaletteRunnableEntry[] = [
+      {
+        id: 'scope-all',
+        label: 'All repositories',
+        detail: 'Pull requests involving you, anywhere',
+        icon: 'scope-all',
+        run: () => select.current({ kind: 'all' }),
+      },
+    ];
+    if (pinnedCount > 0) {
+      scopes.push({
+        id: 'scope-pinned',
+        label: 'Pinned repositories',
+        detail:
+          pinnedCount === 1 ? '1 repository' : `${pinnedCount} repositories`,
+        icon: 'scope-pinned',
+        run: () => select.current({ kind: 'pinned' }),
+      });
+    }
+    return {
+      commands,
+      onSelectRepo: (repo) => select.current({ kind: 'repo', repo }),
+      scopes,
+      selectRepoLabel: 'View pull requests',
+    };
+  }, [apply, pinnedCount, select, text]);
+  useCommandPaletteContext(context);
+}
+
+// The strip's leading chips: every repository, then every pinned one at
+// once, before the individual pins.
+function BroadScopeChips({
   onSelect,
-  onTogglePin,
-  pinned,
+  pinnedCount,
   scope,
 }: {
-  onAddPin(): void;
   onSelect(scope: PullScope): void;
-  onTogglePin(repo: string): void;
-  pinned: readonly string[];
+  pinnedCount: number;
   scope: PullScope;
 }) {
-  const currentRepo = scope.kind === 'repo' ? scope.repo : null;
-  const currentIsPinned =
-    currentRepo != null && isRepoPinned(pinned, currentRepo);
-  // Repo names alone, unless two pins share one.
-  const names = pinned.map((repo) => splitPath(repo).basename);
-  const ambiguous = new Set(
-    names.filter((name, index) => names.indexOf(name) !== index)
-  );
   return (
-    <nav
-      aria-label="Repository scopes"
-      className="flex flex-wrap items-center gap-1"
-    >
+    <>
       <ScopeChip
         selected={scope.kind === 'all'}
         onClick={() => onSelect({ kind: 'all' })}
       >
         All
       </ScopeChip>
-      {pinned.length > 0 && (
+      {pinnedCount > 0 && (
         <ScopeChip
           selected={scope.kind === 'pinned'}
-          title={`Search all ${pinned.length} pinned repositories`}
+          title={`Search all ${pinnedCount} pinned repositories`}
           onClick={() => onSelect({ kind: 'pinned' })}
         >
           <IconPin className="size-3" />
           Pinned
           <span className="text-muted-foreground tabular-nums">
-            {pinned.length}
+            {pinnedCount}
           </span>
         </ScopeChip>
       )}
       <span aria-hidden="true" className="bg-border mx-1 h-4 w-px" />
-      {pinned.map((repo, index) => {
-        const selected = scopesEqual(scope, { kind: 'repo', repo });
-        return (
-          <ScopeChip
-            key={repo}
-            mono
-            selected={selected}
-            title={repo}
-            onClick={() => onSelect({ kind: 'repo', repo })}
-            trailing={
-              selected ? (
-                <PinToggle pinned repo={repo} onToggle={onTogglePin} />
-              ) : undefined
-            }
-          >
-            {ambiguous.has(names[index]) ? repo : names[index]}
-          </ScopeChip>
-        );
-      })}
-      {currentRepo != null && !currentIsPinned && (
-        <ScopeChip
-          mono
-          selected
-          dashed
-          title={`${currentRepo} (not pinned)`}
-          trailing={
-            pinned.length < MAX_PINNED_REPOS ? (
-              <PinToggle
-                pinned={false}
-                repo={currentRepo}
-                onToggle={onTogglePin}
-              />
-            ) : undefined
-          }
-        >
-          {currentRepo}
-        </ScopeChip>
-      )}
-      {pinned.length === 0 && currentRepo == null && (
-        <button
-          type="button"
-          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-6 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs outline-none focus-visible:ring-2"
-          onClick={onAddPin}
-        >
-          <IconPlus className="size-3" />
-          Pin repositories you check often
-        </button>
-      )}
-    </nav>
-  );
-}
-
-// A scope chip. Without `onClick` it's a static label (the dashed chip for
-// the current, unpinned repo, which is already selected).
-function ScopeChip({
-  children,
-  dashed = false,
-  mono = false,
-  onClick,
-  selected,
-  title,
-  trailing,
-}: {
-  children: ReactNode;
-  dashed?: boolean;
-  mono?: boolean;
-  onClick?(): void;
-  selected: boolean;
-  title?: string;
-  trailing?: ReactNode;
-}) {
-  const labelClassName = cn(
-    'flex h-full max-w-56 items-center gap-1 rounded-[inherit] px-2',
-    mono && 'font-mono text-[12px]',
-    trailing != null && 'pr-1'
-  );
-  const label = (
-    <span className="flex min-w-0 items-center gap-1 truncate">{children}</span>
-  );
-  return (
-    <span
-      className={cn(
-        'flex h-6 items-center rounded-md border text-xs transition-colors',
-        selected
-          ? 'bg-background text-foreground shadow-xs'
-          : 'text-muted-foreground hover:text-foreground border-transparent',
-        dashed && 'border-dashed'
-      )}
-    >
-      {onClick == null ? (
-        <span className={labelClassName} title={title}>
-          {label}
-        </span>
-      ) : (
-        <button
-          type="button"
-          aria-current={selected ? 'page' : undefined}
-          className={cn(
-            labelClassName,
-            'focus-visible:ring-ring cursor-pointer outline-none focus-visible:ring-2'
-          )}
-          title={title}
-          onClick={onClick}
-        >
-          {label}
-        </button>
-      )}
-      {trailing}
-    </span>
-  );
-}
-
-function PinToggle({
-  onToggle,
-  pinned,
-  repo,
-}: {
-  onToggle(repo: string): void;
-  pinned: boolean;
-  repo: string;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={pinned ? `Unpin ${repo}` : `Pin ${repo}`}
-      aria-pressed={pinned}
-      title={pinned ? 'Unpin' : 'Pin'}
-      className={cn(
-        'hover:bg-accent focus-visible:ring-ring mr-0.5 flex size-5 cursor-pointer items-center justify-center rounded-sm outline-none focus-visible:ring-2',
-        pinned ? 'text-foreground' : 'text-muted-foreground'
-      )}
-      onClick={() => onToggle(repo)}
-    >
-      <IconPin className="size-3" />
-    </button>
+    </>
   );
 }
 

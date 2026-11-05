@@ -12,6 +12,12 @@ services:
     build:
       context: .
       dockerfile: apps/diffshub/Dockerfile
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+        reservations:
+          memory: 2g
     environment:
       DIFFSHUB_GITHUB_URL: ${DIFFSHUB_GITHUB_URL:-}
       DIFFSHUB_GITHUB_API_URL: ${DIFFSHUB_GITHUB_API_URL:-}
@@ -46,6 +52,12 @@ services:
   # restarts in the named volume.
   valkey:
     image: valkey/valkey:9-alpine
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+        reservations:
+          memory: 1g
     command: ['valkey-server', '--appendonly', 'yes']
     volumes:
       - valkey-data:/data

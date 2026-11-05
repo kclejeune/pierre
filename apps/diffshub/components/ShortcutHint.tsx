@@ -6,6 +6,25 @@ import { type PaletteId, useOwnsShortcut } from './PaletteDialog';
 import { cn } from '@/lib/cn';
 import { isMacPlatform } from '@/lib/platform';
 
+// The platform's shortcut modifier, '⌘' or 'Ctrl', or null before mount:
+// SSR can't know the platform, so it's resolved in an effect.
+export function useModifierKey(): '⌘' | 'Ctrl' | null {
+  const [modifier, setModifier] = useState<'⌘' | 'Ctrl' | null>(null);
+  useEffect(() => {
+    setModifier(isMacPlatform() ? '⌘' : 'Ctrl');
+  }, []);
+  return modifier;
+}
+
+// A shortcut for prose and titles: "⌘K" on macOS, "Ctrl+K" elsewhere
+// (and "⌘K" until the platform is known).
+export function formatShortcut(
+  modifier: '⌘' | 'Ctrl' | null,
+  key: string
+): string {
+  return modifier === 'Ctrl' ? `Ctrl+${key}` : `⌘${key}`;
+}
+
 // The "⌘K" / "Ctrl K" badge on a palette's trigger. Renders nothing while
 // another palette has claimed the shortcut (the /pulls repo switcher takes
 // cmd+K from the diff switcher), so a hint never names a key that opens
@@ -21,10 +40,7 @@ export function ShortcutHint({
   shortcutKey: string;
 }) {
   const ownsShortcut = useOwnsShortcut(shortcutKey, paletteId);
-  const [modifier, setModifier] = useState<string | null>(null);
-  useEffect(() => {
-    setModifier(isMacPlatform() ? '⌘' : 'Ctrl');
-  }, []);
+  const modifier = useModifierKey();
   if (!ownsShortcut) {
     return null;
   }

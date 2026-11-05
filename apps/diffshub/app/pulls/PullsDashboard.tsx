@@ -25,6 +25,7 @@ import { openPalette } from '@/components/PaletteDialog';
 import { PullQueryBar } from '@/components/PullQueryBar';
 import { PullRequestRow } from '@/components/PullRequestRow';
 import { RepoScopePalette } from '@/components/RepoScopePalette';
+import { formatShortcut, useModifierKey } from '@/components/ShortcutHint';
 import { Switch } from '@/components/Switch';
 import {
   pullKey,
@@ -64,10 +65,12 @@ import {
   writePullSort,
   writePullStateFilter,
 } from '@/lib/pullSearchQuery';
+import { splitPath } from '@/lib/splitPath';
 
 export function PullsDashboard() {
   const tokenState = useGitHubToken();
   const { clearToken, hasToken, hydrated, setToken, tokenVersion } = tokenState;
+  const modifier = useModifierKey();
 
   return (
     <DashboardShell section="pulls" tokenState={tokenState}>
@@ -77,7 +80,8 @@ export function PullsDashboard() {
         <div className={SECTION_CARD_CLASS}>
           <p className="text-muted-foreground border-b px-4 py-3 text-sm">
             Sign in with GitHub to search pull requests across your
-            repositories, or narrow to one repository with ⌘K.
+            repositories, or narrow to one repository with{' '}
+            {formatShortcut(modifier, 'K')}.
           </p>
           <GitHubTokenControl
             active={hasToken}
@@ -137,6 +141,7 @@ function openRepoSwitcher() {
 }
 
 function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
+  const modifier = useModifierKey();
   const [page, updatePage] = usePullsPageState();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const { hydrated, pinned, toggle } = usePinnedRepos();
@@ -176,7 +181,6 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
     <div className="space-y-3">
       <PullQueryBar
         appliedText={page.text}
-        defaultText={DEFAULT_QUERY_TEXT}
         scope={page.scope}
         onApply={applyText}
         onOpenScope={openRepoSwitcher}
@@ -216,9 +220,10 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
         <div className={cn(SECTION_CARD_CLASS, 'px-4 py-6 text-sm')}>
           <p className="font-medium">No pinned repositories yet.</p>
           <p className="text-muted-foreground mt-1">
-            Press ⌘K, find a repository, and press ⌘↵ to pin it. Pinned
-            repositories appear above for one-click switching, and this view
-            searches all of them at once.
+            Press {formatShortcut(modifier, 'K')}, find a repository, and press{' '}
+            {formatShortcut(modifier, '↵')} to pin it. Pinned repositories
+            appear above for one-click switching, and this view searches all of
+            them at once.
           </p>
         </div>
       ) : (
@@ -262,7 +267,7 @@ function ScopeStrip({
   const currentIsPinned =
     currentRepo != null && isRepoPinned(pinned, currentRepo);
   // Repo names alone, unless two pins share one.
-  const names = pinned.map((repo) => repo.slice(repo.indexOf('/') + 1));
+  const names = pinned.map((repo) => splitPath(repo).basename);
   const ambiguous = new Set(
     names.filter((name, index) => names.indexOf(name) !== index)
   );

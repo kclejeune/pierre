@@ -10,7 +10,7 @@ import {
   type OrgRepoListing,
   parseOrgRepoQuery,
   rankOrgRepos,
-  refreshOrgListing,
+  refreshOrgListings,
 } from '@/lib/githubOrgRepos';
 import {
   createJSONResponse,
@@ -77,7 +77,10 @@ async function handleGET(request: NextRequest) {
   const stale = listings.filter(({ listing }) => listingNeedsRefresh(listing));
   if (stale.length > 0) {
     after(() =>
-      Promise.all(stale.map(({ org }) => refreshOrgListing(org, token)))
+      refreshOrgListings(
+        stale.map(({ org }) => org),
+        token
+      )
     );
   }
 
@@ -93,7 +96,8 @@ async function handleGET(request: NextRequest) {
     repos = (
       await filterAccessibleRepos(
         rankOrgRepos(ready, parsed, MAX_CANDIDATES),
-        token
+        token,
+        request.signal
       )
     ).slice(0, MAX_RESULTS);
   } catch (error) {

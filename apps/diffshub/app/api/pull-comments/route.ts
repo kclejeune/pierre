@@ -9,7 +9,7 @@ import {
   rejectTokenlessRequestWhenLoginRequired,
 } from '@/lib/githubEnvironment';
 import { githubFetch } from '@/lib/githubFetch';
-import { parseLastPage } from '@/lib/githubPagination';
+import { fetchPagesInParallel, parseLastPage } from '@/lib/githubPagination';
 import {
   createGitHubFailureResponse,
   createUnreachableResponse,
@@ -154,37 +154,35 @@ async function fetchAllPages(
       { cache: 'no-store', headers: buildGitHubHeaders(token), signal }
     );
 
-  const firstResponse = await fetchPage(1);
-  if (!firstResponse.ok) {
-    return {
-      failure: await createGitHubFailureResponse(firstResponse),
-    };
-  }
-  const parsedFirst = await readGitHubJSON(firstResponse);
-  if (parsedFirst.failure != null) {
-    return { failure: parsedFirst.failure };
-  }
-  const records = [...(parsedFirst.data as unknown[])];
-  const lastPage = Math.min(
-    parseLastPage(firstResponse.headers.get('link')),
+  // Each page parsed as it arrives; a failed page reports a last page of 1
+  // so page 1's failure stops the walk.
+  const readPage = async (page: number) => {
+    const response = await fetchPage(page);
+    if (!response.ok) {
+      return {
+        failure: await createGitHubFailureResponse(response),
+        lastPage: 1,
+      };
+    }
+    const parsed = await readGitHubJSON(response);
+    return parsed.failure != null
+      ? { failure: parsed.failure, lastPage: 1 }
+      : {
+          lastPage: parseLastPage(response.headers.get('link')),
+          records: parsed.data as unknown[],
+        };
+  };
+  const pages = await fetchPagesInParallel(
+    readPage,
+    (first) => first.lastPage,
     MAX_COMMENT_PAGES
   );
-  if (lastPage > 1) {
-    const restResponses = await Promise.all(
-      Array.from({ length: lastPage - 1 }, (_, index) => fetchPage(index + 2))
-    );
-    for (const response of restResponses) {
-      if (!response.ok) {
-        return {
-          failure: await createGitHubFailureResponse(response),
-        };
-      }
-      const parsedPage = await readGitHubJSON(response);
-      if (parsedPage.failure != null) {
-        return { failure: parsedPage.failure };
-      }
-      records.push(...(parsedPage.data as unknown[]));
+  const records: unknown[] = [];
+  for (const page of pages) {
+    if (page.failure != null) {
+      return { failure: page.failure };
     }
+    records.push(...page.records);
   }
   return { records };
 }

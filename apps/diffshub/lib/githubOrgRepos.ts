@@ -22,12 +22,8 @@
 // nothing from that org rather than failing.
 
 import { createLimitedFetch } from './concurrencyLimit';
-import { rankPathMatches } from './fileSearchFilter';
-import {
-  type CacheContext,
-  readCacheEntry,
-  writeCacheEntry,
-} from './githubCacheCodec';
+import { compareRankedPaths, rankPathMatches } from './fileSearchFilter';
+import { cacheEntry } from './githubCacheCodec';
 import { getGitHubCacheLimits, getGitHubCacheStore } from './githubCacheStore';
 import { fetchGitHubJSON, sendGitHubGraphQL } from './githubCommitServer';
 import { encodeURLSegment } from './githubDiffSource';
@@ -38,8 +34,11 @@ import {
   getTokenEncryptionKey,
 } from './githubEnvironment';
 import { githubFetch } from './githubFetch';
-import { parseLastPage } from './githubPagination';
-import { parseGitHubJSONBody } from './githubProxyResponse';
+import { fetchPagesInParallel, parseLastPage } from './githubPagination';
+import {
+  describeGitHubFailureBody,
+  parseGitHubJSONBody,
+} from './githubProxyResponse';
 import { getCurrentRouteLabel } from './requestLog';
 import { emitLogLine, formatError, logUpstreamFailure } from './serverLog';
 import { createAsyncLRU, credentialCacheScope } from './serverLRU';
@@ -55,7 +54,6 @@ export interface OrgRepoListing {
   // The same repos without the "org/" prefix, index for index, matched when
   // a query's owner part has already picked the org.
   names: string[];
-  org: string;
 }
 
 // Stored this long; the listing is rebuilt in the background once it's
@@ -102,14 +100,19 @@ const viewerOrgsMemory = createAsyncLRU<string, string[]>({
   ttlMs: VIEWER_ORGS_TTL_MS,
 });
 
-const refreshFailures = createAsyncLRU<string, true>({
+// Rebuilds started in this process, kept REFRESH_FAILURE_BACKOFF_MS after
+// they settle: a burst of searches against a stale org shares one rebuild,
+// and a failed one (SSO-blocked token, GitHub outage) isn't retried on every
+// keystroke. A successful one leaves a fresh listing, so holding it changes
+// nothing.
+const refreshes = createAsyncLRU<string, void>({
   maxEntries: 1000,
   ttlMs: REFRESH_FAILURE_BACKOFF_MS,
 });
 
-// Rebuilds in flight in this process, so a burst of searches against a
-// stale org starts one rebuild.
-const refreshesInFlight = new Map<string, Promise<void>>();
+// Thrown by a listing read that finds nothing, so the LRU drops the miss
+// instead of caching it.
+class ListingMiss extends Error {}
 
 function listingKey(org: string): string {
   return `org-repos:v1:${getGitHubEnvironment().apiURL}:${org.toLowerCase()}`;
@@ -131,7 +134,6 @@ function toListing(org: string, stored: StoredListing): OrgRepoListing {
     builtAt: stored.builtAt,
     fullNames: stored.names.map((name) => `${org}/${name}`),
     names: stored.names,
-    org,
   };
 }
 
@@ -143,43 +145,44 @@ function logListingError(error: unknown): void {
   });
 }
 
-// The store and its settings, or null when no durable cache is configured.
-async function cacheContext(): Promise<CacheContext | null> {
+// The store entry for `org`'s listing, or null when no durable cache is
+// configured.
+async function listingEntry(org: string) {
   const limits = getGitHubCacheLimits();
   const store = limits == null ? undefined : await getGitHubCacheStore();
   return limits == null || store == null
     ? null
-    : { encryptionKey: getTokenEncryptionKey(), limits, store };
+    : cacheEntry(
+        { encryptionKey: getTokenEncryptionKey(), limits, store },
+        listingKey(org)
+      );
 }
 
 // The stored listing for `org`, straight from the store.
 async function readStoredListing(org: string): Promise<OrgRepoListing | null> {
-  const context = await cacheContext();
-  if (context == null) {
-    return null;
-  }
-  const value = await readCacheEntry(context, listingKey(org));
+  const value = await (await listingEntry(org))?.read();
   return isStoredListing(value) ? toListing(org, value) : null;
 }
 
 // The cached listing for `org`, or null when none has been built (or the
-// store can't be read). Never calls GitHub.
-export async function loadOrgListing(
-  org: string
-): Promise<OrgRepoListing | null> {
-  const logical = listingKey(org);
-  const remembered = listingMemory.peek(logical);
-  if (remembered != null) {
-    return remembered;
-  }
-  const stored = await readStoredListing(org).catch((error: unknown) => {
-    logListingError(error);
-    return null;
-  });
-  if (stored != null) {
-    listingMemory.set(logical, stored);
-  }
-  return stored;
+// store can't be read). Never calls GitHub. Concurrent reads share one store
+// read; misses aren't remembered, so a listing another process just stored
+// is found on the next search.
+export function loadOrgListing(org: string): Promise<OrgRepoListing | null> {
+  return listingMemory
+    .getOrCreate(listingKey(org), async () => {
+      const stored = await readStoredListing(org);
+      if (stored == null) {
+        throw new ListingMiss();
+      }
+      return stored;
+    })
+    .catch((error: unknown) => {
+      if (!(error instanceof ListingMiss)) {
+        logListingError(error);
+      }
+      return null;
+    });
 }
 
 export function listingNeedsRefresh(listing: OrgRepoListing | null): boolean {
@@ -218,7 +221,12 @@ async function fetchRepoPage(
       route: getCurrentRouteLabel('unknown'),
       upstreamURL: url,
     });
-    throw new Error(`GitHub answered ${response.status} listing ${org}.`);
+    const detail = describeGitHubFailureBody(
+      await response.json().catch(() => null)
+    );
+    throw new Error(
+      `GitHub answered ${response.status} listing ${org}${detail === '' ? '' : `: ${detail}`}.`
+    );
   }
   const body = await parseGitHubJSONBody(response);
   if (body.problem != null) {
@@ -234,22 +242,18 @@ async function fetchRepoPage(
   return { lastPage: parseLastPage(response.headers.get('link')), names };
 }
 
-// Lists every repository `token` can see in `org`: page one first (its Link
-// header says how many pages there are), then the rest in parallel. Throws
-// on any failed page, so a partial listing is never cached.
+// Lists every repository `token` can see in `org`. Throws on any failed
+// page, so a partial listing is never cached.
 async function fetchOrgRepos(
   org: string,
-  token: string
+  token: string,
+  fetcher: typeof githubFetch
 ): Promise<StoredListing> {
-  const fetcher = createLimitedFetch(LISTING_FETCH_CONCURRENCY, githubFetch);
-  const first = await fetchRepoPage(org, 1, token, fetcher);
-  const lastPage = Math.min(first.lastPage, MAX_REPO_PAGES);
-  const rest = await Promise.all(
-    Array.from({ length: lastPage - 1 }, (_, index) =>
-      fetchRepoPage(org, index + 2, token, fetcher)
-    )
+  const pages = await fetchPagesInParallel(
+    (page) => fetchRepoPage(org, page, token, fetcher),
+    (first) => first.lastPage,
+    MAX_REPO_PAGES
   );
-  const pages = [first, ...rest];
   return {
     builtAt: Date.now(),
     names: pages.flatMap((page) => page.names),
@@ -259,47 +263,50 @@ async function fetchOrgRepos(
 // Rebuilds `org`'s listing with `token` and stores it, unless another
 // process already stored a fresh one (checked first, since each server
 // process sees a listing go stale on its own) or a recent rebuild failed.
-// Concurrent calls in this process share one rebuild. Failures are logged
-// and leave the old listing in place; meant to run after the response
-// (Next's `after`).
-export function refreshOrgListing(org: string, token: string): Promise<void> {
+// Concurrent calls in this process share one rebuild (see `refreshes`).
+// Failures are logged and leave the old listing in place; meant to run
+// after the response (Next's `after`). `fetcher` lets a batch of rebuilds
+// share one concurrency limit.
+export function refreshOrgListing(
+  org: string,
+  token: string,
+  fetcher: typeof githubFetch = createLimitedFetch(
+    LISTING_FETCH_CONCURRENCY,
+    githubFetch
+  )
+): Promise<void> {
   const logical = listingKey(org);
-  const inFlight = refreshesInFlight.get(logical);
-  if (inFlight != null) {
-    return inFlight;
-  }
-  if (refreshFailures.has(logical)) {
-    return Promise.resolve();
-  }
-  const refresh = (async () => {
+  return refreshes.getOrCreate(logical, async () => {
     try {
       const stored = await readStoredListing(org).catch(() => null);
       if (stored != null && !listingNeedsRefresh(stored)) {
         listingMemory.set(logical, stored);
         return;
       }
-      const fetched = await fetchOrgRepos(org, token);
+      const fetched = await fetchOrgRepos(org, token, fetcher);
       // Seeds this process right away, even when nothing durable is
       // configured.
       listingMemory.set(logical, toListing(org, fetched));
-      const context = await cacheContext();
-      if (context != null) {
-        await writeCacheEntry(
-          context,
-          logical,
-          fetched,
-          LISTING_STORE_TTL_SECONDS
-        );
-      }
+      await (
+        await listingEntry(org)
+      )?.write(fetched, LISTING_STORE_TTL_SECONDS);
     } catch (error) {
-      refreshFailures.set(logical, true);
       logListingError(error);
-    } finally {
-      refreshesInFlight.delete(logical);
     }
-  })();
-  refreshesInFlight.set(logical, refresh);
-  return refresh;
+  });
+}
+
+// Rebuilds several orgs' listings under one concurrency limit, so a viewer
+// whose orgs are all stale fetches LISTING_FETCH_CONCURRENCY pages at a time
+// in total rather than per org (each page is ~500 KB of JSON).
+export function refreshOrgListings(
+  orgs: readonly string[],
+  token: string
+): Promise<void> {
+  const fetcher = createLimitedFetch(LISTING_FETCH_CONCURRENCY, githubFetch);
+  return Promise.all(
+    orgs.map((org) => refreshOrgListing(org, token, fetcher))
+  ).then(() => undefined);
 }
 
 // The logins of the orgs `token`'s user belongs to. Outside collaborators
@@ -317,7 +324,8 @@ export function loadViewerOrgs(token: string): Promise<string[]> {
 // error) means the token can't see it.
 async function checkAccess(
   fullNames: readonly string[],
-  token: string
+  token: string,
+  signal: AbortSignal | undefined
 ): Promise<boolean[]> {
   const params: string[] = [];
   const fields: string[] = [];
@@ -336,7 +344,7 @@ async function checkAccess(
       `query (${params.join(', ')}) { ${fields.join(' ')} }`,
       variables,
       token,
-      githubFetch,
+      (url, init) => githubFetch(url, { ...init, signal }),
       { allowNotFound: true }
     )
   );
@@ -345,10 +353,11 @@ async function checkAccess(
 
 // `candidates` (in order) narrowed to the ones `token` can read, by a
 // remembered or live access check. Unknown candidates are checked in one
-// batched request.
+// batched request, abandoned when `signal` aborts (a superseded keystroke).
 export async function filterAccessibleRepos(
   candidates: readonly string[],
-  token: string
+  token: string,
+  signal?: AbortSignal
 ): Promise<string[]> {
   const scope = credentialCacheScope(token);
   const accessKey = (fullName: string) => `${scope}:${fullName.toLowerCase()}`;
@@ -363,7 +372,7 @@ export async function filterAccessibleRepos(
     }
   }
   if (unknown.length > 0) {
-    const results = await checkAccess(unknown, token);
+    const results = await checkAccess(unknown, token, signal);
     unknown.forEach((fullName, index) => {
       accessMemory.set(accessKey(fullName), results[index]);
       access.set(fullName, results[index]);
@@ -426,18 +435,14 @@ export function rankOrgRepos(
       ...match,
       fullName: listing.fullNames[match.index],
       order,
-      searched: searched[match.index],
     }));
   });
   // The order one ranking over every listing's names, concatenated, would
-  // give: score, then localeCompare, then position.
+  // give: the matcher's own order, then position.
   matches.sort((a, b) => {
-    if (a.score !== b.score) {
-      return b.score - a.score;
-    }
-    const byText = a.searched.localeCompare(b.searched);
-    if (byText !== 0) {
-      return byText;
+    const ranked = compareRankedPaths(a, b);
+    if (ranked !== 0) {
+      return ranked;
     }
     return a.order === b.order ? a.index - b.index : a.order - b.order;
   });

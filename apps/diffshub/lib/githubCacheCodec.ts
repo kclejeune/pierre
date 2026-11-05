@@ -65,7 +65,7 @@ function deriveCacheKeys(key: Uint8Array<ArrayBuffer>): Promise<CacheKeys> {
   return derived;
 }
 
-export async function storeCacheKey(
+async function storeCacheKey(
   logical: string,
   encryptionKey: Uint8Array<ArrayBuffer> | undefined
 ): Promise<string> {
@@ -81,7 +81,7 @@ export async function storeCacheKey(
   return `${CACHE_KEY_PREFIX}${Buffer.from(digest).toString('base64url')}`;
 }
 
-export async function sealCacheValue(
+async function sealCacheValue(
   json: string,
   key: string,
   encryptionKey: Uint8Array<ArrayBuffer> | undefined
@@ -99,7 +99,7 @@ export async function sealCacheValue(
 // Returns undefined (a miss) for anything this instance did not write under
 // its current configuration: a value from before encryption was enabled, one
 // sealed under a rotated key, or a tampered value.
-export async function openCacheValue(
+async function openCacheValue(
   raw: string,
   key: string,
   encryptionKey: Uint8Array<ArrayBuffer> | undefined
@@ -128,41 +128,46 @@ export interface CacheContext {
   store: CacheStore;
 }
 
-// The value stored under `logical`, or undefined on a miss (including values
-// this instance can't open). Store failures throw, for the caller to log and
-// treat as a miss.
-export async function readCacheEntry(
+// One logical entry in the store. The store key (an HMAC of `logical`) is
+// derived once, so a read that misses and the write that follows share it.
+//
+// read: the stored value, or undefined on a miss (including values this
+// instance can't open). write: stores `value` as JSON, skipping values over
+// the entry cap (checked before sealing, which only grows them, and after);
+// `ttlSeconds` overrides the configured TTL. Store failures throw from both,
+// for the caller to log and treat as a miss.
+export function cacheEntry(
   context: CacheContext,
   logical: string
-): Promise<unknown> {
-  const key = await storeCacheKey(logical, context.encryptionKey);
-  const raw = await context.store.get(key);
-  return raw == null
-    ? undefined
-    : openCacheValue(raw, key, context.encryptionKey);
-}
-
-// Stores `value` as JSON under `logical`, skipping values over the entry cap
-// (checked before sealing, which only grows them, and after). `ttlSeconds`
-// overrides the configured TTL. Store failures throw.
-export async function writeCacheEntry(
-  context: CacheContext,
-  logical: string,
-  value: unknown,
-  ttlSeconds?: number
-): Promise<void> {
+): {
+  read: () => Promise<unknown>;
+  write: (value: unknown, ttlSeconds?: number) => Promise<void>;
+} {
   const { encryptionKey, limits, store } = context;
-  const json = JSON.stringify(value);
-  if (Buffer.byteLength(json) > limits.maxEntryBytes) {
-    return;
-  }
-  const key = await storeCacheKey(logical, encryptionKey);
-  const sealed = await sealCacheValue(json, key, encryptionKey);
-  if (Buffer.byteLength(sealed) <= limits.maxEntryBytes) {
-    await store.put(
-      key,
-      sealed,
-      ttlSeconds == null ? limits : { ...limits, ttlSeconds }
-    );
-  }
+  let key: Promise<string> | undefined;
+  const storeKey = () => (key ??= storeCacheKey(logical, encryptionKey));
+  return {
+    async read() {
+      const resolved = await storeKey();
+      const raw = await store.get(resolved);
+      return raw == null
+        ? undefined
+        : openCacheValue(raw, resolved, encryptionKey);
+    },
+    async write(value, ttlSeconds) {
+      const json = JSON.stringify(value);
+      if (Buffer.byteLength(json) > limits.maxEntryBytes) {
+        return;
+      }
+      const resolved = await storeKey();
+      const sealed = await sealCacheValue(json, resolved, encryptionKey);
+      if (Buffer.byteLength(sealed) <= limits.maxEntryBytes) {
+        await store.put(
+          resolved,
+          sealed,
+          ttlSeconds == null ? limits : { ...limits, ttlSeconds }
+        );
+      }
+    },
+  };
 }

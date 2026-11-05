@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { filterFilePathsForSearch, rankPathIndices } from '../fileSearchFilter';
+import { filterFilePathsForSearch, rankPathMatches } from '../fileSearchFilter';
 
 const PATHS = [
   'README.md',
@@ -76,6 +76,8 @@ describe('filterFilePathsForSearch', () => {
 
   test('identical paths keep their input order', () => {
     const paths = ['b/x.ts', 'a/x.ts', 'b/x.ts', 'a/x.ts'];
-    expect(rankPathIndices(paths, 'x', 4)).toEqual([1, 3, 0, 2]);
+    expect(rankPathMatches(paths, 'x', 4).map((match) => match.index)).toEqual([
+      1, 3, 0, 2,
+    ]);
   });
 });

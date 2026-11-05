@@ -8,7 +8,7 @@ import { ShortcutHint } from './ShortcutHint';
 import { useResettableState } from './useResettableState';
 import { cn } from '@/lib/cn';
 import { isEditableEventTarget } from '@/lib/platform';
-import { type PullScope } from '@/lib/pullScopes';
+import { DEFAULT_QUERY_TEXT, type PullScope } from '@/lib/pullScopes';
 import {
   KNOWN_PULL_QUALIFIERS,
   type PullQueryToken,
@@ -19,7 +19,6 @@ interface PullQueryBarProps {
   // The search the list is showing; edits stay local until Enter applies
   // them.
   appliedText: string;
-  defaultText: string;
   onApply(text: string): void;
   onOpenScope(): void;
   scope: PullScope;
@@ -32,7 +31,6 @@ interface PullQueryBarProps {
 // qualifier tokens, so the caret, selection, and IME stay native.
 export function PullQueryBar({
   appliedText,
-  defaultText,
   onApply,
   onOpenScope,
   scope,
@@ -124,15 +122,15 @@ export function PullQueryBar({
             ↵ search
           </kbd>
         )}
-        {draft.trim() !== defaultText && (
+        {draft.trim() !== DEFAULT_QUERY_TEXT && (
           <button
             type="button"
             aria-label="Reset search"
-            title={`Reset to “${defaultText}”`}
+            title={`Reset to “${DEFAULT_QUERY_TEXT}”`}
             className="text-muted-foreground hover:text-foreground hover:bg-accent focus-visible:ring-ring flex size-6 cursor-pointer items-center justify-center rounded-sm outline-none focus-visible:ring-2"
             onClick={() => {
-              setDraft(defaultText);
-              onApply(defaultText);
+              setDraft(DEFAULT_QUERY_TEXT);
+              onApply(DEFAULT_QUERY_TEXT);
               inputRef.current?.focus();
             }}
           >

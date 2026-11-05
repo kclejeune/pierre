@@ -116,18 +116,26 @@ function classifyWord(raw: string): PullQueryToken {
   };
 }
 
+// Whether `token` is a non-negated qualifier whose key is in `keys`: the
+// terms the toggles and the server treat as the text's own filter.
+function isPositiveQualifier(
+  token: PullQueryToken,
+  keys: ReadonlySet<string>
+): boolean {
+  return (
+    token.kind === 'qualifier' &&
+    keys.has(token.key ?? '') &&
+    token.negated !== true
+  );
+}
+
 // Values of every non-negated qualifier whose key is in `keys`, in order.
 function qualifierValues(
   tokens: readonly PullQueryToken[],
   keys: ReadonlySet<string>
 ): string[] {
   return tokens
-    .filter(
-      (token) =>
-        token.kind === 'qualifier' &&
-        keys.has(token.key ?? '') &&
-        token.negated !== true
-    )
+    .filter((token) => isPositiveQualifier(token, keys))
     .map((token) => token.value ?? '');
 }
 
@@ -263,9 +271,7 @@ function replaceQualifier(
   const removed = new Set<number>();
   tokens.forEach((token, index) => {
     if (
-      token.kind === 'qualifier' &&
-      keys.has(token.key ?? '') &&
-      token.negated !== true &&
+      isPositiveQualifier(token, keys) &&
       matches((token.value ?? '').toLowerCase())
     ) {
       removed.add(index);
@@ -301,17 +307,14 @@ const STATE_KEYS: ReadonlySet<string> = new Set(['is', 'state']);
 const STATE_VALUES = new Set(['open', 'closed', 'merged', 'unmerged']);
 
 export function readPullStateFilter(text: string): PullStateFilter {
-  const values = qualifierValues(tokenizePullQuery(text), STATE_KEYS).map(
-    (value) => value.toLowerCase()
-  );
   // Last one wins, matching how the toggle appends its choice.
-  for (let index = values.length - 1; index >= 0; index -= 1) {
-    const value = values[index];
-    if (value === 'open' || value === 'closed' || value === 'merged') {
-      return value;
-    }
-  }
-  return 'all';
+  const state = qualifierValues(tokenizePullQuery(text), STATE_KEYS)
+    .map((value) => value.toLowerCase())
+    .findLast(
+      (value): value is 'open' | 'closed' | 'merged' =>
+        value === 'open' || value === 'closed' || value === 'merged'
+    );
+  return state ?? 'all';
 }
 
 export function writePullStateFilter(
@@ -363,9 +366,7 @@ export function writePullSort(text: string, sort: string): string {
 export function splitPullSort(text: string): { rest: string; sort?: string } {
   const tokens = tokenizePullQuery(text);
   const isSort = (token: PullQueryToken) =>
-    token.kind === 'qualifier' &&
-    token.key === 'sort' &&
-    token.negated !== true;
+    isPositiveQualifier(token, SORT_KEYS);
   const sort = tokens.filter(isSort).at(-1)?.value?.toLowerCase() ?? '';
   const rest = joinTokens(tokens.filter((token) => !isSort(token)));
   return sort === '' ? { rest } : { rest, sort };

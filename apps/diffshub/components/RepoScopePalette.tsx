@@ -20,7 +20,9 @@ import { openCommandPalette } from './CommandPalette';
 import { storedGitHubTokenHeaders } from './githubSession';
 import { PaletteDialog } from './PaletteDialog';
 import { RepoName, ScopeIcon } from './RepoName';
+import { formatShortcut, useModifierKey } from './ShortcutHint';
 import { loadSuggestions } from './useDiffUrlSuggestions';
+import { useLatestValueRef } from './useLatestValueRef';
 import { useRepoDirectory } from './useRepoDirectory';
 import { cn } from '@/lib/cn';
 import { deriveSuggestQuery } from '@/lib/diffUrlSuggestions';
@@ -29,6 +31,7 @@ import { requestJSON } from '@/lib/pullCommentsClient';
 import { loadRecentRepos, type PullScope } from '@/lib/pullScopes';
 import {
   buildRepoScopeSections,
+  knownRepos,
   MAX_REPO_MATCHES,
   type RepoScopeItem,
 } from '@/lib/repoScopeItems';
@@ -91,6 +94,10 @@ export function RepoScopePalette({
     }
   };
 
+  const known = useMemo(
+    () => knownRepos(pinned, recents, directory),
+    [directory, pinned, recents]
+  );
   // Local sections first, skipped entirely while closed (the query lingers
   // after a pick, and the page re-renders the switcher on every scope or chip
   // change).
@@ -99,6 +106,7 @@ export function RepoScopePalette({
       open
         ? buildRepoScopeSections({
             directory,
+            known,
             pinned,
             query,
             orgMatches: NO_REMOTE,
@@ -106,29 +114,20 @@ export function RepoScopePalette({
             remote: NO_REMOTE,
           })
         : [],
-    [directory, open, pinned, query, recents]
+    [directory, known, open, pinned, query, recents]
   );
   // The remote tiers only add repos outside the known set, so they're
   // skipped when local matches already fill the list.
   const localMatches =
     localSections.find((section) => section.heading === 'Repositories')?.items
       .length ?? 0;
-  // Lowercase names the local sections can already show, which the remote
-  // tiers skip.
-  const knownRepos = useMemo(
-    () =>
-      new Set(
-        [...pinned, ...recents, ...directory].map((repo) => repo.toLowerCase())
-      ),
-    [directory, pinned, recents]
-  );
   const { orgMatches, remote } = useRemoteRepoSearch(
     open &&
       query.trim().length >= MIN_REMOTE_QUERY_LENGTH &&
       localMatches < MAX_REPO_MATCHES
       ? query
       : '',
-    knownRepos
+    known.seen
   );
   const sections = useMemo(
     () =>
@@ -136,13 +135,23 @@ export function RepoScopePalette({
         ? localSections
         : buildRepoScopeSections({
             directory,
+            known,
             orgMatches,
             pinned,
             query,
             recents,
             remote,
           }),
-    [directory, localSections, orgMatches, pinned, query, recents, remote]
+    [
+      directory,
+      known,
+      localSections,
+      orgMatches,
+      pinned,
+      query,
+      recents,
+      remote,
+    ]
   );
   const items = sections.flatMap((section) => section.items);
 
@@ -224,6 +233,7 @@ function ScopeItem({
   pinned: boolean;
 }) {
   const { repo } = item;
+  const modifier = useModifierKey();
   const canPin = repo != null && (pinned || !pinFull);
   return (
     <CommandItem value={item.key} onSelect={onSelect} className="group/item">
@@ -247,7 +257,7 @@ function ScopeItem({
           type="button"
           aria-label={pinned ? `Unpin ${repo}` : `Pin ${repo}`}
           aria-pressed={pinned}
-          title={pinned ? 'Unpin (⌘↵)' : 'Pin (⌘↵)'}
+          title={`${pinned ? 'Unpin' : 'Pin'} (${formatShortcut(modifier, '↵')})`}
           className={cn(
             'hover:bg-background/80 -my-1 flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm',
             item.detail == null && 'ml-auto',
@@ -273,10 +283,11 @@ function ScopeItem({
 }
 
 function PaletteFooter() {
+  const modifier = useModifierKey();
   return (
     <div className="text-muted-foreground flex items-center gap-4 border-t px-3 py-2 text-[11px]">
       <FooterHint keys="↵" label="View pull requests" />
-      <FooterHint keys="⌘↵" label="Pin or unpin" />
+      <FooterHint keys={formatShortcut(modifier, '↵')} label="Pin or unpin" />
       <FooterHint keys="esc" label="Close" className="ml-auto" />
     </div>
   );
@@ -339,20 +350,17 @@ async function searchOrgRepos(
 // effect. While the server reports an org listing still being built, the
 // org search is retried with backoff (pending responses are never cached),
 // so its matches appear without retyping. GitHub search is skipped only
-// when the org matches add a row: matches that are all in `knownRepos`
-// (lowercase names the local sections already show) add nothing, so the
+// when the org matches add a row: matches that are all in `shownRepos`
+// (lowercase names the local sections can already show) add nothing, so the
 // fallback still runs.
 function useRemoteRepoSearch(
   query: string,
-  knownRepos: ReadonlySet<string>
+  shownRepos: ReadonlySet<string>
 ): RemoteRepoResults {
   const [results, setResults] = useState<RemoteRepoResults>(NO_RESULTS);
   // Read when a search settles rather than as an effect dependency, so the
   // directory loading in doesn't restart the search.
-  const known = useRef(knownRepos);
-  useEffect(() => {
-    known.current = knownRepos;
-  }, [knownRepos]);
+  const known = useLatestValueRef(shownRepos);
   // Whether the last org search said some org was still being listed; while
   // it is, GitHub search starts alongside the org search instead of after.
   const orgsPending = useRef(false);
@@ -368,39 +376,35 @@ function useRemoteRepoSearch(
     // access check.
     const controller = new AbortController();
     let timer = 0;
-    // Re-runs only the org search; GitHub search results stay as they are.
-    const retryOrgs = (attempt: number) => {
-      const delay = ORG_RETRY_DELAYS_MS[attempt];
-      if (delay == null) {
-        return;
+    // Runs the org search and stores its matches, retrying while some org's
+    // listing is still being built. A retry keeps the GitHub search rows;
+    // the first search clears the previous query's. Null once aborted.
+    const searchOrgs = async (attempt: number) => {
+      const org = await searchOrgRepos(query.trim(), controller.signal);
+      if (controller.signal.aborted) {
+        return null;
       }
-      const retry = async () => {
-        const org = await searchOrgRepos(query.trim(), controller.signal);
-        if (controller.signal.aborted) {
-          return;
-        }
-        orgsPending.current = org.pending;
-        setResults((previous) => ({ ...previous, orgMatches: org.repos }));
-        if (org.pending) {
-          retryOrgs(attempt + 1);
-        }
-      };
-      timer = window.setTimeout(() => void retry(), delay);
+      orgsPending.current = org.pending;
+      setResults((previous) => ({
+        orgMatches: org.repos,
+        remote: attempt === 0 ? NO_REMOTE : previous.remote,
+      }));
+      const delay = ORG_RETRY_DELAYS_MS[attempt];
+      if (org.pending && delay != null) {
+        timer = window.setTimeout(() => void searchOrgs(attempt + 1), delay);
+      }
+      return org;
     };
     const run = async () => {
       const early = orgsPending.current ? loadSuggestions(suggestQuery) : null;
-      const org = await searchOrgRepos(query.trim(), controller.signal);
-      if (controller.signal.aborted) {
+      const org = await searchOrgs(0);
+      if (org == null) {
         return;
       }
-      orgsPending.current = org.pending;
-      setResults({ orgMatches: org.repos, remote: NO_REMOTE });
       const addsRows = org.repos.some(
         (repo) => repo !== query && !known.current.has(repo.toLowerCase())
       );
-      if (org.pending) {
-        retryOrgs(0);
-      } else if (addsRows) {
+      if (!org.pending && addsRows) {
         return;
       }
       const suggestions = await (early ?? loadSuggestions(suggestQuery));
@@ -417,6 +421,6 @@ function useRemoteRepoSearch(
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [query, suggestQuery]);
+  }, [known, query, suggestQuery]);
   return suggestQuery == null ? NO_RESULTS : results;
 }

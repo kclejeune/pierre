@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { NextRequest } from 'next/server';
 
+import { GET } from '../app/api/github-pulls/route';
 import {
   buildActivePullsVariables,
   buildActiveSearchQuery,
@@ -397,5 +399,20 @@ describe('parseActivePullsPayload page details', () => {
       },
     });
     expect(page.nextCursor).toBeUndefined();
+  });
+});
+
+describe('GET /api/github-pulls', () => {
+  const list = (query: string) =>
+    GET(new NextRequest(`https://diffshub.test/api/github-pulls?${query}`));
+
+  test('anyone needs a repository scope or a narrowing qualifier', async () => {
+    const unscoped = await list('involves=anyone&q=is%3Aopen');
+    expect(unscoped.status).toBe(400);
+    // Both narrowings get past validation (to the token check).
+    expect((await list('involves=anyone&repos=acme%2Fwidgets')).status).toBe(
+      401
+    );
+    expect((await list('involves=anyone&q=org%3Aacme')).status).toBe(401);
   });
 });

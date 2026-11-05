@@ -5,7 +5,7 @@ import { NextRequest } from 'next/server';
 import { GET } from '../app/api/github-org-repo-search/route';
 import {
   filterFilePathsForSearch,
-  rankPathIndices,
+  rankPathMatches,
 } from '@/lib/fileSearchFilter';
 import {
   filterAccessibleRepos,
@@ -175,7 +175,6 @@ describe('ranking', () => {
       builtAt: Date.now(),
       fullNames: names.map((name) => `${org}/${name}`),
       names,
-      org,
     }) satisfies OrgRepoListing;
 
   test('splits owner/name queries for the two-pass search', () => {
@@ -226,7 +225,7 @@ describe('ranking', () => {
         expect(
           rankOrgRepos(listings, parseOrgRepoQuery(`a/${query}`), limit)
         ).toEqual(
-          rankPathIndices(bare, query, limit).map((index) => all[index])
+          rankPathMatches(bare, query, limit).map((match) => all[match.index])
         );
       }
     }

@@ -5,6 +5,7 @@ import {
   sendGitHubGraphQL,
 } from '@/lib/githubCommitServer';
 import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
+import { githubFetch } from '@/lib/githubFetch';
 import {
   ACTIVE_PULLS_QUERY,
   buildActivePullsVariables,
@@ -20,6 +21,7 @@ import {
 } from '@/lib/jsonResponse';
 import { isValidRepoName, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
 import { DEFAULT_QUERY_TEXT } from '@/lib/pullScopes';
+import { hasNarrowingQualifier } from '@/lib/pullSearchQuery';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
@@ -72,6 +74,21 @@ async function handleGET(request: NextRequest) {
       { status: 400 }
     );
   }
+  // "Anyone" without a repository scope or a repo:/org:/user: qualifier would
+  // search every pull request on the instance.
+  if (
+    involves === 'anyone' &&
+    repos.length === 0 &&
+    !hasNarrowingQualifier(text)
+  ) {
+    return createJSONResponse(
+      {
+        error:
+          'involves=anyone needs repos or a repo:, org:, or user: qualifier.',
+      },
+      { status: 400 }
+    );
+  }
   const reviewRequests = params.get('requests') ?? 'direct';
   if (!isReviewRequestScope(reviewRequests)) {
     return createJSONResponse(
@@ -108,7 +125,10 @@ async function handleGET(request: NextRequest) {
             { involves, repos, reviewRequests, text },
             cursor
           ),
-          token
+          token,
+          // A superseded search (the client aborts on each change) stops
+          // the GitHub call too.
+          (url, init) => githubFetch(url, { ...init, signal: request.signal })
         )
       ),
       30

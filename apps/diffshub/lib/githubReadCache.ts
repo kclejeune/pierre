@@ -21,7 +21,7 @@
 // Any store failure falls back to the live read: the cache can make a request
 // faster but never fail it.
 
-import { readCacheEntry, writeCacheEntry } from './githubCacheCodec';
+import { cacheEntry } from './githubCacheCodec';
 import {
   type CacheStore,
   getGitHubCacheLimits,
@@ -136,15 +136,17 @@ export function createGitHubReads(
     if (store == null || limits == null) {
       return live();
     }
-    const context = { encryptionKey, limits, store };
-    const entry = JSON.stringify([instance, repoId(repo), ...logical]);
-    const hit = await readCacheEntry(context, entry).catch(logCacheError);
+    const entry = cacheEntry(
+      { encryptionKey, limits, store },
+      JSON.stringify([instance, repoId(repo), ...logical])
+    );
+    const hit = await entry.read().catch(logCacheError);
     if (hit !== undefined) {
       await ensureAccess(repo);
       return hit as T;
     }
     const value = await live();
-    await writeCacheEntry(context, entry, value).catch(logCacheError);
+    await entry.write(value).catch(logCacheError);
     return value;
   };
 

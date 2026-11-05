@@ -1,3 +1,6 @@
+import { fetchGitHubJSON } from './githubCommitServer';
+import type { PlainFetch } from './plainFetch';
+
 // GitHub REST list pagination: the last page number from a response's Link
 // header, so callers can fetch the remaining pages in parallel after page 1.
 // A missing rel="last" means the response was the only (or final) page.
@@ -23,4 +26,29 @@ export async function fetchPagesInParallel<T>(
     )
   );
   return [first, ...rest];
+}
+
+// Exhausts a paginated GitHub listing at 100 items per page, concatenating
+// what `extractItems` pulls off each page. A short page ends the walk; a
+// page `extractItems` cannot read (null) ends it too, keeping whatever
+// earlier pages yielded.
+export async function fetchAllGitHubPages(
+  pathForPage: (page: number) => string,
+  extractItems: (payload: unknown) => unknown[] | null,
+  token: string | undefined,
+  fetcher: PlainFetch
+): Promise<unknown[]> {
+  const items: unknown[] = [];
+  for (let page = 1; ; page += 1) {
+    const payload = await fetchGitHubJSON(pathForPage(page), token, fetcher);
+    const pageItems = extractItems(payload);
+    if (pageItems == null) {
+      break;
+    }
+    items.push(...pageItems);
+    if (pageItems.length < 100) {
+      break;
+    }
+  }
+  return items;
 }

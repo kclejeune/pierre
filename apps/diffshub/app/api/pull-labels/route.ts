@@ -9,7 +9,6 @@ import { encodeURLSegment } from '@/lib/githubDiffSource';
 import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
 import {
   fetchRepoLabels,
-  parseLabels,
   readPullLabelChange,
 } from '@/lib/githubPullDetailsServer';
 import { readRepoParams } from '@/lib/githubRepoBrowserServer';
@@ -18,6 +17,7 @@ import {
   createPrivateJSONResponse,
 } from '@/lib/jsonResponse';
 import { parseJSONBody } from '@/lib/parseJSONBody';
+import { parseLabels } from '@/lib/pullLabels';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 

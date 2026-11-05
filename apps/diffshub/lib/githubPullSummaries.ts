@@ -5,6 +5,7 @@
 // page's query bar.
 
 import type { PullLabel } from './pullInfoClient';
+import { parseLabels } from './pullLabels';
 import {
   DEFAULT_PULL_SORT,
   hasOrOperator,
@@ -518,19 +519,7 @@ function readPullState(record: Record<string, unknown>): PullSummary['state'] {
 }
 
 function readLabels(record: Record<string, unknown>): PullLabel[] {
-  const nodes = asRecord(record.labels)?.nodes;
-  const labels: PullLabel[] = [];
-  for (const node of Array.isArray(nodes) ? nodes : []) {
-    const label = asRecord(node);
-    if (
-      typeof label?.name === 'string' &&
-      typeof label.color === 'string' &&
-      /^[0-9a-f]{6}$/i.test(label.color)
-    ) {
-      labels.push({ name: label.name, color: label.color });
-    }
-  }
-  return labels;
+  return parseLabels(asRecord(record.labels)?.nodes);
 }
 
 export interface PullsPage {

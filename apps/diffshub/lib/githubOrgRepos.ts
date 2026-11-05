@@ -25,7 +25,7 @@ import { createLimitedFetch } from './concurrencyLimit';
 import { compareRankedPaths, rankPathMatches } from './fileSearchFilter';
 import { cacheEntry } from './githubCacheCodec';
 import { getGitHubCacheLimits, getGitHubCacheStore } from './githubCacheStore';
-import { fetchGitHubJSON, sendGitHubGraphQL } from './githubCommitServer';
+import { sendGitHubGraphQL } from './githubCommitServer';
 import { encodeURLSegment } from './githubDiffSource';
 import {
   createGitHubAPIURL,
@@ -34,7 +34,11 @@ import {
   getTokenEncryptionKey,
 } from './githubEnvironment';
 import { githubFetch } from './githubFetch';
-import { fetchPagesInParallel, parseLastPage } from './githubPagination';
+import {
+  fetchAllGitHubPages,
+  fetchPagesInParallel,
+  parseLastPage,
+} from './githubPagination';
 import {
   describeGitHubFailureBody,
   parseGitHubJSONBody,
@@ -310,11 +314,17 @@ export function refreshOrgListings(
 }
 
 // The logins of the orgs `token`'s user belongs to. Outside collaborators
-// aren't members, so their orgs are never searched.
+// aren't members, so their orgs are never searched. Every page is read, so
+// a member of more than 100 orgs isn't cut off.
 export function loadViewerOrgs(token: string): Promise<string[]> {
   return viewerOrgsMemory.getOrCreate(credentialCacheScope(token), async () => {
-    const payload = await fetchGitHubJSON('/user/orgs?per_page=100', token);
-    return (Array.isArray(payload) ? payload : [])
+    const orgs = await fetchAllGitHubPages(
+      (page) => `/user/orgs?per_page=100&page=${page}`,
+      (payload) => (Array.isArray(payload) ? payload : null),
+      token,
+      githubFetch
+    );
+    return orgs
       .map((item) => asRecord(item)?.login)
       .filter((login): login is string => typeof login === 'string');
   });

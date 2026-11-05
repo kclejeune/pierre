@@ -9,6 +9,7 @@ import {
   rejectTokenlessRequestWhenLoginRequired,
 } from '@/lib/githubEnvironment';
 import { githubFetch } from '@/lib/githubFetch';
+import { parseLastPage } from '@/lib/githubPagination';
 import {
   createGitHubFailureResponse,
   createUnreachableResponse,
@@ -695,13 +696,6 @@ function buildGitHubHeaders(token: string | undefined): HeadersInit {
     ...createGitHubJSONHeaders(token),
     'Content-Type': 'application/json',
   };
-}
-
-// Extracts the last page number from GitHub's pagination Link header;
-// a missing rel="last" means the response was the only (or final) page.
-function parseLastPage(linkHeader: string | null): number {
-  const match = linkHeader?.match(/[?&]page=(\d+)[^>]*>;\s*rel="last"/);
-  return match != null ? Number(match[1]) : 1;
 }
 
 function isGitHubDiffSide(value: unknown): value is GitHubDiffSide {

@@ -1,7 +1,13 @@
 'use client';
 
 import { IconPin, IconSearch } from '@pierre/icons';
-import { type KeyboardEvent, useEffect, useMemo, useState } from 'react';
+import {
+  type KeyboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import {
   CommandEmpty,
@@ -11,6 +17,7 @@ import {
   CommandList,
 } from './Command';
 import { openCommandPalette } from './CommandPalette';
+import { storedGitHubTokenHeaders } from './githubSession';
 import { PaletteDialog } from './PaletteDialog';
 import { RepoName, ScopeIcon } from './RepoName';
 import { loadSuggestions } from './useDiffUrlSuggestions';
@@ -18,6 +25,7 @@ import { useRepoDirectory } from './useRepoDirectory';
 import { cn } from '@/lib/cn';
 import { deriveSuggestQuery } from '@/lib/diffUrlSuggestions';
 import { isRepoPinned, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
+import { requestJSON } from '@/lib/pullCommentsClient';
 import { loadRecentRepos, type PullScope } from '@/lib/pullScopes';
 import {
   buildRepoScopeSections,
@@ -28,6 +36,9 @@ import {
 // How long typing pauses before GitHub's repository search runs; local
 // matches don't wait for it. Matches the URL bar's repo-suggestion delay.
 const REMOTE_SEARCH_DELAY_MS = 250;
+// Waits between org searches while an org listing is still being built
+// (about 30s in total), after which GitHub search alone covers that org.
+const ORG_RETRY_DELAYS_MS = [2000, 4000, 8000, 16_000];
 // GitHub's search API allows ~30 requests a minute per token, shared with
 // the URL bar, so single characters (which match nearly everything) don't
 // spend one.
@@ -90,30 +101,48 @@ export function RepoScopePalette({
             directory,
             pinned,
             query,
+            orgMatches: NO_REMOTE,
             recents,
             remote: NO_REMOTE,
           })
         : [],
     [directory, open, pinned, query, recents]
   );
-  // GitHub's search only adds repos outside the known set, so it's skipped
-  // when local matches already fill the list.
+  // The remote tiers only add repos outside the known set, so they're
+  // skipped when local matches already fill the list.
   const localMatches =
     localSections.find((section) => section.heading === 'Repositories')?.items
       .length ?? 0;
-  const remote = useRemoteRepoSearch(
+  // Lowercase names the local sections can already show, which the remote
+  // tiers skip.
+  const knownRepos = useMemo(
+    () =>
+      new Set(
+        [...pinned, ...recents, ...directory].map((repo) => repo.toLowerCase())
+      ),
+    [directory, pinned, recents]
+  );
+  const { orgMatches, remote } = useRemoteRepoSearch(
     open &&
       query.trim().length >= MIN_REMOTE_QUERY_LENGTH &&
       localMatches < MAX_REPO_MATCHES
       ? query
-      : ''
+      : '',
+    knownRepos
   );
   const sections = useMemo(
     () =>
-      remote.length === 0
+      orgMatches.length === 0 && remote.length === 0
         ? localSections
-        : buildRepoScopeSections({ directory, pinned, query, recents, remote }),
-    [directory, localSections, pinned, query, recents, remote]
+        : buildRepoScopeSections({
+            directory,
+            orgMatches,
+            pinned,
+            query,
+            recents,
+            remote,
+          }),
+    [directory, localSections, orgMatches, pinned, query, recents, remote]
   );
   const items = sections.flatMap((section) => section.items);
 
@@ -272,14 +301,61 @@ function FooterHint({
   );
 }
 
-// GitHub's repository-name search for the switcher's query, debounced, as
-// plain "owner/name" strings. Shares the URL bar's suggestion endpoint (and
-// its browser cache). Keeps the previous results while the next search is
-// pending so the list doesn't flicker on each keystroke. Queries that can't
-// name a repository (empty, spaces, URLs) show no remote rows, derived during
-// render rather than cleared from the effect.
-function useRemoteRepoSearch(query: string): readonly string[] {
-  const [results, setResults] = useState<readonly string[]>(NO_REMOTE);
+interface RemoteRepoResults {
+  orgMatches: readonly string[];
+  remote: readonly string[];
+}
+
+const NO_RESULTS: RemoteRepoResults = {
+  orgMatches: NO_REMOTE,
+  remote: NO_REMOTE,
+};
+
+// Fuzzy matches from the viewer's organizations (server-ranked over shared
+// org listings, access-checked per viewer). `pending` means some org's
+// listing is still being built.
+async function searchOrgRepos(
+  query: string,
+  signal: AbortSignal
+): Promise<{ pending: boolean; repos: string[] }> {
+  try {
+    const params = new URLSearchParams({ q: query });
+    return (await requestJSON(`/api/github-org-repo-search?${params}`, {
+      headers: storedGitHubTokenHeaders(),
+      signal,
+    })) as { pending: boolean; repos: string[] };
+  } catch {
+    return { pending: true, repos: [] };
+  }
+}
+
+// The switcher's remote tiers for its query, debounced: org matches first,
+// then GitHub's repository-name search (shared with the URL bar, and its
+// browser cache) only when the orgs found nothing or are still being listed,
+// since that search API allows ~30 requests a minute. Keeps the previous
+// results while the next search is pending so the list doesn't flicker on
+// each keystroke. Queries that can't name a repository (empty, spaces, URLs)
+// show no remote rows, derived during render rather than cleared from the
+// effect. While the server reports an org listing still being built, the
+// org search is retried with backoff (pending responses are never cached),
+// so its matches appear without retyping. GitHub search is skipped only
+// when the org matches add a row: matches that are all in `knownRepos`
+// (lowercase names the local sections already show) add nothing, so the
+// fallback still runs.
+function useRemoteRepoSearch(
+  query: string,
+  knownRepos: ReadonlySet<string>
+): RemoteRepoResults {
+  const [results, setResults] = useState<RemoteRepoResults>(NO_RESULTS);
+  // Read when a search settles rather than as an effect dependency, so the
+  // directory loading in doesn't restart the search.
+  const known = useRef(knownRepos);
+  useEffect(() => {
+    known.current = knownRepos;
+  }, [knownRepos]);
+  // Whether the last org search said some org was still being listed; while
+  // it is, GitHub search starts alongside the org search instead of after.
+  const orgsPending = useRef(false);
   const suggestQuery = useMemo(() => {
     const derived = deriveSuggestQuery(query);
     return derived?.kind === 'repos' ? derived : null;
@@ -288,18 +364,59 @@ function useRemoteRepoSearch(query: string): readonly string[] {
     if (suggestQuery == null) {
       return;
     }
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      void loadSuggestions(suggestQuery).then((suggestions) => {
-        if (!cancelled) {
-          setResults(suggestions.map((suggestion) => suggestion.label));
+    // Aborting stops a superseded org search server-side too, before its
+    // access check.
+    const controller = new AbortController();
+    let timer = 0;
+    // Re-runs only the org search; GitHub search results stay as they are.
+    const retryOrgs = (attempt: number) => {
+      const delay = ORG_RETRY_DELAYS_MS[attempt];
+      if (delay == null) {
+        return;
+      }
+      const retry = async () => {
+        const org = await searchOrgRepos(query.trim(), controller.signal);
+        if (controller.signal.aborted) {
+          return;
         }
-      });
-    }, REMOTE_SEARCH_DELAY_MS);
+        orgsPending.current = org.pending;
+        setResults((previous) => ({ ...previous, orgMatches: org.repos }));
+        if (org.pending) {
+          retryOrgs(attempt + 1);
+        }
+      };
+      timer = window.setTimeout(() => void retry(), delay);
+    };
+    const run = async () => {
+      const early = orgsPending.current ? loadSuggestions(suggestQuery) : null;
+      const org = await searchOrgRepos(query.trim(), controller.signal);
+      if (controller.signal.aborted) {
+        return;
+      }
+      orgsPending.current = org.pending;
+      setResults({ orgMatches: org.repos, remote: NO_REMOTE });
+      const addsRows = org.repos.some(
+        (repo) => repo !== query && !known.current.has(repo.toLowerCase())
+      );
+      if (org.pending) {
+        retryOrgs(0);
+      } else if (addsRows) {
+        return;
+      }
+      const suggestions = await (early ?? loadSuggestions(suggestQuery));
+      if (!controller.signal.aborted) {
+        // Keeps org matches a retry may already have replaced.
+        setResults((previous) => ({
+          ...previous,
+          remote: suggestions.map((suggestion) => suggestion.label),
+        }));
+      }
+    };
+    timer = window.setTimeout(() => void run(), REMOTE_SEARCH_DELAY_MS);
     return () => {
-      cancelled = true;
+      controller.abort();
       window.clearTimeout(timer);
     };
-  }, [suggestQuery]);
-  return suggestQuery == null ? NO_REMOTE : results;
+  }, [query, suggestQuery]);
+  return suggestQuery == null ? NO_RESULTS : results;
 }

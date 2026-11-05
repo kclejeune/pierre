@@ -447,11 +447,16 @@ export function sendGitHubJSON(
 
 // GraphQL reports most failures as HTTP 200 with errors[]; rethrow those as
 // GitHubCommitError like REST failures.
+// `allowNotFound` is for queries made of independent lookups (aliased
+// `repository(...)` fields), where GitHub answers a lookup the viewer can't
+// see with a null field plus a NOT_FOUND error. Those errors are the answer,
+// so they're tolerated; any other error still throws.
 export async function sendGitHubGraphQL(
   query: string,
   variables: Record<string, unknown>,
   token: string,
-  fetcher: PlainFetch = githubFetch
+  fetcher: PlainFetch = githubFetch,
+  { allowNotFound = false }: { allowNotFound?: boolean } = {}
 ): Promise<unknown> {
   const payload = asRecord(
     await gitDataRequest(
@@ -466,7 +471,14 @@ export async function sendGitHubGraphQL(
     )
   );
   const errors = payload?.errors;
-  if (Array.isArray(errors) && errors.length > 0) {
+  if (
+    Array.isArray(errors) &&
+    errors.length > 0 &&
+    !(
+      allowNotFound &&
+      errors.every((error) => readStringPath(error, ['type']) === 'NOT_FOUND')
+    )
+  ) {
     const forbidden = readStringPath(errors[0], ['type']) === 'FORBIDDEN';
     logUpstreamFailure({
       credential: 'viewer',

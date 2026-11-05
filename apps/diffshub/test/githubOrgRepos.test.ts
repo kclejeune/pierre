@@ -340,6 +340,34 @@ describe('GET /api/github-org-repo-search', () => {
     ]);
   });
 
+  test('searches orgs past the first page of memberships', async () => {
+    const requests: string[] = [];
+    stubGitHub({
+      orgPages: { 'page-two-org': [[repo('far-away', 'internal')]] },
+      readable: new Set(['page-two-org/far-away']),
+    });
+    const fetchOk = globalThis.fetch;
+    globalThis.fetch = ((input: unknown, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/user/orgs')) {
+        requests.push(url.search);
+        const page = url.searchParams.get('page');
+        const logins =
+          page === '1'
+            ? Array.from({ length: 100 }, (_, i) => `filler-${i}`)
+            : ['page-two-org'];
+        return Promise.resolve(json(logins.map((login) => ({ login }))));
+      }
+      return fetchOk(input as string, init);
+    }) as typeof fetch;
+    await refreshOrgListing('page-two-org', 'token-page-two');
+    const response = await search('page-two-org/far', 'token-page-two');
+    expect(((await response.json()) as { repos: string[] }).repos).toEqual([
+      'page-two-org/far-away',
+    ]);
+    expect(requests).toHaveLength(2);
+  });
+
   test('requires a token and a short query', async () => {
     const tokenless = await GET(
       new NextRequest('https://diffshub.test/api/github-org-repo-search?q=x')

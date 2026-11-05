@@ -1,9 +1,10 @@
 'use client';
 
-import { IconBranch, IconDraft, IconMerged } from '@pierre/icons';
 import Link from 'next/link';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
+import { LabelColorDot } from './LabelColorDot';
+import { PULL_STATE_DISPLAY } from './pullStateDisplay';
 import { RelativeTime } from './RelativeTime';
 import { cn } from '@/lib/cn';
 import {
@@ -31,34 +32,6 @@ const ACTIVITY_CHIP_CLASSES: Record<PullActivity, string> = {
   commented: MUTED,
 };
 
-// The state glyph, in GitHub's state colors: open green, merged purple,
-// closed red, drafts muted.
-const STATE_DISPLAY: Record<
-  PullSummary['state'],
-  { icon: typeof IconBranch; className: string; label: string }
-> = {
-  open: {
-    icon: IconBranch,
-    className: 'text-[#18a46c]',
-    label: 'Open pull request',
-  },
-  draft: {
-    icon: IconDraft,
-    className: 'text-muted-foreground',
-    label: 'Draft pull request',
-  },
-  merged: {
-    icon: IconMerged,
-    className: 'text-violet-600 dark:text-violet-400',
-    label: 'Merged pull request',
-  },
-  closed: {
-    icon: IconBranch,
-    className: 'text-red-600 dark:text-red-400',
-    label: 'Closed pull request',
-  },
-};
-
 interface PullRequestRowProps {
   pull: PullSummary;
   // Hide the owner/repo label inside sections already scoped to one repo.
@@ -68,8 +41,8 @@ interface PullRequestRowProps {
 // One dashboard pull row. Clicking records the diff in recents with its title,
 // which the patch stream lacks.
 export function PullRequestRow({ pull, showRepo = true }: PullRequestRowProps) {
-  const stateDisplay = STATE_DISPLAY[pull.state];
-  const StateIcon = stateDisplay.icon;
+  const stateDisplay = PULL_STATE_DISPLAY[pull.state];
+  const StateIcon = stateDisplay.Icon;
   return (
     <Link
       href={pull.viewerPath}
@@ -81,7 +54,7 @@ export function PullRequestRow({ pull, showRepo = true }: PullRequestRowProps) {
     >
       <StateIcon
         className={cn('size-4 shrink-0', stateDisplay.className)}
-        aria-label={stateDisplay.label}
+        aria-label={`${stateDisplay.label} pull request`}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <span className="text-foreground truncate text-sm font-medium">
@@ -132,11 +105,7 @@ export function PullRequestRow({ pull, showRepo = true }: PullRequestRowProps) {
 function LabelChip({ label }: { label: PullLabel }) {
   return (
     <span className="text-muted-foreground inline-flex max-w-40 shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] leading-none">
-      <span
-        aria-hidden="true"
-        className="size-1.5 shrink-0 rounded-full"
-        style={{ backgroundColor: `#${label.color}` }}
-      />
+      <LabelColorDot className="size-1.5" color={label.color} />
       <span className="truncate">{label.name}</span>
     </span>
   );

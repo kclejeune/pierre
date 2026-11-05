@@ -4,7 +4,6 @@ import {
   IconCheck,
   IconCircleFill,
   IconClockArrow,
-  IconDraft,
   IconMerged,
   IconMinus,
   IconPencil,
@@ -32,8 +31,10 @@ import {
 } from './DropdownMenu';
 import { InlineConfirm } from './InlineConfirm';
 import { Input } from './Input';
+import { LabelColorDot } from './LabelColorDot';
 import { MarkdownContent } from './MarkdownContent';
 import { MarkdownEditor } from './MarkdownEditor';
+import { PULL_STATE_DISPLAY } from './pullStateDisplay';
 import { useDropdownChromeStyle } from './useDropdownChromeStyle';
 import { useRepoLabels } from './useRepoLabels';
 import { cn } from '@/lib/cn';
@@ -823,19 +824,6 @@ function PullLabels({
 
 // GitHub colors are bare 6-digit hex. A dot, rather than tinted text, stays
 // readable on any chrome theme.
-function LabelColorDot({ color }: { color: string }) {
-  if (!/^[0-9a-fA-F]{6}$/.test(color)) {
-    return null;
-  }
-  return (
-    <span
-      aria-hidden
-      className="size-2 shrink-0 rounded-full"
-      style={{ backgroundColor: `#${color}` }}
-    />
-  );
-}
-
 // Label requests own `labels`; edit responses apply everything else, so an
 // edit that finishes after a label change cannot restore the older labels.
 function withoutLabels({
@@ -869,13 +857,8 @@ function PullStateBadge({
   details: PullDetails;
   iconOnly?: boolean;
 }) {
-  const { className, Icon, label } = details.draft
-    ? { className: 'text-muted-foreground', Icon: IconDraft, label: 'Draft' }
-    : details.state === 'merged'
-      ? { className: 'text-purple-500', Icon: IconMerged, label: 'Merged' }
-      : details.state === 'closed'
-        ? { className: 'text-red-500', Icon: IconX, label: 'Closed' }
-        : { className: 'text-[#18a46c]', Icon: IconMerged, label: 'Open' };
+  const { className, Icon, label } =
+    PULL_STATE_DISPLAY[details.draft ? 'draft' : details.state];
   if (iconOnly) {
     return <Icon aria-label={label} className={cn('size-3.5', className)} />;
   }

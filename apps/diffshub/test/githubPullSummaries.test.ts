@@ -366,7 +366,11 @@ describe('parseActivePullsPayload page details', () => {
       },
     });
     expect(page.pulls.map((pull) => pull.state)).toEqual(['merged', 'closed']);
-    expect(page.pulls[0].labels).toEqual([{ name: 'bug', color: 'd73a4a' }]);
+    // A malformed color keeps the label; LabelColorDot just draws no swatch.
+    expect(page.pulls[0].labels).toEqual([
+      { name: 'bug', color: 'd73a4a' },
+      { name: 'bad color', color: 'red' },
+    ]);
     expect(page.pulls[1].labels).toBeUndefined();
     expect(decodePullsCursor(page.nextCursor ?? '')).toEqual({
       after: 'Y3Vyc29y',

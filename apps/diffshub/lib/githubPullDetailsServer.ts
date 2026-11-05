@@ -13,6 +13,7 @@ import {
 } from './githubCommitServer';
 import { encodeURLSegment } from './githubDiffSource';
 import { githubFetch } from './githubFetch';
+import { fetchAllGitHubPages } from './githubPagination';
 import { createJSONResponse } from './jsonResponse';
 import type { PlainFetch } from './plainFetch';
 import type { PullCommitSummary } from './pullCommitsList';
@@ -26,6 +27,7 @@ import type {
   PullReviewerState,
   PullViewerPermissions,
 } from './pullInfoClient';
+import { parseLabels } from './pullLabels';
 import { asRecord } from './untypedJson';
 
 // Parses the owner/repo/pull query params the pull-scoped API routes share,
@@ -93,20 +95,6 @@ export function parsePullDetails(data: unknown): PullDetails {
           : 'open',
     title: typeof record.title === 'string' ? record.title : '',
   };
-}
-
-// Name and color from any GitHub labels array; unnamed entries are dropped.
-export function parseLabels(data: unknown): PullLabel[] {
-  const labels: PullLabel[] = [];
-  if (Array.isArray(data)) {
-    for (const label of data) {
-      const name = readStringPath(label, ['name']);
-      if (name != null) {
-        labels.push({ color: readStringPath(label, ['color']) ?? '', name });
-      }
-    }
-  }
-  return labels;
 }
 
 export interface PullBodyRef {
@@ -269,31 +257,6 @@ export function normalizeCommitStatus(status: unknown): PullCheck | null {
     name,
     state,
   };
-}
-
-// Exhausts a paginated GitHub listing at 100 items per page, concatenating
-// what `extractItems` pulls off each page. A short page ends the walk; a
-// page `extractItems` cannot read (null) ends it too, keeping whatever
-// earlier pages yielded.
-async function fetchAllGitHubPages(
-  pathForPage: (page: number) => string,
-  extractItems: (payload: unknown) => unknown[] | null,
-  token: string | undefined,
-  fetcher: PlainFetch
-): Promise<unknown[]> {
-  const items: unknown[] = [];
-  for (let page = 1; ; page += 1) {
-    const payload = await fetchGitHubJSON(pathForPage(page), token, fetcher);
-    const pageItems = extractItems(payload);
-    if (pageItems == null) {
-      break;
-    }
-    items.push(...pageItems);
-    if (pageItems.length < 100) {
-      break;
-    }
-  }
-  return items;
 }
 
 // The latest submitted review verdict per reviewer. GitHub returns reviews in

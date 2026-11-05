@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { filterFilePathsForSearch } from '../fileSearchFilter';
+import { filterFilePathsForSearch, rankPathIndices } from '../fileSearchFilter';
 
 const PATHS = [
   'README.md',
@@ -59,5 +59,23 @@ describe('filterFilePathsForSearch', () => {
   test('results are capped to the limit', () => {
     const many = Array.from({ length: 80 }, (_, i) => `dir/file${i}.ts`);
     expect(filterFilePathsForSearch(many, 'file')).toHaveLength(50);
+  });
+
+  test('a smaller limit returns a prefix of the full ranking', () => {
+    const many = Array.from(
+      { length: 300 },
+      (_, i) => `dir${i % 7}/file${(i * 37) % 300}.ts`
+    );
+    const full = filterFilePathsForSearch(many, 'fl', many.length);
+    for (const limit of [0, 1, 5, 40, 299]) {
+      expect(filterFilePathsForSearch(many, 'fl', limit)).toEqual(
+        full.slice(0, limit)
+      );
+    }
+  });
+
+  test('identical paths keep their input order', () => {
+    const paths = ['b/x.ts', 'a/x.ts', 'b/x.ts', 'a/x.ts'];
+    expect(rankPathIndices(paths, 'x', 4)).toEqual([1, 3, 0, 2]);
   });
 });

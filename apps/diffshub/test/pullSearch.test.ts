@@ -194,6 +194,7 @@ describe('buildRepoScopeSections', () => {
   test('idle: scopes, pins, recents, then the directory without repeats', () => {
     const sections = buildRepoScopeSections({
       directory,
+      orgMatches: [],
       pinned: ['kclejeune/pierre'],
       query: '',
       recents: ['oven-sh/bun', 'kclejeune/pierre'],
@@ -214,6 +215,7 @@ describe('buildRepoScopeSections', () => {
   test('typed: name matches first, remote extras after, plus a direct entry', () => {
     const sections = buildRepoScopeSections({
       directory,
+      orgMatches: [],
       pinned: [],
       query: 'pier',
       recents: [],
@@ -231,6 +233,7 @@ describe('buildRepoScopeSections', () => {
 
     const direct = buildRepoScopeSections({
       directory,
+      orgMatches: [],
       pinned: [],
       query: 'torvalds/linux',
       recents: [],
@@ -240,5 +243,27 @@ describe('buildRepoScopeSections', () => {
       heading: 'Go to',
       items: [{ repo: 'torvalds/linux' }],
     });
+  });
+
+  test('org matches sit between local matches and GitHub search, without repeats', () => {
+    const sections = buildRepoScopeSections({
+      directory,
+      orgMatches: ['kclejeune/pierre', 'anduril/pier-sdk'],
+      pinned: [],
+      query: 'pier',
+      recents: [],
+      remote: ['anduril/pier-sdk', 'pierrecomputer/pierre'],
+    });
+    expect(
+      sections.map((section) => [
+        section.heading,
+        section.items.map((item) => item.repo ?? item.key),
+      ])
+    ).toEqual([
+      ['Repositories', ['kclejeune/pierre']],
+      ['Your organizations', ['anduril/pier-sdk']],
+      ['More on GitHub', ['pierrecomputer/pierre']],
+      ['Elsewhere', ['action:search-everywhere']],
+    ]);
   });
 });

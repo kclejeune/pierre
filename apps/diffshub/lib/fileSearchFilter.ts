@@ -65,22 +65,81 @@ export function filterFilePathsForSearch(
   query: string,
   limit: number = MAX_FILE_SEARCH_RESULTS
 ): string[] {
+  return rankPathIndices(paths, query, limit).map((index) => paths[index]);
+}
+
+// filterFilePathsForSearch's ranking as indices into `paths`, for callers
+// that match one array (bare repo names) but return another (full names).
+export function rankPathIndices(
+  paths: readonly string[],
+  query: string,
+  limit: number = MAX_FILE_SEARCH_RESULTS
+): number[] {
+  return rankPathMatches(paths, query, limit).map((match) => match.index);
+}
+
+// One ranked match: its index into the searched array and its score (higher
+// ranks first; ties go to localeCompare, then input order).
+export interface PathMatch {
+  index: number;
+  score: number;
+}
+
+// The ranking with scores, so matches from several arrays ranked separately
+// can be merged in the order one combined ranking would give. Empty queries
+// score every path 0.
+//
+// Keeps only the best `limit` matches while scanning (a sorted window with
+// binary-search insertion), so a large list costs one pass plus O(limit)
+// work per match that beats the current worst, instead of sorting every
+// match. Order is identical to sorting all matches: score descending, then
+// localeCompare, then input order.
+export function rankPathMatches(
+  paths: readonly string[],
+  query: string,
+  limit: number = MAX_FILE_SEARCH_RESULTS
+): PathMatch[] {
   const normalized = query.trim().toLowerCase();
+  const count = Math.max(0, Math.min(limit, paths.length));
   if (normalized === '') {
-    return paths.slice(0, limit);
+    return Array.from({ length: count }, (_, index) => ({ index, score: 0 }));
+  }
+  if (count === 0) {
+    return [];
   }
   const lowered = loweredPaths(paths);
-  const scored: { path: string; score: number }[] = [];
+  const top: PathMatch[] = [];
+  // Negative when `a` ranks ahead of `b`.
+  const compare = (a: PathMatch, b: PathMatch) =>
+    a.score === b.score
+      ? paths[a.index].localeCompare(paths[b.index])
+      : b.score - a.score;
   for (let index = 0; index < paths.length; index += 1) {
-    const path = paths[index];
     const score = scorePath(lowered[index], normalized);
-    if (score != null) {
-      // Prefer shorter paths on otherwise-equal matches.
-      scored.push({ path, score: score - path.length });
+    if (score == null) {
+      continue;
+    }
+    // Prefer shorter paths on otherwise-equal matches.
+    const entry = { index, score: score - paths[index].length };
+    if (top.length === count && compare(entry, top[count - 1]) >= 0) {
+      continue;
+    }
+    // Insert after every entry that ranks ahead or ties, so ties keep input
+    // order like a stable sort.
+    let low = 0;
+    let high = top.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (compare(top[middle], entry) <= 0) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    top.splice(low, 0, entry);
+    if (top.length > count) {
+      top.pop();
     }
   }
-  scored.sort((a, b) =>
-    a.score === b.score ? a.path.localeCompare(b.path) : b.score - a.score
-  );
-  return scored.slice(0, limit).map((entry) => entry.path);
+  return top;
 }

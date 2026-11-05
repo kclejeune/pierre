@@ -1,8 +1,9 @@
 // The /pulls repo switcher's sections (cmd+K on that page), assembled from
 // its data inputs so the ranking rules stay unit-testable. Ranking is local
 // and synchronous over every repository the page already knows (pins,
-// recents, the directory listing) so results keep up with typing; GitHub's
-// repository search only fills in repos outside that set, below them.
+// recents, the directory listing) so results keep up with typing. Below
+// them, two remote tiers fill in repos outside that set: fuzzy matches from
+// the viewer's organizations, then GitHub's repository search.
 
 import { filterFilePathsForSearch } from './fileSearchFilter';
 import { isRepoPinned, isValidRepoName } from './pinnedRepos';
@@ -31,8 +32,11 @@ interface BuildRepoScopeInput {
   recents: readonly string[];
   // The viewer's repositories, most recently pushed first.
   directory: readonly string[];
-  // GitHub's repository-name search for the query, possibly stale by a
-  // keystroke.
+  // Matches from the viewer's organizations (the org listing search),
+  // already access-checked, possibly stale by a keystroke.
+  orgMatches: readonly string[];
+  // GitHub's repository-name search for the query, for repos outside the
+  // viewer's orgs; possibly stale by a keystroke.
   remote: readonly string[];
 }
 
@@ -158,9 +162,27 @@ export function buildRepoScopeSections(
       ),
     });
   }
-  const remote = input.remote
-    .filter((repo) => !knownSet.has(repo.toLowerCase()) && repo !== query)
-    .slice(0, MAX_REMOTE);
+  // Each remote tier only adds repos no earlier section showed (the org
+  // search caps its own results server-side).
+  const takeNew = (repos: readonly string[], max = Infinity) => {
+    const fresh: string[] = [];
+    for (const repo of repos) {
+      const key = repo.toLowerCase();
+      if (!knownSet.has(key) && repo !== query && fresh.length < max) {
+        knownSet.add(key);
+        fresh.push(repo);
+      }
+    }
+    return fresh;
+  };
+  const orgMatches = takeNew(input.orgMatches);
+  if (orgMatches.length > 0) {
+    sections.push({
+      heading: 'Your organizations',
+      items: orgMatches.map((repo) => repoItem(repo)),
+    });
+  }
+  const remote = takeNew(input.remote, MAX_REMOTE);
   if (remote.length > 0) {
     sections.push({
       heading: 'More on GitHub',

@@ -12,8 +12,8 @@ import {
   loadOrgListing,
   type OrgRepoListing,
   parseOrgRepoQuery,
-  rankOrgRepos,
   refreshOrgListing,
+  searchOrgListings,
 } from '@/lib/githubOrgRepos';
 import { createAsyncLRU } from '@/lib/serverLRU';
 
@@ -41,11 +41,15 @@ interface StubOptions {
   orgs?: string[];
   // "owner/name" the token can read through GraphQL `repository`.
   readable?: Set<string>;
+  // "owner/name" whose org blocks the token (SAML SSO, IP allow list):
+  // GraphQL answers a null field with a FORBIDDEN error.
+  forbidden?: Set<string>;
 }
 
 // Stubs GitHub by request path and records each request, so tests can assert
 // what was (and wasn't) fetched.
 function stubGitHub({
+  forbidden = new Set(),
   orgPages = {},
   orgs = [],
   readable = new Set(),
@@ -82,7 +86,10 @@ function stubGitHub({
           data[`r${index}`] = { id: `R_${index}` };
         } else {
           data[`r${index}`] = null;
-          errors.push({ path: [`r${index}`], type: 'NOT_FOUND' });
+          errors.push({
+            path: [`r${index}`],
+            type: forbidden.has(fullName) ? 'FORBIDDEN' : 'NOT_FOUND',
+          });
         }
       }
       return Promise.resolve(
@@ -159,6 +166,19 @@ describe('filterAccessibleRepos', () => {
     expect(requests).toEqual(['/graphql']);
   });
 
+  test('a repo whose org blocks the token hides only that repo', async () => {
+    const requests = stubGitHub({
+      forbidden: new Set(['sso-org/locked']),
+      readable: new Set(['acme/open']),
+    });
+    const candidates = ['acme/open', 'sso-org/locked', 'acme/hidden'];
+    const check = () => filterAccessibleRepos(candidates, 'token-sso');
+    expect(await check()).toEqual(['acme/open']);
+    // The blocked repo's answer is remembered like any other.
+    expect(await check()).toEqual(['acme/open']);
+    expect(requests).toEqual(['/graphql']);
+  });
+
   test('access is remembered per credential, not shared', async () => {
     stubGitHub({ readable: new Set(['acme/shared']) });
     expect(await filterAccessibleRepos(['acme/shared'], 'token-a')).toEqual([
@@ -177,6 +197,31 @@ describe('ranking', () => {
       names,
     }) satisfies OrgRepoListing;
 
+  // Ranks in-memory listings through searchOrgListings, the route's path.
+  // `delays` (ms per listing) makes loads settle out of order.
+  const rankOrgRepos = async (
+    listings: readonly OrgRepoListing[],
+    parsed: ReturnType<typeof parseOrgRepoQuery>,
+    limit: number,
+    delays?: readonly number[]
+  ) =>
+    (
+      await searchOrgListings(
+        listings.map((_, index) => String(index)),
+        parsed,
+        limit,
+        {
+          load: (org) =>
+            new Promise((resolve) =>
+              setTimeout(
+                () => resolve(listings[Number(org)]),
+                delays?.[Number(org)] ?? 0
+              )
+            ),
+        }
+      )
+    ).candidates;
+
   test('splits owner/name queries for the two-pass search', () => {
     expect(parseOrgRepoQuery('Anduril/lat')).toEqual({
       namePart: 'lat',
@@ -186,29 +231,28 @@ describe('ranking', () => {
     expect(parseOrgRepoQuery('lattice').ownerPart).toBe('');
   });
 
-  test('ranks across orgs, and a bare owner lists recent repos', () => {
+  test('ranks across orgs, and a bare owner lists recent repos', async () => {
     const listings = [
       listing('acme', ['widgets', 'lattice-sdk']),
       listing('other', ['lattice', 'tools']),
     ];
-    expect(rankOrgRepos(listings, parseOrgRepoQuery('lattice'), 5)).toEqual([
-      'other/lattice',
-      'acme/lattice-sdk',
-    ]);
-    expect(rankOrgRepos(listings, parseOrgRepoQuery('acme/'), 1)).toEqual([
-      'acme/widgets',
-    ]);
+    expect(
+      await rankOrgRepos(listings, parseOrgRepoQuery('lattice'), 5)
+    ).toEqual(['other/lattice', 'acme/lattice-sdk']);
+    expect(await rankOrgRepos(listings, parseOrgRepoQuery('acme/'), 1)).toEqual(
+      ['acme/widgets']
+    );
   });
 
-  test('an owner part matches bare names, not the owner', () => {
+  test('an owner part matches bare names, not the owner', async () => {
     // Matching "ac" against whole paths would let "acme/" itself match.
     const listings = [listing('acme', ['tools', 'actions', 'docs'])];
-    expect(rankOrgRepos(listings, parseOrgRepoQuery('acme/ac'), 5)).toEqual([
-      'acme/actions',
-    ]);
+    expect(
+      await rankOrgRepos(listings, parseOrgRepoQuery('acme/ac'), 5)
+    ).toEqual(['acme/actions']);
   });
 
-  test('merging per-org rankings matches one ranking over every org', () => {
+  test('merging per-org rankings matches one ranking over every org', async () => {
     const listings = [
       listing('acme', ['lattice', 'lat-tools', 'docs', 'atlas']),
       listing('beta', ['lattice', 'platform', 'tlat']),
@@ -218,12 +262,12 @@ describe('ranking', () => {
     const bare = listings.flatMap((each) => each.names);
     for (const limit of [1, 3, 20]) {
       for (const query of ['lat', 'at', 'a']) {
-        expect(rankOrgRepos(listings, parseOrgRepoQuery(query), limit)).toEqual(
-          filterFilePathsForSearch(all, query, limit)
-        );
+        expect(
+          await rankOrgRepos(listings, parseOrgRepoQuery(query), limit)
+        ).toEqual(filterFilePathsForSearch(all, query, limit));
         // With an owner part, bare names are ranked as one list.
         expect(
-          rankOrgRepos(listings, parseOrgRepoQuery(`a/${query}`), limit)
+          await rankOrgRepos(listings, parseOrgRepoQuery(`a/${query}`), limit)
         ).toEqual(
           rankPathMatches(bare, query, limit).map((match) => all[match.index])
         );
@@ -231,16 +275,37 @@ describe('ranking', () => {
     }
   });
 
-  test('maps bare-name matches back to the right org', () => {
+  // More listings than load at once, settling in reverse order: the merge
+  // must still match one ranking over every org.
+  test('the ranking does not depend on load order or concurrency', async () => {
+    const listings = Array.from({ length: 45 }, (_, i) =>
+      listing(`org-${i}`, [
+        `lat-${i}`,
+        `tools-${i}`,
+        i % 7 === 0 ? 'lattice' : 'docs',
+      ])
+    );
+    const all = listings.flatMap((each) => each.fullNames);
+    const delays = listings.map((_, i) => 45 - i);
+    for (const query of ['lat', 'lattice', 'org-4']) {
+      expect(
+        await rankOrgRepos(listings, parseOrgRepoQuery(query), 10, delays)
+      ).toEqual(filterFilePathsForSearch(all, query, 10));
+    }
+    // A bare owner keeps listing order.
+    expect(
+      await rankOrgRepos(listings, parseOrgRepoQuery('org/'), 3, delays)
+    ).toEqual(['org-0/lat-0', 'org-0/tools-0', 'org-0/lattice']);
+  });
+
+  test('maps bare-name matches back to the right org', async () => {
     const listings = [
       listing('team-a', ['tools']),
       listing('team-b', ['tools', 'toolbox']),
     ];
-    expect(rankOrgRepos(listings, parseOrgRepoQuery('team/tool'), 5)).toEqual([
-      'team-a/tools',
-      'team-b/tools',
-      'team-b/toolbox',
-    ]);
+    expect(
+      await rankOrgRepos(listings, parseOrgRepoQuery('team/tool'), 5)
+    ).toEqual(['team-a/tools', 'team-b/tools', 'team-b/toolbox']);
   });
 });
 
@@ -257,6 +322,14 @@ describe('AsyncLRU set and peek', () => {
     // A pending load isn't readable yet.
     void lru.getOrCreate('b', () => new Promise(() => {}));
     expect(lru.peek('b')).toBeUndefined();
+  });
+
+  test('set can give one entry its own TTL', () => {
+    const lru = createAsyncLRU<string, number>({ maxEntries: 2, ttlMs: 0 });
+    lru.set('short', 1);
+    lru.set('long', 2, 60_000);
+    expect(lru.peek('short')).toBeUndefined();
+    expect(lru.peek('long')).toBe(2);
   });
 });
 
@@ -324,6 +397,55 @@ describe('GET /api/github-org-repo-search', () => {
     const response = await search('anything', 'token-pending');
     expect(await response.json()).toEqual({ pending: true, repos: [] });
     expect(response.headers.get('cache-control')).toBe('no-store');
+  });
+
+  test('a failed access check is not cached as no matches', async () => {
+    stubGitHub({
+      orgPages: { 'outage-org': [[repo('service', 'internal')]] },
+      orgs: ['outage-org'],
+    });
+    await refreshOrgListing('outage-org', 'token-outage');
+    const fetchOk = globalThis.fetch;
+    globalThis.fetch = ((input: unknown, init?: RequestInit) =>
+      String(input).endsWith('/graphql')
+        ? Promise.resolve(new Response('boom', { status: 502 }))
+        : fetchOk(input as string, init)) as typeof fetch;
+    const response = await search('service', 'token-outage');
+    expect(await response.json()).toEqual({ pending: false, repos: [] });
+    expect(response.headers.get('cache-control')).toBe('no-store');
+  });
+
+  test('a bare name searches every org, not just the first 30', async () => {
+    const orgs = Array.from({ length: 40 }, (_, i) => `wide-${i}`);
+    stubGitHub({
+      orgPages: { 'wide-39': [[repo('needle', 'internal')]] },
+      orgs,
+      readable: new Set(['wide-39/needle']),
+    });
+    await refreshOrgListing('wide-39', 'token-wide');
+    const response = await search('needle', 'token-wide');
+    expect(((await response.json()) as { repos: string[] }).repos).toEqual([
+      'wide-39/needle',
+    ]);
+  });
+
+  // More orgs than one search loads at once; matches from either end of the
+  // list merge in rank order.
+  test('ranks matches across many orgs as one ranking', async () => {
+    const orgs = Array.from({ length: 45 }, (_, i) => `batch-${i}`);
+    stubGitHub({
+      orgPages: {
+        'batch-2': [[repo('x-gadget-tool', 'internal')]],
+        'batch-41': [[repo('gadget', 'internal')]],
+      },
+      orgs,
+      readable: new Set(['batch-2/x-gadget-tool', 'batch-41/gadget']),
+    });
+    await refreshOrgListing('batch-2', 'token-batch');
+    await refreshOrgListing('batch-41', 'token-batch');
+    const response = await search('gadget', 'token-batch');
+    const { repos } = (await response.json()) as { repos: string[] };
+    expect(repos).toEqual(['batch-41/gadget', 'batch-2/x-gadget-tool']);
   });
 
   test('an owner part reaches orgs past the searched-org cap', async () => {

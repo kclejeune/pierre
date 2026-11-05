@@ -25,12 +25,14 @@ import { loadSuggestions } from './useDiffUrlSuggestions';
 import { useLatestValueRef } from './useLatestValueRef';
 import { useRepoDirectory } from './useRepoDirectory';
 import { cn } from '@/lib/cn';
-import { deriveSuggestQuery } from '@/lib/diffUrlSuggestions';
 import { isRepoPinned, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
 import { requestJSON } from '@/lib/pullCommentsClient';
 import { loadRecentRepos, type PullScope } from '@/lib/pullScopes';
 import {
   buildRepoScopeSections,
+  deriveRepoSearchQuery,
+  goToRepoKey,
+  isNewRemoteRepo,
   knownRepos,
   MAX_REPO_MATCHES,
   type RepoScopeItem,
@@ -127,7 +129,8 @@ export function RepoScopePalette({
       localMatches < MAX_REPO_MATCHES
       ? query
       : '',
-    known.seen
+    known.seen,
+    tokenVersion
   );
   const sections = useMemo(
     () =>
@@ -322,9 +325,18 @@ const NO_RESULTS: RemoteRepoResults = {
   remote: NO_REMOTE,
 };
 
+// Results tagged with the credential version they were fetched under, so a
+// credential change in another tab hides them until the new identity's
+// search lands.
+interface VersionedRemoteResults extends RemoteRepoResults {
+  tokenVersion: number;
+}
+
 // Fuzzy matches from the viewer's organizations (server-ranked over shared
 // org listings, access-checked per viewer). `pending` means some org's
-// listing is still being built.
+// listing is still being built. A failed request (signed out, a rejected
+// query, the network) is not pending: no listing is being built, so
+// retrying or starting GitHub search early would only spend requests.
 async function searchOrgRepos(
   query: string,
   signal: AbortSignal
@@ -336,7 +348,7 @@ async function searchOrgRepos(
       signal,
     })) as { pending: boolean; repos: string[] };
   } catch {
-    return { pending: true, repos: [] };
+    return { pending: false, repos: [] };
   }
 }
 
@@ -352,22 +364,24 @@ async function searchOrgRepos(
 // so its matches appear without retyping. GitHub search is skipped only
 // when the org matches add a row: matches that are all in `shownRepos`
 // (lowercase names the local sections can already show) add nothing, so the
-// fallback still runs.
+// fallback still runs. A credential change (`tokenVersion`) aborts the
+// search in flight and runs it again for the new identity.
 function useRemoteRepoSearch(
   query: string,
-  shownRepos: ReadonlySet<string>
+  shownRepos: ReadonlySet<string>,
+  tokenVersion: number
 ): RemoteRepoResults {
-  const [results, setResults] = useState<RemoteRepoResults>(NO_RESULTS);
+  const [results, setResults] = useState<VersionedRemoteResults>({
+    ...NO_RESULTS,
+    tokenVersion,
+  });
   // Read when a search settles rather than as an effect dependency, so the
   // directory loading in doesn't restart the search.
   const known = useLatestValueRef(shownRepos);
   // Whether the last org search said some org was still being listed; while
   // it is, GitHub search starts alongside the org search instead of after.
   const orgsPending = useRef(false);
-  const suggestQuery = useMemo(() => {
-    const derived = deriveSuggestQuery(query);
-    return derived?.kind === 'repos' ? derived : null;
-  }, [query]);
+  const suggestQuery = useMemo(() => deriveRepoSearchQuery(query), [query]);
   useEffect(() => {
     if (suggestQuery == null) {
       return;
@@ -388,6 +402,7 @@ function useRemoteRepoSearch(
       setResults((previous) => ({
         orgMatches: org.repos,
         remote: attempt === 0 ? NO_REMOTE : previous.remote,
+        tokenVersion,
       }));
       const delay = ORG_RETRY_DELAYS_MS[attempt];
       if (org.pending && delay != null) {
@@ -401,8 +416,10 @@ function useRemoteRepoSearch(
       if (org == null) {
         return;
       }
-      const addsRows = org.repos.some(
-        (repo) => repo !== query && !known.current.has(repo.toLowerCase())
+      // The typed "owner/name" itself already has a "Go to" row.
+      const goTo = goToRepoKey(query);
+      const addsRows = org.repos.some((repo) =>
+        isNewRemoteRepo(repo, known.current, goTo)
       );
       if (!org.pending && addsRows) {
         return;
@@ -421,6 +438,8 @@ function useRemoteRepoSearch(
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [known, query, suggestQuery]);
-  return suggestQuery == null ? NO_RESULTS : results;
+  }, [known, query, suggestQuery, tokenVersion]);
+  return suggestQuery == null || results.tokenVersion !== tokenVersion
+    ? NO_RESULTS
+    : results;
 }

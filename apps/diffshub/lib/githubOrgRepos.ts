@@ -19,7 +19,9 @@
 // lib/githubCacheCodec, so org and repo names never appear in the store in
 // plain text, plus a process-local copy so a burst of keystrokes reads the
 // store once. Any store failure degrades to "no listing yet": search returns
-// nothing from that org rather than failing.
+// nothing from that org rather than failing. Without a durable store, the
+// process-local copy of a listing this process built is kept as long as the
+// store would have kept it.
 
 import { createLimitedFetch } from './concurrencyLimit';
 import { compareRankedPaths, rankPathMatches } from './fileSearchFilter';
@@ -86,13 +88,25 @@ const VIEWER_ORGS_TTL_MS = 5 * 60_000;
 // matcher's lowercase copy of each, and array slots.
 const BYTES_PER_LISTED_NAME = 320;
 
+// How many listings one process keeps in memory, which also caps the orgs
+// one search covers: past it, listings would evict each other on every
+// search. (The size budget can evict sooner for orgs with thousands of
+// repos.)
+const MAX_LISTINGS_IN_MEMORY = 200;
+
 const listingMemory = createAsyncLRU<string, OrgRepoListing>({
-  maxEntries: 200,
+  maxEntries: MAX_LISTINGS_IN_MEMORY,
   // Well under a Workers isolate's 128 MB.
   maxWeight: 32 * 1024 * 1024,
   ttlMs: LISTING_MEMORY_TTL_MS,
   weight: (listing) => listing.fullNames.length * BYTES_PER_LISTED_NAME,
 });
+
+// Every listing rebuild in this process shares one concurrency limit, so a
+// viewer in many stale orgs, or several viewers, fetch
+// LISTING_FETCH_CONCURRENCY pages at a time in total (each ~500 KB of JSON)
+// rather than per org or per search.
+const listingFetch = createLimitedFetch(LISTING_FETCH_CONCURRENCY, githubFetch);
 
 const accessMemory = createAsyncLRU<string, boolean>({
   maxEntries: 50_000,
@@ -189,7 +203,7 @@ export function loadOrgListing(org: string): Promise<OrgRepoListing | null> {
     });
 }
 
-export function listingNeedsRefresh(listing: OrgRepoListing | null): boolean {
+function listingNeedsRefresh(listing: OrgRepoListing | null): boolean {
   return listing == null || Date.now() - listing.builtAt > REFRESH_AFTER_MS;
 }
 
@@ -269,16 +283,8 @@ async function fetchOrgRepos(
 // process sees a listing go stale on its own) or a recent rebuild failed.
 // Concurrent calls in this process share one rebuild (see `refreshes`).
 // Failures are logged and leave the old listing in place; meant to run
-// after the response (Next's `after`). `fetcher` lets a batch of rebuilds
-// share one concurrency limit.
-export function refreshOrgListing(
-  org: string,
-  token: string,
-  fetcher: typeof githubFetch = createLimitedFetch(
-    LISTING_FETCH_CONCURRENCY,
-    githubFetch
-  )
-): Promise<void> {
+// after the response (Next's `after`).
+export function refreshOrgListing(org: string, token: string): Promise<void> {
   const logical = listingKey(org);
   return refreshes.getOrCreate(logical, async () => {
     try {
@@ -287,29 +293,45 @@ export function refreshOrgListing(
         listingMemory.set(logical, stored);
         return;
       }
-      const fetched = await fetchOrgRepos(org, token, fetcher);
-      // Seeds this process right away, even when nothing durable is
-      // configured.
-      listingMemory.set(logical, toListing(org, fetched));
-      await (
-        await listingEntry(org)
-      )?.write(fetched, LISTING_STORE_TTL_SECONDS);
+      const fetched = await fetchOrgRepos(org, token, listingFetch);
+      const entry = await listingEntry(org);
+      // Seeds this process right away. The short process-local TTL only
+      // exists to pick up listings other processes store; with caching on
+      // but no durable store, this copy is the cache, so it lasts as long
+      // as the store would have kept it.
+      listingMemory.set(
+        logical,
+        toListing(org, fetched),
+        entry == null && getGitHubCacheLimits() != null
+          ? LISTING_STORE_TTL_SECONDS * 1000
+          : undefined
+      );
+      await entry?.write(fetched, LISTING_STORE_TTL_SECONDS);
     } catch (error) {
       logListingError(error);
     }
   });
 }
 
-// Rebuilds several orgs' listings under one concurrency limit, so a viewer
-// whose orgs are all stale fetches LISTING_FETCH_CONCURRENCY pages at a time
-// in total rather than per org (each page is ~500 KB of JSON).
+// Orgs one call to refreshOrgListings starts rebuilding. A viewer in many
+// orgs with cold listings would otherwise download every org's pages (up to
+// 200 of ~500 KB each) after a single keystroke; later searches pick up the
+// rest.
+const MAX_REFRESHES_PER_CALL = 30;
+
+// Rebuilds up to MAX_REFRESHES_PER_CALL of `orgs`' listings (page fetches
+// share the process-wide `listingFetch` limit). Orgs already rebuilding or
+// backing off are skipped, so they don't hold the slots of orgs that still
+// need a rebuild.
 export function refreshOrgListings(
   orgs: readonly string[],
   token: string
 ): Promise<void> {
-  const fetcher = createLimitedFetch(LISTING_FETCH_CONCURRENCY, githubFetch);
   return Promise.all(
-    orgs.map((org) => refreshOrgListing(org, token, fetcher))
+    orgs
+      .filter((org) => !refreshes.has(listingKey(org)))
+      .slice(0, MAX_REFRESHES_PER_CALL)
+      .map((org) => refreshOrgListing(org, token))
   ).then(() => undefined);
 }
 
@@ -330,8 +352,16 @@ export function loadViewerOrgs(token: string): Promise<string[]> {
   });
 }
 
-// One aliased `repository` lookup per name; a null field (with a NOT_FOUND
-// error) means the token can't see it.
+// One aliased `repository` lookup per name; a null field means the token
+// can't read it. GitHub explains a null field with a NOT_FOUND error, or a
+// FORBIDDEN one when the repo's org blocks this token (SAML SSO it hasn't
+// been authorized for, an IP allow list). Either is that one repo's answer,
+// so neither fails the rest of the batch.
+const ACCESS_FIELD_ERRORS: ReadonlySet<string> = new Set([
+  'NOT_FOUND',
+  'FORBIDDEN',
+]);
+
 async function checkAccess(
   fullNames: readonly string[],
   token: string,
@@ -355,7 +385,7 @@ async function checkAccess(
       variables,
       token,
       (url, init) => githubFetch(url, { ...init, signal }),
-      { allowNotFound: true }
+      { allowedFieldErrors: ACCESS_FIELD_ERRORS }
     )
   );
   return fullNames.map((_, index) => asRecord(data?.[`r${index}`]) != null);
@@ -420,41 +450,159 @@ export function narrowOrgs(
     : orgs.filter((org) => org.toLowerCase().includes(parsed.ownerPart));
 }
 
-// The top `limit` candidates across `listings`, ranked per listing (each
-// listing's own arrays key the matcher's lowercase cache, so that cache is
-// released with the listing) and merged. With an owner part the orgs
-// are already narrowed, so only bare repo names are matched (a bare owner
-// lists each org's most recently pushed repos) and mapped back to full
-// names; otherwise whole "org/name" paths are, which lets the matcher prefer
-// name hits over owner hits.
-export function rankOrgRepos(
-  listings: readonly OrgRepoListing[],
+// One ranked candidate, with what merging it against other listings' matches
+// needs: the matcher's path and score, plus the listing's position (`order`)
+// and the repo's position in it (`index`) for ties.
+interface RankedCandidate {
+  fullName: string;
+  index: number;
+  order: number;
+  path: string;
+  score: number;
+}
+
+// `listing`'s top `limit` candidates for `parsed`. With an owner part the
+// orgs are already narrowed, so only bare repo names are matched (a bare
+// owner lists each org's most recently pushed repos, in listing order) and
+// mapped back to full names; otherwise whole "org/name" paths are, which
+// lets the matcher prefer name hits over owner hits. Ranking per listing
+// keys the matcher's lowercase cache by that listing's own arrays, so the
+// cache is released with the listing.
+function rankListing(
+  listing: OrgRepoListing,
+  order: number,
   parsed: OrgRepoQuery,
   limit: number
-): string[] {
+): RankedCandidate[] {
   if (parsed.ownerPart !== '' && parsed.namePart.trim() === '') {
-    return listings
-      .flatMap((listing) => listing.fullNames.slice(0, limit))
-      .slice(0, limit);
+    // Equal scores and paths, so merging keeps listing order.
+    return listing.fullNames.slice(0, limit).map((fullName, index) => ({
+      fullName,
+      index,
+      order,
+      path: '',
+      score: 0,
+    }));
   }
   const byName = parsed.ownerPart !== '';
-  const query = byName ? parsed.namePart : parsed.query;
-  const matches = listings.flatMap((listing, order) => {
-    const searched = byName ? listing.names : listing.fullNames;
-    return rankPathMatches(searched, query, limit).map((match) => ({
-      ...match,
-      fullName: listing.fullNames[match.index],
-      order,
-    }));
-  });
-  // The order one ranking over every listing's names, concatenated, would
-  // give: the matcher's own order, then position.
-  matches.sort((a, b) => {
-    const ranked = compareRankedPaths(a, b);
-    if (ranked !== 0) {
-      return ranked;
+  const searched = byName ? listing.names : listing.fullNames;
+  return rankPathMatches(
+    searched,
+    byName ? parsed.namePart : parsed.query,
+    limit
+  ).map((match) => ({
+    ...match,
+    fullName: listing.fullNames[match.index],
+    order,
+  }));
+}
+
+// Orders candidates the way one ranking over every listing's names,
+// concatenated, would: the matcher's own order, then position.
+function compareCandidates(a: RankedCandidate, b: RankedCandidate): number {
+  const ranked = compareRankedPaths(a, b);
+  if (ranked !== 0) {
+    return ranked;
+  }
+  return a.order === b.order ? a.index - b.index : a.order - b.order;
+}
+
+// Merges one listing's ranked candidates (already in compareCandidates
+// order) into `top`, a sorted window of at most `limit`. Stops at the first
+// candidate that can't make the window, so a listing whose best match
+// already loses costs one comparison.
+function mergeIntoTop(
+  top: RankedCandidate[],
+  candidates: readonly RankedCandidate[],
+  limit: number
+): void {
+  for (const candidate of candidates) {
+    if (
+      top.length >= limit &&
+      compareCandidates(candidate, top[limit - 1]) >= 0
+    ) {
+      return;
     }
-    return a.order === b.order ? a.index - b.index : a.order - b.order;
-  });
-  return matches.slice(0, limit).map((match) => match.fullName);
+    let low = 0;
+    let high = top.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (compareCandidates(top[middle], candidate) <= 0) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    top.splice(low, 0, candidate);
+    if (top.length > limit) {
+      top.pop();
+    }
+  }
+}
+
+// Listings one search loads at once. Each listing is ranked as soon as it
+// loads and then dropped, keeping only the best candidates, so a viewer in
+// many large orgs never has every decoded listing (and the matcher's
+// lowercase copy of each) alive at the same time: the listing cache's size
+// budget can't evict a listing a request still references.
+const ORG_SEARCH_CONCURRENCY = 20;
+
+export interface OrgListingSearch {
+  // The top candidates, in rank order, not yet access-checked.
+  candidates: string[];
+  // Whether some org has no listing yet.
+  pending: boolean;
+  // Orgs whose listing is missing or due for a rebuild, in `orgs` order.
+  stale: string[];
+}
+
+// Ranks the cached listings of `orgs` (the first MAX_LISTINGS_IN_MEMORY) for
+// `parsed` and returns the top `limit`, in the order one ranking over all of
+// them would give, however the loads interleave. Up to
+// ORG_SEARCH_CONCURRENCY listings load at a time (see above). Stops early
+// when `signal` aborts (a superseded keystroke). `load` is swappable for
+// tests.
+export async function searchOrgListings(
+  orgs: readonly string[],
+  parsed: OrgRepoQuery,
+  limit: number,
+  {
+    load = loadOrgListing,
+    signal,
+  }: {
+    load?: (org: string) => Promise<OrgRepoListing | null>;
+    signal?: AbortSignal;
+  } = {}
+): Promise<OrgListingSearch> {
+  const searched = orgs.slice(0, MAX_LISTINGS_IN_MEMORY);
+  const top: RankedCandidate[] = [];
+  const staleOrders: number[] = [];
+  let pending = false;
+  let next = 0;
+  const worker = async () => {
+    while (next < searched.length && signal?.aborted !== true) {
+      const order = next;
+      next += 1;
+      const listing = await load(searched[order]);
+      if (listingNeedsRefresh(listing)) {
+        staleOrders.push(order);
+      }
+      if (listing == null) {
+        pending = true;
+      } else {
+        mergeIntoTop(top, rankListing(listing, order, parsed, limit), limit);
+      }
+    }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(ORG_SEARCH_CONCURRENCY, searched.length) },
+      worker
+    )
+  );
+  return {
+    candidates: top.map((candidate) => candidate.fullName),
+    pending,
+    stale: staleOrders.sort((x, y) => x - y).map((order) => searched[order]),
+  };
 }

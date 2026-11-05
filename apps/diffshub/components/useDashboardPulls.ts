@@ -30,6 +30,10 @@ export interface DashboardPullsState {
   loadingMore: boolean;
   loadMore(): void;
   pulls: PullSummary[];
+  // Repeats whichever request produced `error` (the first-page fetch or a
+  // load-more), or refetches the first page when nothing failed. Rows on
+  // screen can come from the cache with a next page, so whether more pages
+  // exist says nothing about which request failed.
   retry(): void;
   totalCount: number;
 }
@@ -88,7 +92,9 @@ function fetchPullsPage(
 }
 
 interface SearchState extends CachedPulls {
-  error: Error | null;
+  // The last failed request's error, and whether it was the first-page
+  // fetch or a load-more.
+  failure: { error: Error; request: 'first' | 'more' } | null;
   // The cacheKey this state belongs to; a mismatch re-derives it from the
   // cache.
   key: string;
@@ -99,7 +105,7 @@ interface SearchState extends CachedPulls {
 function initialSearchState(key: string): SearchState {
   const cached = pullsCache.get(key);
   return {
-    error: null,
+    failure: null,
     key,
     loading: true,
     loadingMore: false,
@@ -135,7 +141,7 @@ export function useDashboardPulls(
     const controller = new AbortController();
     setState((previous) =>
       previous.key === cacheKey
-        ? { ...previous, error: null, loading: true }
+        ? { ...previous, failure: null, loading: true }
         : initialSearchState(cacheKey)
     );
     fetchPullsPage(search, undefined, controller.signal)
@@ -151,7 +157,7 @@ export function useDashboardPulls(
         rememberPulls(cacheKey, value);
         setState({
           ...value,
-          error: null,
+          failure: null,
           key: cacheKey,
           loading: false,
           loadingMore: false,
@@ -162,7 +168,7 @@ export function useDashboardPulls(
           // Keep any cached rows on screen; the error renders beneath them.
           setState((previous) => ({
             ...previous,
-            error,
+            failure: { error, request: 'first' },
             key: cacheKey,
             loading: false,
           }));
@@ -182,7 +188,11 @@ export function useDashboardPulls(
     }
     const controller = new AbortController();
     moreController.current = controller;
-    setState((previous) => ({ ...previous, error: null, loadingMore: true }));
+    setState((previous) => ({
+      ...previous,
+      failure: null,
+      loadingMore: true,
+    }));
     fetchPullsPage(search, cursor, controller.signal)
       .then((page) => {
         if (controller.signal.aborted) {
@@ -207,7 +217,11 @@ export function useDashboardPulls(
       })
       .catch((error: Error) => {
         if (!controller.signal.aborted) {
-          setState((previous) => ({ ...previous, error, loadingMore: false }));
+          setState((previous) => ({
+            ...previous,
+            failure: { error, request: 'more' },
+            loadingMore: false,
+          }));
         }
       })
       .finally(() => {
@@ -218,13 +232,16 @@ export function useDashboardPulls(
   };
 
   return {
-    error: state.error,
+    error: state.failure?.error ?? null,
     hasMore: state.nextCursor != null,
     loading: state.loading,
     loadingMore: state.loadingMore,
     loadMore,
     pulls: state.pulls,
-    retry: () => setReloadVersion((version) => version + 1),
+    retry: () =>
+      state.failure?.request === 'more'
+        ? loadMore()
+        : setReloadVersion((version) => version + 1),
     totalCount: state.totalCount,
   };
 }

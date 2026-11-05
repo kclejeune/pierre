@@ -129,7 +129,8 @@ async function handleGET(request: NextRequest) {
           // A superseded search (the client aborts on each change) stops
           // the GitHub call too.
           (url, init) => githubFetch(url, { ...init, signal: request.signal })
-        )
+        ),
+        cursor
       ),
       30
     );

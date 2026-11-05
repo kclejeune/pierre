@@ -38,6 +38,7 @@ import { PULL_STATE_DISPLAY } from './pullStateDisplay';
 import { useDropdownChromeStyle } from './useDropdownChromeStyle';
 import { useRepoLabels } from './useRepoLabels';
 import { cn } from '@/lib/cn';
+import { displayPullState } from '@/lib/githubPullSummaries';
 import type { PullRequestRef } from '@/lib/pullCommentsClient';
 import {
   changePullLabel,
@@ -822,8 +823,6 @@ function PullLabels({
   );
 }
 
-// GitHub colors are bare 6-digit hex. A dot, rather than tinted text, stays
-// readable on any chrome theme.
 // Label requests own `labels`; edit responses apply everything else, so an
 // edit that finishes after a label change cannot restore the older labels.
 function withoutLabels({
@@ -858,7 +857,7 @@ function PullStateBadge({
   iconOnly?: boolean;
 }) {
   const { className, Icon, label } =
-    PULL_STATE_DISPLAY[details.draft ? 'draft' : details.state];
+    PULL_STATE_DISPLAY[displayPullState(details.state, details.draft)];
   if (iconOnly) {
     return <Icon aria-label={label} className={cn('size-3.5', className)} />;
   }

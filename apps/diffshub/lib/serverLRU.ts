@@ -28,8 +28,9 @@ export interface AsyncLRU<K, V> {
   // pending load.
   peek(key: K): V | undefined;
   // Stores an already-known value (e.g. one fetched as a side effect of
-  // other work), replacing any entry, with the usual TTL and weight.
-  set(key: K, value: V): void;
+  // other work), replacing any entry, with the usual weight and the usual
+  // TTL unless `ttlMs` gives this entry its own.
+  set(key: K, value: V, ttlMs?: number): void;
 }
 
 // A bounded process-local cache for server work that is expensive to repeat.
@@ -63,10 +64,14 @@ export function createAsyncLRU<K, V>(
   }
 
   // Marks a loaded entry resolved: records its value, weight, and expiry.
-  function settle(entry: AsyncLRUEntry<V>, value: V): void {
+  function settle(
+    entry: AsyncLRUEntry<V>,
+    value: V,
+    ttlMs = options.ttlMs
+  ): void {
     const measured = options.weight?.(value) ?? 1;
     entry.weight = Number.isFinite(measured) ? Math.max(0, measured) : 0;
-    entry.expiresAt = Date.now() + options.ttlMs;
+    entry.expiresAt = Date.now() + ttlMs;
     entry.resolved = { value };
     totalWeight += entry.weight;
   }
@@ -130,14 +135,14 @@ export function createAsyncLRU<K, V>(
         ? entry.resolved?.value
         : undefined;
     },
-    set(key: K, value: V): void {
+    set(key: K, value: V, ttlMs?: number): void {
       remove(key);
       const entry: AsyncLRUEntry<V> = {
         expiresAt: 0,
         promise: Promise.resolve(value),
         weight: 0,
       };
-      settle(entry, value);
+      settle(entry, value, ttlMs);
       entries.set(key, entry);
       trim();
     },

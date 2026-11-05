@@ -304,10 +304,16 @@ describe('pull page cursors', () => {
     expect(
       decodePullsCursor(btoa(JSON.stringify(['abc', 'yesterday', 1])))
     ).toBeUndefined();
-    // An overlap larger than a page isn't one this endpoint wrote.
+    // The overlap accumulates across pages, but never past GitHub search's
+    // 1,000-result cap, so anything larger isn't one this endpoint wrote.
     expect(
       decodePullsCursor(
         btoa(JSON.stringify(['abc', '2026-08-02T09:00:00Z', 500]))
+      )?.boundaryRows
+    ).toBe(500);
+    expect(
+      decodePullsCursor(
+        btoa(JSON.stringify(['abc', '2026-08-02T09:00:00Z', 1001]))
       )
     ).toBeUndefined();
   });
@@ -392,6 +398,50 @@ describe('parseActivePullsPayload page details', () => {
       },
     });
     expect(decodePullsCursor(page.nextCursor ?? '')?.boundaryRows).toBe(2);
+  });
+
+  // The commented subset restarts at the boundary timestamp on every page,
+  // so its overlap with shown rows keeps growing while pages share it.
+  test('carries boundary rows across pages that share a timestamp', () => {
+    const shared = '2026-08-01T00:00:00Z';
+    const payload = {
+      pulls: {
+        issueCount: 90,
+        pageInfo: { endCursor: 'Y3Vyc29y', hasNextPage: true },
+        nodes: [
+          activeNode({ id: 'A', updatedAt: shared }),
+          activeNode({ id: 'B', updatedAt: shared }),
+        ],
+      },
+    };
+    const previous = {
+      after: 'cHJldg',
+      lastUpdatedAt: shared,
+      boundaryRows: 25,
+    };
+    const page = parseActivePullsPayload(payload, previous);
+    expect(decodePullsCursor(page.nextCursor ?? '')?.boundaryRows).toBe(27);
+    // A page ending on a new timestamp starts counting again.
+    expect(
+      decodePullsCursor(
+        parseActivePullsPayload(payload, {
+          ...previous,
+          lastUpdatedAt: '2026-08-02T00:00:00Z',
+        }).nextCursor ?? ''
+      )?.boundaryRows
+    ).toBe(2);
+    // The subset widens by the whole overlap, up to GraphQL's page limit.
+    const cursor = { ...previous, boundaryRows: 50 };
+    expect(
+      buildActivePullsVariables({ involves: [], text: OPEN }, cursor)
+        .commentedFirst
+    ).toBe(75);
+    expect(
+      buildActivePullsVariables(
+        { involves: [], text: OPEN },
+        { ...cursor, boundaryRows: 200 }
+      ).commentedFirst
+    ).toBe(100);
   });
 
   test('omits the cursor on the last page', () => {

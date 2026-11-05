@@ -3,14 +3,11 @@ import { after, type NextRequest } from 'next/server';
 import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
 import {
   filterAccessibleRepos,
-  listingNeedsRefresh,
-  loadOrgListing,
   loadViewerOrgs,
   narrowOrgs,
-  type OrgRepoListing,
   parseOrgRepoQuery,
-  rankOrgRepos,
   refreshOrgListings,
+  searchOrgListings,
 } from '@/lib/githubOrgRepos';
 import {
   createJSONResponse,
@@ -27,10 +24,10 @@ import { emitLogLine, formatError } from '@/lib/serverLog';
 // the response with this viewer's token; until then that org contributes
 // nothing and `pending` tells the switcher to fall back to GitHub search and
 // ask again shortly. Pending responses are never cached, so that retry
-// reaches the server.
+// reaches the server, and neither are failed ones, so a transient GitHub
+// error isn't remembered as "no matches".
 
 const MAX_QUERY_LENGTH = 100;
-const MAX_SEARCHED_ORGS = 30;
 // Candidates checked for access per search, and results returned. The
 // overshoot leaves room for candidates the viewer can't read.
 const MAX_CANDIDATES = 30;
@@ -60,57 +57,50 @@ async function handleGET(request: NextRequest) {
   try {
     orgs = await loadViewerOrgs(token);
   } catch (error) {
-    logSearchError(error);
-    return createPrivateJSONResponse({ pending: false, repos: [] }, 30);
+    logSearchError(error, request.signal);
+    return createJSONResponse({ pending: false, repos: [] });
   }
 
   const parsed = parseOrgRepoQuery(query);
-  const listings = await Promise.all(
-    // Capped after narrowing, so "owner/name" reaches any membership.
-    narrowOrgs(orgs, parsed)
-      .slice(0, MAX_SEARCHED_ORGS)
-      .map(async (org) => ({
-        listing: await loadOrgListing(org),
-        org,
-      }))
+  // Narrowed before searchOrgListings caps the org count, so "owner/name"
+  // reaches any membership. `pending`: some org is still being listed, so
+  // the switcher keeps GitHub search on.
+  const { candidates, pending, stale } = await searchOrgListings(
+    narrowOrgs(orgs, parsed),
+    parsed,
+    MAX_CANDIDATES,
+    { signal: request.signal }
   );
-  const stale = listings.filter(({ listing }) => listingNeedsRefresh(listing));
   if (stale.length > 0) {
-    after(() =>
-      refreshOrgListings(
-        stale.map(({ org }) => org),
-        token
-      )
-    );
+    after(() => refreshOrgListings(stale, token));
   }
 
-  const ready = listings
-    .map(({ listing }) => listing)
-    .filter((listing): listing is OrgRepoListing => listing != null);
-  let repos: string[] = [];
   try {
     // A superseded keystroke's search skips the access check.
     if (request.signal.aborted) {
       return createJSONResponse({ pending: false, repos: [] });
     }
-    repos = (
-      await filterAccessibleRepos(
-        rankOrgRepos(ready, parsed, MAX_CANDIDATES),
-        token,
-        request.signal
-      )
+    const repos = (
+      await filterAccessibleRepos(candidates, token, request.signal)
     ).slice(0, MAX_RESULTS);
+    return pending
+      ? createJSONResponse({ pending, repos })
+      : createPrivateJSONResponse({ pending, repos }, 60);
   } catch (error) {
-    logSearchError(error);
+    logSearchError(error, request.signal);
+    return createJSONResponse({ pending, repos: [] });
   }
-  // Orgs still being listed; the switcher keeps GitHub search on.
-  const pending = listings.some(({ listing }) => listing == null);
-  return pending
-    ? createJSONResponse({ pending, repos })
-    : createPrivateJSONResponse({ pending, repos }, 60);
 }
 
-function logSearchError(error: unknown): void {
+// Logs a failed search, except one the client abandoned (a superseded
+// keystroke aborts its request, which rejects the access check).
+function logSearchError(error: unknown, signal: AbortSignal): void {
+  if (
+    signal.aborted ||
+    (error instanceof Error && error.name === 'AbortError')
+  ) {
+    return;
+  }
   emitLogLine({
     error: formatError(error),
     event: 'github_org_repo_search_error',

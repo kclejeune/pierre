@@ -147,22 +147,97 @@ export function hasQualifier(text: string, key: string): boolean {
   );
 }
 
-// Whether the text has a top-level-capable OR, as opposed to "OR" inside a
-// quoted value.
+const isOrToken = (token: PullQueryToken | undefined) =>
+  token?.kind === 'operator' && token.raw === 'OR';
+const isOpenParen = (token: PullQueryToken | undefined) =>
+  token?.kind === 'paren' && token.raw === '(';
+const isCloseParen = (token: PullQueryToken | undefined) =>
+  token?.kind === 'paren' && token.raw === ')';
+
+// Whether `tokens` has an OR outside every parenthesized group. Only such an
+// OR needs wrapping before more terms are appended: "(a OR b) is:open"
+// already scopes its OR, and wrapping it again on every edit would pile up
+// nesting until GitHub's five-level limit rejects the search.
+function hasTopLevelOr(tokens: readonly PullQueryToken[]): boolean {
+  let depth = 0;
+  for (const token of tokens) {
+    if (isOpenParen(token)) {
+      depth += 1;
+    } else if (isCloseParen(token)) {
+      depth = Math.max(0, depth - 1);
+    } else if (depth === 0 && isOrToken(token)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether the text has an OR outside any group (an "OR" inside a quoted
+// value is just text), so appending terms would only bind its last branch.
 export function hasOrOperator(text: string): boolean {
-  return tokenizePullQuery(text).some(
-    (token) => token.kind === 'operator' && token.raw === 'OR'
-  );
+  return hasTopLevelOr(tokenizePullQuery(text));
 }
 
 const NARROWING_KEYS: ReadonlySet<string> = new Set(['repo', 'org', 'user']);
 
-// Whether a non-negated repo:/org:/user: qualifier with a value narrows the
-// search to some repositories.
+// Whether every result the search can match is confined to the repositories
+// named by some repo:/org:/user: qualifier. Walks the boolean structure: a
+// run of terms (implicit AND) narrows when any un-negated term narrows, an OR
+// narrows only when every branch does, and NOT or a "-" in front of a group
+// cancels it. So "is:open org:acme" narrows, while "org:acme OR is:open" and
+// "is:open NOT org:acme" don't. Unbalanced parens count as not narrowing,
+// since there's no reliable reading of them.
 export function hasNarrowingQualifier(text: string): boolean {
-  return qualifierValues(tokenizePullQuery(text), NARROWING_KEYS).some(
-    (value) => value !== ''
+  const words = tokenizePullQuery(text).filter(
+    (token) => token.kind !== 'space'
   );
+  let index = 0;
+  let balanced = true;
+  const parseConjunction = (): boolean => {
+    let narrows = false;
+    let negated = false;
+    while (
+      index < words.length &&
+      !isOrToken(words[index]) &&
+      !isCloseParen(words[index])
+    ) {
+      const token = words[index];
+      index += 1;
+      if (token.kind === 'operator' || token.raw === '-') {
+        // NOT and a bare "-" negate the next term; AND changes nothing.
+        negated = token.raw === 'NOT' || token.raw === '-';
+        continue;
+      }
+      let termNarrows: boolean;
+      if (token.kind === 'paren') {
+        termNarrows = parseDisjunction();
+        if (isCloseParen(words[index])) {
+          index += 1;
+        } else {
+          balanced = false;
+        }
+      } else {
+        termNarrows =
+          isPositiveQualifier(token, NARROWING_KEYS) &&
+          (token.value ?? '') !== '';
+      }
+      narrows ||= termNarrows && !negated;
+      negated = false;
+    }
+    return narrows;
+  };
+  const parseDisjunction = (): boolean => {
+    let narrows = parseConjunction();
+    while (isOrToken(words[index])) {
+      index += 1;
+      // Parse every branch even after one fails, so the walk stays in step.
+      narrows = parseConjunction() && narrows;
+    }
+    return narrows;
+  };
+  const narrows = parseDisjunction();
+  // A leftover token can only be a stray ")".
+  return narrows && balanced && index === words.length;
 }
 
 // Rejoins tokens after some were removed, collapsing the whitespace runs
@@ -292,11 +367,11 @@ function replaceQualifier(
     return replacement;
   }
   // "a OR b is:closed" would only close b; the replacement applies to the
-  // whole search.
-  const hasOr = kept.some(
-    (token) => token.kind === 'operator' && token.raw === 'OR'
-  );
-  return hasOr ? `(${base}) ${replacement}` : `${base} ${replacement}`;
+  // whole search. An OR already inside a group is scoped and needs no
+  // extra wrapping.
+  return hasTopLevelOr(kept)
+    ? `(${base}) ${replacement}`
+    : `${base} ${replacement}`;
 }
 
 // The list's state toggle. 'all' drops the state qualifier entirely, which is

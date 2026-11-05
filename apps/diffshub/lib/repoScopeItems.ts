@@ -5,6 +5,7 @@
 // them, two remote tiers fill in repos outside that set: fuzzy matches from
 // the viewer's organizations, then GitHub's repository search.
 
+import { deriveSuggestQuery, type SuggestQuery } from './diffUrlSuggestions';
 import { filterFilePathsForSearch } from './fileSearchFilter';
 import { isRepoPinned, isValidRepoName } from './pinnedRepos';
 import type { PullScope } from './pullScopes';
@@ -47,6 +48,45 @@ interface BuildRepoScopeInput {
 const MAX_IDLE_DIRECTORY = 30;
 export const MAX_REPO_MATCHES = 40;
 const MAX_REMOTE = 8;
+
+// The remote search terms for a switcher query that could name a
+// repository: a bare name, or "owner/name" as the URL bar reads it. A bare
+// name may use every character repository names allow (dots, underscores),
+// which the URL bar's owner-shaped parser rejects. Null for anything else
+// (spaces, URLs, "owner/repo#12").
+const BARE_REPO_NAME = /^[A-Za-z0-9._-]+$/;
+
+export function deriveRepoSearchQuery(
+  query: string
+): Extract<SuggestQuery, { kind: 'repos' }> | null {
+  const trimmed = query.trim();
+  if (BARE_REPO_NAME.test(trimmed)) {
+    return { kind: 'repos', owner: null, query: trimmed };
+  }
+  const derived = deriveSuggestQuery(trimmed);
+  return derived?.kind === 'repos' ? derived : null;
+}
+
+// The lowercase repo the "Go to" row offers for a typed complete
+// "owner/name", or null when the query isn't one. Remote tiers skip it, since
+// that row already shows it.
+export function goToRepoKey(query: string): string | null {
+  const trimmed = query.trim();
+  return isValidRepoName(trimmed) ? trimmed.toLowerCase() : null;
+}
+
+// Whether a remote tier's `repo` would add a row: it isn't one the local
+// sections know (`seen`, lowercase) or the "Go to" row for the typed name
+// (`goTo`, from goToRepoKey). Shared by the sections and the switcher's
+// decision to skip GitHub search, so the two can't disagree.
+export function isNewRemoteRepo(
+  repo: string,
+  seen: ReadonlySet<string>,
+  goTo: string | null
+): boolean {
+  const key = repo.toLowerCase();
+  return key !== goTo && !seen.has(key);
+}
 
 function repoItem(repo: string, detail?: string): RepoScopeItem {
   return {
@@ -155,9 +195,13 @@ export function buildRepoScopeSections(
     query,
     MAX_REPO_MATCHES
   );
+  const goTo = goToRepoKey(query);
+  // Lowercase names a remote tier already added, so the next tier only adds
+  // new repos (the org search caps its own results server-side).
+  const added = new Set<string>();
   // A complete "owner/name" that nothing loaded matches still deserves a
   // direct entry: it may be public, or outside the directory's first pages.
-  if (isValidRepoName(query) && !isRepoPinned(matches, query)) {
+  if (goTo != null && !isRepoPinned(matches, query)) {
     sections.push({
       heading: 'Go to',
       items: [repoItem(query, 'View pull requests')],
@@ -171,17 +215,13 @@ export function buildRepoScopeSections(
       ),
     });
   }
-  // Each remote tier only adds repos no earlier section showed (the org
-  // search caps its own results server-side).
-  const added = new Set<string>();
   const takeNew = (repos: readonly string[], max = Infinity) => {
     const fresh: string[] = [];
     for (const repo of repos) {
       const key = repo.toLowerCase();
       if (
-        !known.seen.has(key) &&
+        isNewRemoteRepo(repo, known.seen, goTo) &&
         !added.has(key) &&
-        repo !== query &&
         fresh.length < max
       ) {
         added.add(key);

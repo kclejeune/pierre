@@ -641,7 +641,7 @@ function PullList({
       </DashboardSectionState>
       {pulls.length > 0 && error != null && (
         <div className="border-t">
-          <SectionError error={error} onRetry={hasMore ? loadMore : retry} />
+          <SectionError error={error} onRetry={retry} />
         </div>
       )}
       {pulls.length > 0 && (hasMore || totalCount > pulls.length) && (

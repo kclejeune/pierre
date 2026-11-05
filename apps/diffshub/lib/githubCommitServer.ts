@@ -447,16 +447,17 @@ export function sendGitHubJSON(
 
 // GraphQL reports most failures as HTTP 200 with errors[]; rethrow those as
 // GitHubCommitError like REST failures.
-// `allowNotFound` is for queries made of independent lookups (aliased
+// `allowedFieldErrors` is for queries made of independent lookups (aliased
 // `repository(...)` fields), where GitHub answers a lookup the viewer can't
-// see with a null field plus a NOT_FOUND error. Those errors are the answer,
-// so they're tolerated; any other error still throws.
+// see with a null field plus an error (NOT_FOUND, or FORBIDDEN for an org
+// that blocks the token). Errors of those types are the answer, so they're
+// tolerated; any other error still throws.
 export async function sendGitHubGraphQL(
   query: string,
   variables: Record<string, unknown>,
   token: string,
   fetcher: PlainFetch = githubFetch,
-  { allowNotFound = false }: { allowNotFound?: boolean } = {}
+  { allowedFieldErrors }: { allowedFieldErrors?: ReadonlySet<string> } = {}
 ): Promise<unknown> {
   const payload = asRecord(
     await gitDataRequest(
@@ -475,8 +476,10 @@ export async function sendGitHubGraphQL(
     Array.isArray(errors) &&
     errors.length > 0 &&
     !(
-      allowNotFound &&
-      errors.every((error) => readStringPath(error, ['type']) === 'NOT_FOUND')
+      allowedFieldErrors != null &&
+      errors.every((error) =>
+        allowedFieldErrors.has(readStringPath(error, ['type']) ?? '')
+      )
     )
   ) {
     const forbidden = readStringPath(errors[0], ['type']) === 'FORBIDDEN';

@@ -15,7 +15,10 @@ import {
   writePullSort,
   writePullStateFilter,
 } from '@/lib/pullSearchQuery';
-import { buildRepoScopeSections } from '@/lib/repoScopeItems';
+import {
+  buildRepoScopeSections,
+  deriveRepoSearchQuery,
+} from '@/lib/repoScopeItems';
 
 describe('tokenizePullQuery', () => {
   test('reproduces the input exactly, for the highlighter', () => {
@@ -86,6 +89,25 @@ describe('state and sort edits', () => {
       expect(writePullStateFilter(input, 'closed')).toBe(expected);
     }
     expect(writePullStateFilter('is:open OR is:merged', 'all')).toBe('');
+  });
+
+  // A grouped OR is already scoped, so repeated toggles must not keep
+  // wrapping it (GitHub rejects more than five levels of nesting).
+  test('state toggles do not re-wrap an already grouped OR', () => {
+    let text = 'is:open (label:bug OR label:enhancement)';
+    for (const state of ['closed', 'merged', 'open', 'closed'] as const) {
+      text = writePullStateFilter(text, state);
+    }
+    expect(text).toBe('(label:bug OR label:enhancement) is:closed');
+    expect(
+      writePullStateFilter('is:open label:bug OR label:enhancement', 'closed')
+    ).toBe('(label:bug OR label:enhancement) is:closed');
+    expect(
+      writePullStateFilter(
+        '(label:bug OR label:enhancement) is:closed',
+        'merged'
+      )
+    ).toBe('(label:bug OR label:enhancement) is:merged');
   });
 
   test('the sort menu rewrites sort: and splits it out for the server', () => {
@@ -161,6 +183,26 @@ describe('pulls page URL state', () => {
     expect(audienceAnyoneAllowed({ kind: 'all' }, '"repo:x"')).toBe(false);
   });
 
+  // The repository term has to bind every result, so OR branches and NOT
+  // are part of the check.
+  test('anyone reads the boolean structure around repository terms', () => {
+    const allowed = (text: string) =>
+      audienceAnyoneAllowed({ kind: 'all' }, text);
+    expect(allowed('repo:a/b OR is:open')).toBe(false);
+    expect(allowed('is:open NOT org:acme')).toBe(false);
+    expect(allowed('NOT (org:acme)')).toBe(false);
+    expect(allowed('-(org:acme label:x)')).toBe(false);
+    expect(allowed('(repo:a/b OR is:open) label:x')).toBe(false);
+    expect(allowed('repo:a/b OR repo:c/d')).toBe(true);
+    expect(allowed('(repo:a/b OR org:acme) is:open')).toBe(true);
+    expect(allowed('is:open AND org:acme')).toBe(true);
+    expect(allowed('org:acme NOT label:x')).toBe(true);
+    expect(allowed('(org:acme is:open) OR (repo:a/b label:x)')).toBe(true);
+    // Unbalanced parens have no reliable reading.
+    expect(allowed('(org:acme')).toBe(false);
+    expect(allowed('org:acme)')).toBe(false);
+  });
+
   test('anyone narrows to involves me where it is not allowed', () => {
     const base = {
       involves: 'anyone' as const,
@@ -184,6 +226,18 @@ describe('search builder reads the typed text with the tokenizer', () => {
       })
     ).toBe(
       'label:"A OR B" "archived:true" is:pr archived:false repo:oven-sh/bun'
+    );
+  });
+
+  test('an already grouped OR is not wrapped again', () => {
+    expect(
+      buildActiveSearchQuery({
+        involves: 'anyone',
+        repos: ['oven-sh/bun'],
+        text: '(label:a OR label:b) is:open',
+      })
+    ).toBe(
+      '(label:a OR label:b) is:open is:pr archived:false repo:oven-sh/bun'
     );
   });
 });
@@ -265,5 +319,47 @@ describe('buildRepoScopeSections', () => {
       ['More on GitHub', ['pierrecomputer/pierre']],
       ['Elsewhere', ['action:search-everywhere']],
     ]);
+  });
+
+  test('a remote match differing from the typed name only by case is not repeated', () => {
+    const sections = buildRepoScopeSections({
+      directory,
+      orgMatches: ['acme/widgets'],
+      pinned: [],
+      query: 'Acme/Widgets',
+      recents: [],
+      remote: ['ACME/widgets'],
+    });
+    const keys = sections.flatMap((section) =>
+      section.items.map((item) => item.key)
+    );
+    expect(keys.filter((key) => key === 'repo:acme/widgets')).toHaveLength(1);
+    expect(sections[0].heading).toBe('Go to');
+  });
+});
+
+describe('deriveRepoSearchQuery', () => {
+  test('bare names may use any repository-name character', () => {
+    expect(deriveRepoSearchQuery('my_repo')).toEqual({
+      kind: 'repos',
+      owner: null,
+      query: 'my_repo',
+    });
+    expect(deriveRepoSearchQuery(' foo.js ')).toEqual({
+      kind: 'repos',
+      owner: null,
+      query: 'foo.js',
+    });
+    expect(deriveRepoSearchQuery('acme/my_repo')).toEqual({
+      kind: 'repos',
+      owner: 'acme',
+      query: 'my_repo',
+    });
+  });
+
+  test('anything that cannot name a repository has no remote search', () => {
+    expect(deriveRepoSearchQuery('two words')).toBeNull();
+    expect(deriveRepoSearchQuery('https://github.com/a/b')).toBeNull();
+    expect(deriveRepoSearchQuery('acme/repo#12')).toBeNull();
   });
 });

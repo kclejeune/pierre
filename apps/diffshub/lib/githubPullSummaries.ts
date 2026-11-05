@@ -78,6 +78,11 @@ export type PullAudience = readonly PullInvolvement[] | 'anyone';
 
 // Rows per active-list section.
 const PULLS_PAGE_SIZE = 25;
+// GitHub search returns at most this many results in total, which bounds how
+// many shown rows can share a boundary timestamp.
+const MAX_SEARCH_RESULTS = 1000;
+// GraphQL connections return at most this many nodes per request.
+const MAX_CONNECTION_PAGE = 100;
 
 // Canonical form of a selection: chip order, no duplicates, and the empty
 // list for "all" — including when every chip is selected, so that selection
@@ -320,9 +325,9 @@ export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: Stri
 
 // Where the next page starts: GitHub's search cursor, the updatedAt of the
 // last row already shown (which bounds the commented subset on that page),
-// and how many shown rows share that timestamp (the subset's overlap with
-// what's already on screen). Serialized opaquely so the client just echoes
-// it back.
+// and how many shown rows share that timestamp across every page so far
+// (the subset's overlap with what's already on screen). Serialized opaquely
+// so the client just echoes it back.
 interface PullsPageCursor {
   after: string;
   lastUpdatedAt: string;
@@ -346,7 +351,7 @@ export function decodePullsCursor(value: string): PullsPageCursor | undefined {
       /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(parsed[1]) &&
       Number.isInteger(parsed[2]) &&
       parsed[2] >= 1 &&
-      parsed[2] <= PULLS_PAGE_SIZE
+      parsed[2] <= MAX_SEARCH_RESULTS
     ) {
       return {
         after: parsed[0],
@@ -411,8 +416,13 @@ export function buildActivePullsVariables(
   // An undefined `after` drops out of the serialized variables.
   return {
     after: cursor?.after,
-    commentedFirst:
-      PULLS_PAGE_SIZE + (bound == null ? 0 : (cursor?.boundaryRows ?? 0)),
+    // Past GraphQL's page limit (more than 75 shown rows sharing one
+    // timestamp), the overlap can crowd out some of this page's commented
+    // rows; they show without the Commented chip.
+    commentedFirst: Math.min(
+      MAX_CONNECTION_PAGE,
+      PULLS_PAGE_SIZE + (bound == null ? 0 : (cursor?.boundaryRows ?? 0))
+    ),
     commentedQuery: sorted(buildActiveSearchQuery(scope, commentedExtra)),
     first: PULLS_PAGE_SIZE,
     query: sorted(buildActiveSearchQuery(scope)),
@@ -507,7 +517,15 @@ function parseGraphQLPullNode(
   return summary;
 }
 
+// The state a pull shows as, in the /pulls list and the details panel alike.
 // Merged and closed win over draft: a closed draft reads as closed on GitHub.
+export function displayPullState(
+  state: 'closed' | 'merged' | 'open',
+  draft: boolean
+): PullSummary['state'] {
+  return state === 'open' && draft ? 'draft' : state;
+}
+
 function readPullState(record: Record<string, unknown>): PullSummary['state'] {
   if (record.state === 'MERGED') {
     return 'merged';
@@ -515,7 +533,7 @@ function readPullState(record: Record<string, unknown>): PullSummary['state'] {
   if (record.state === 'CLOSED') {
     return 'closed';
   }
-  return record.isDraft === true ? 'draft' : 'open';
+  return displayPullState('open', record.isDraft === true);
 }
 
 function readLabels(record: Record<string, unknown>): PullLabel[] {
@@ -530,8 +548,13 @@ export interface PullsPage {
 }
 
 // Reads ACTIVE_PULLS_QUERY's `data` into the page shape the dashboard
-// renders.
-export function parseActivePullsPayload(data: unknown): PullsPage {
+// renders. `previous` is the cursor this page was fetched with: when this
+// page ends on the same timestamp the previous one did, every row on it
+// shares that timestamp, so its boundary rows add to the earlier pages'.
+export function parseActivePullsPayload(
+  data: unknown,
+  previous?: PullsPageCursor
+): PullsPage {
   const pullsSearch = asRecord(asRecord(data)?.pulls);
   const commentedNodes = asRecord(asRecord(data)?.commented)?.nodes;
   const commentedIds = new Set<string>();
@@ -562,8 +585,13 @@ export function parseActivePullsPayload(data: unknown): PullsPage {
       nextCursor: encodePullsCursor({
         after: pageInfo.endCursor,
         lastUpdatedAt: last.updatedAt,
-        boundaryRows: pulls.filter((pull) => pull.updatedAt === last.updatedAt)
-          .length,
+        boundaryRows: Math.min(
+          MAX_SEARCH_RESULTS,
+          pulls.filter((pull) => pull.updatedAt === last.updatedAt).length +
+            (previous?.lastUpdatedAt === last.updatedAt
+              ? previous.boundaryRows
+              : 0)
+        ),
       }),
     };
   }

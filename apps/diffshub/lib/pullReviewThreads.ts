@@ -54,28 +54,46 @@ export function getCommentAnnotationSide(
     : (range.endSide ?? range.side ?? 'additions');
 }
 
+// A file-level comment's anchor: the file alone.
+export interface FileCommentAnchor {
+  path: string;
+  subjectType: 'file';
+}
+
+// Where a review comment sits: on lines, or on the whole file.
+export type CommentAnchor = FileCommentAnchor | GitHubCommentAnchor;
+
+export function isFileCommentAnchor(
+  anchor: CommentAnchor
+): anchor is FileCommentAnchor {
+  return 'subjectType' in anchor;
+}
+
 export function isGitHubDiffSide(value: unknown): value is GitHubDiffSide {
   return value === 'LEFT' || value === 'RIGHT';
 }
 
 // Validates untyped anchor fields (a request body or a GitHub payload mapped
-// to camelCase). GitHub rejects a start line equal to the end line, so the
+// to camelCase). `subjectType` 'file' anchors the whole file and ignores the
+// line fields. GitHub rejects a start line equal to the end line, so the
 // start anchor is kept only for multi-line comments, its side defaulting to
 // the end's.
 export function readCommentAnchor(fields: {
-  line: unknown;
-  path: unknown;
-  side: unknown;
+  line?: unknown;
+  path?: unknown;
+  side?: unknown;
   startLine?: unknown;
   startSide?: unknown;
-}): GitHubCommentAnchor | null {
-  const { line, path, side, startLine, startSide } = fields;
-  if (
-    typeof path !== 'string' ||
-    path === '' ||
-    typeof line !== 'number' ||
-    !isGitHubDiffSide(side)
-  ) {
+  subjectType?: unknown;
+}): CommentAnchor | null {
+  const { line, path, side, startLine, startSide, subjectType } = fields;
+  if (typeof path !== 'string' || path === '') {
+    return null;
+  }
+  if (subjectType === 'file') {
+    return { path, subjectType: 'file' };
+  }
+  if (typeof line !== 'number' || !isGitHubDiffSide(side)) {
     return null;
   }
   return typeof startLine === 'number' && startLine !== line
@@ -89,14 +107,22 @@ export function readCommentAnchor(fields: {
     : { line, path, side };
 }
 
-// The selected-line range an anchor covers; the start falls back to the end
-// line and side for single-line comments.
-export function getAnchorRange(anchor: {
-  line: number;
-  side: GitHubDiffSide;
-  startLine?: number | null;
-  startSide?: GitHubDiffSide | null;
-}): SelectedLineRange {
+// The selected-line range an anchor covers: the file-level slot for a
+// file anchor; otherwise the start falls back to the end line and side for
+// single-line comments.
+export function getAnchorRange(
+  anchor:
+    | FileCommentAnchor
+    | {
+        line: number;
+        side: GitHubDiffSide;
+        startLine?: number | null;
+        startSide?: GitHubDiffSide | null;
+      }
+): SelectedLineRange {
+  if ('subjectType' in anchor) {
+    return createFileCommentRange();
+  }
   const endSide = toAnnotationSide(anchor.side);
   return {
     start: anchor.startLine ?? anchor.line,

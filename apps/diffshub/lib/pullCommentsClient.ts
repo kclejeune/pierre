@@ -1,6 +1,7 @@
 import type { SelectedLineRange } from '@pierre/diffs';
 
 import {
+  type CommentAnchor,
   type GitHubCommentAnchor,
   isFileCommentRange,
   toGitHubDiffSide,
@@ -69,24 +70,22 @@ export async function postPullReviewReply(
 export async function postPullReviewComment(
   pull: PullRequestRef,
   token: string,
-  anchor: GitHubCommentAnchor,
+  anchor: CommentAnchor,
   body: string,
   commitId?: string
 ): Promise<PullReviewComment> {
   return await requestComment<PullReviewComment>('/api/pull-comments', {
     method: 'POST',
     headers: buildHeaders(token),
+    // The anchor's fields (line/side/startLine/startSide, or subjectType
+    // 'file') are the route's.
     body: JSON.stringify({
+      ...anchor,
       body,
       commitId,
-      line: anchor.line,
       owner: pull.owner,
-      path: anchor.path,
       pull: pull.number,
       repo: pull.repo,
-      side: anchor.side,
-      startLine: anchor.startLine,
-      startSide: anchor.startSide,
     }),
   });
 }
@@ -217,16 +216,18 @@ export async function deletePullDiscussionComment(
 }
 
 // Maps a draft annotation's selected range to the GitHub anchor fields for a
-// new review comment. GitHub rejects start_line === line, so single-line
-// ranges omit the start anchor.
+// new review comment: the file alone for a file-level range, else its lines.
+// GitHub rejects start_line === line, so single-line ranges omit the start
+// anchor.
 export function createCommentAnchor(
   path: string,
   range: SelectedLineRange
-): GitHubCommentAnchor | null {
+): CommentAnchor | null {
+  if (isFileCommentRange(range)) {
+    return { path, subjectType: 'file' };
+  }
   const endSide = range.endSide ?? range.side;
-  // File-level ranges have no line anchor; DiffsHub can't start file-level
-  // comments.
-  if (endSide == null || isFileCommentRange(range)) {
+  if (endSide == null) {
     return null;
   }
   const anchor: GitHubCommentAnchor = {

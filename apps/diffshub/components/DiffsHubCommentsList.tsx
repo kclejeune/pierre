@@ -18,7 +18,7 @@ import {
 
 import { CommentHeaderActions, CommentTimestamp } from './CommentActions';
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
-import { CommentComposer } from './CommentComposer';
+import { CommentComposer, ComposerTrigger } from './CommentComposer';
 import {
   CommentDeleteConfirm,
   CommentEditComposer,
@@ -28,6 +28,7 @@ import { ReactionChipList, useCommentReactions } from './CommentReactions';
 import { MarkdownContent, RawMarkdownFallback } from './MarkdownContent';
 import { useGitHubUser } from './useGitHubUser';
 import { cn } from '@/lib/cn';
+import { readCommentDraft } from '@/lib/commentDrafts';
 import { createCommentSidebarPreview } from '@/lib/commentSidebarPreview';
 import type {
   CommentAuthor,
@@ -192,6 +193,9 @@ function DeferredMarkdown({
 // (kind 'comment'); review summaries are read-only.
 export interface DiscussionActions {
   canWrite: boolean;
+  // Keys the unsent new-comment draft to its pull request, so a draft started
+  // on one PR doesn't reappear on another.
+  draftKey: string;
   onDelete(commentId: number): Promise<void>;
   onEdit(commentId: number, body: string): Promise<void>;
   onPost(body: string): Promise<void>;
@@ -507,26 +511,44 @@ function DescriptionRow({ description }: { description: PullDescription }) {
   );
 }
 
-// The Conversation section's trailing row: opens a composer that posts a new
-// PR-level comment. Anonymous sessions get the same sign-in nudge as thread
-// replies instead of a composer they could not submit.
-function DiscussionComposerRow({ actions }: { actions: DiscussionActions }) {
-  const [isOpen, setIsOpen] = useState(false);
+// The footer pinned below the comments scroller: opens a composer that posts a
+// new PR-level comment. It sits outside the scroller so it stays in reach
+// however far the list is scrolled, and shows the viewer's avatar beside an
+// input-styled trigger (on the sidebar background, not a card) so it doesn't
+// read as another comment. Anonymous sessions get the same sign-in nudge as
+// thread replies instead of a composer they could not submit.
+const COMPOSER_FOOTER_CLASS =
+  'max-h-[60%] shrink-0 overflow-y-auto border-t border-[var(--color-border-opaque)] p-3';
+
+function DiscussionComposerFooter({ actions }: { actions: DiscussionActions }) {
+  // Starts open when an unsent draft survives from earlier in the session, as
+  // thread replies do, so the text doesn't hide behind the collapsed trigger.
+  // Only a click focuses the editor; a restored draft shouldn't take focus.
+  const [isOpen, setIsOpen] = useState(
+    () => readCommentDraft(actions.draftKey) != null
+  );
+  const [openedByUser, setOpenedByUser] = useState(false);
+  const githubUser = useGitHubUser();
 
   if (!actions.canWrite) {
     return (
-      <div className={cn(CARD_CLASS, 'text-muted-foreground p-3 text-[13px]')}>
+      <p
+        className={cn(
+          COMPOSER_FOOTER_CLASS,
+          'text-muted-foreground m-0 text-[13px]'
+        )}
+      >
         Sign in with GitHub or save a token to comment.
-      </div>
+      </p>
     );
   }
 
   return (
-    <div className={cn(CARD_CLASS, 'p-3')}>
+    <div className={COMPOSER_FOOTER_CLASS}>
       {isOpen ? (
         <CommentComposer
-          autoFocus
-          draftKey="discussion-new"
+          autoFocus={openedByUser}
+          draftKey={actions.draftKey}
           submitLabel="Comment"
           onCancel={() => setIsOpen(false)}
           onSubmit={async (body) => {
@@ -535,13 +557,20 @@ function DiscussionComposerRow({ actions }: { actions: DiscussionActions }) {
           }}
         />
       ) : (
-        <button
-          type="button"
-          className="text-muted-foreground hover:border-foreground/30 hover:text-foreground w-full cursor-text rounded-md border border-[var(--diffshub-card-border,var(--color-border))] px-3 py-1.5 text-left text-[13px] transition-colors"
-          onClick={() => setIsOpen(true)}
-        >
-          Add a comment…
-        </button>
+        <div className="flex items-center gap-2">
+          {githubUser != null && (
+            // Overrides the avatar's default top alignment.
+            <CommentAuthorAvatar author={githubUser} className="self-center" />
+          )}
+          <ComposerTrigger
+            className="border-[var(--color-border-opaque)] bg-[var(--diffshub-card-bg,var(--color-card))] py-2 shadow-xs"
+            label="Comment on this pull request…"
+            onOpen={() => {
+              setOpenedByUser(true);
+              setIsOpen(true);
+            }}
+          />
+        </div>
       )}
     </div>
   );
@@ -557,12 +586,15 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
 }: DiffsHubCommentsListProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const observeRow = useRowVisibilityObserver(scrollerRef);
-  // On pull-request views the Conversation section always renders (its
-  // composer is how PR-level comments get written), so the empty state only
-  // applies when there is nothing to show AND nothing to write.
-  const showConversation =
-    discussion.length > 0 || discussionActions != null || description != null;
-  if (commentSections.length === 0 && !showConversation) {
+  const showConversation = discussion.length > 0 || description != null;
+  // On pull-request views the composer footer is how PR-level comments get
+  // written, so the empty state only applies when there is nothing to show
+  // AND nothing to write.
+  if (
+    commentSections.length === 0 &&
+    !showConversation &&
+    discussionActions == null
+  ) {
     return (
       <div className="text-muted-foreground flex h-full min-h-0 flex-col items-center justify-center gap-2 px-7 text-center text-sm">
         <IconConvoFill size={24} className="mb-2" />
@@ -582,114 +614,126 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
 
   return (
     <RowVisibilityContext value={observeRow}>
-      <div
-        ref={scrollerRef}
-        className={cn(
-          'cv-mini-scrollbar',
-          'h-full min-h-0 overflow-auto overscroll-contain pl-3 pb-3 pr-[max(0px,calc(12px-var(--cv-mini-gutter-vertical)))]'
-        )}
-      >
-        {showConversation && (
-          <section>
-            <div className="text-muted-foreground p-3 pb-2 text-sm font-medium">
-              Conversation
-            </div>
-            <div className={CARD_STACK_CLASS}>
-              {description != null && (
-                <DescriptionRow description={description} />
-              )}
-              {discussion.map((comment) => (
-                <DiscussionRow
-                  key={`${comment.kind}-${comment.id}`}
-                  actions={discussionActions}
-                  comment={comment}
-                />
-              ))}
-              {discussionActions != null && (
-                <DiscussionComposerRow actions={discussionActions} />
-              )}
-            </div>
-          </section>
-        )}
-        {commentSections.map((section) => (
-          <section key={section.itemId}>
-            {onSelectItem != null ? (
-              <button
-                type="button"
-                className="text-muted-foreground hover:text-foreground focus-visible:ring-ring block w-full cursor-pointer p-3 pb-2 text-left text-sm font-medium break-all outline-none focus-visible:ring-2"
-                onClick={(event) =>
-                  handleRowClick(event, () => onSelectItem(section.itemId))
-                }
-              >
-                <span className="select-text">{section.path}</span>
-              </button>
-            ) : (
-              <div className="text-muted-foreground p-3 pb-2 text-sm font-medium break-all">
-                {section.path}
+      <div className="flex h-full min-h-0 flex-col">
+        <div
+          ref={scrollerRef}
+          className={cn(
+            'cv-mini-scrollbar',
+            'min-h-0 flex-1 overflow-auto overscroll-contain pl-3 pb-3 pr-[max(0px,calc(12px-var(--cv-mini-gutter-vertical)))]'
+          )}
+        >
+          {showConversation && (
+            <section>
+              <div className="text-muted-foreground p-3 pb-2 text-sm font-medium">
+                Conversation
               </div>
-            )}
-            <div className={CARD_STACK_CLASS}>
-              {section.comments.map((comment) => (
-                <CommentRow
-                  key={comment.key}
-                  onActivate={() => onSelectComment?.(comment)}
-                >
-                  <CardHeader
-                    author={comment.author}
-                    trailing={
-                      comment.resolved === true && (
-                        <span className="inline-flex shrink-0 items-center gap-1 text-[12px]">
-                          <IconCheck size={12} aria-hidden />
-                          Resolved
-                        </span>
-                      )
-                    }
-                  >
-                    <span className="text-foreground font-medium">
-                      @{comment.author.login}
-                    </span>
-                    <span>commented on</span>
-                    <span
-                      className={cn(
-                        getCommentLineClassName(comment.side, comment.lineType),
-                        'font-medium'
-                      )}
-                    >
-                      {getCommentLineLabel(
-                        comment.side,
-                        comment.lineNumber,
-                        comment.lineType
-                      )}
-                    </span>
-                  </CardHeader>
-                  <DeferredMarkdown
-                    className={COLLAPSED_SIDEBAR_MARKDOWN_CLASS}
-                    markdown={comment.message}
+              <div className={CARD_STACK_CLASS}>
+                {description != null && (
+                  <DescriptionRow description={description} />
+                )}
+                {discussion.map((comment) => (
+                  <DiscussionRow
+                    key={`${comment.kind}-${comment.id}`}
+                    actions={discussionActions}
+                    comment={comment}
                   />
-                  {comment.replyCount > 0 && (
-                    <div className="text-muted-foreground flex items-center gap-1.5 text-[12px]">
-                      <span className="flex -space-x-1.5">
-                        {comment.participants.slice(0, 4).map((participant) => (
-                          <CommentAuthorAvatar
-                            key={participant.login}
-                            author={participant}
-                            className="size-4 text-[8px] ring-2 ring-[var(--diffshub-card-bg,var(--color-card))]"
-                          />
-                        ))}
+                ))}
+              </div>
+            </section>
+          )}
+          {commentSections.map((section) => (
+            <section key={section.itemId}>
+              {onSelectItem != null ? (
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground focus-visible:ring-ring block w-full cursor-pointer p-3 pb-2 text-left text-sm font-medium break-all outline-none focus-visible:ring-2"
+                  onClick={(event) =>
+                    handleRowClick(event, () => onSelectItem(section.itemId))
+                  }
+                >
+                  <span className="select-text">{section.path}</span>
+                </button>
+              ) : (
+                <div className="text-muted-foreground p-3 pb-2 text-sm font-medium break-all">
+                  {section.path}
+                </div>
+              )}
+              <div className={CARD_STACK_CLASS}>
+                {section.comments.map((comment) => (
+                  <CommentRow
+                    key={comment.key}
+                    onActivate={() => onSelectComment?.(comment)}
+                  >
+                    <CardHeader
+                      author={comment.author}
+                      trailing={
+                        comment.resolved === true && (
+                          <span className="inline-flex shrink-0 items-center gap-1 text-[12px]">
+                            <IconCheck size={12} aria-hidden />
+                            Resolved
+                          </span>
+                        )
+                      }
+                    >
+                      <span className="text-foreground font-medium">
+                        @{comment.author.login}
                       </span>
-                      <span>
-                        {comment.replyCount}{' '}
-                        {comment.replyCount === 1 ? 'reply' : 'replies'}
-                        {comment.participants.length > 1 &&
-                          ` · ${comment.participants.length} participants`}
+                      <span>commented on</span>
+                      <span
+                        className={cn(
+                          getCommentLineClassName(
+                            comment.side,
+                            comment.lineType
+                          ),
+                          'font-medium'
+                        )}
+                      >
+                        {getCommentLineLabel(
+                          comment.side,
+                          comment.lineNumber,
+                          comment.lineType
+                        )}
                       </span>
-                    </div>
-                  )}
-                </CommentRow>
-              ))}
-            </div>
-          </section>
-        ))}
+                    </CardHeader>
+                    <DeferredMarkdown
+                      className={COLLAPSED_SIDEBAR_MARKDOWN_CLASS}
+                      markdown={comment.message}
+                    />
+                    {comment.replyCount > 0 && (
+                      <div className="text-muted-foreground flex items-center gap-1.5 text-[12px]">
+                        <span className="flex -space-x-1.5">
+                          {comment.participants
+                            .slice(0, 4)
+                            .map((participant) => (
+                              <CommentAuthorAvatar
+                                key={participant.login}
+                                author={participant}
+                                className="size-4 text-[8px] ring-2 ring-[var(--diffshub-card-bg,var(--color-card))]"
+                              />
+                            ))}
+                        </span>
+                        <span>
+                          {comment.replyCount}{' '}
+                          {comment.replyCount === 1 ? 'reply' : 'replies'}
+                          {comment.participants.length > 1 &&
+                            ` · ${comment.participants.length} participants`}
+                        </span>
+                      </div>
+                    )}
+                  </CommentRow>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+        {discussionActions != null && (
+          <DiscussionComposerFooter
+            // Remounts per pull request so the composer reloads that PR's
+            // draft instead of carrying the previous one's open editor over.
+            key={discussionActions.draftKey}
+            actions={discussionActions}
+          />
+        )}
       </div>
     </RowVisibilityContext>
   );

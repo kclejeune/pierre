@@ -14,7 +14,11 @@ import { toast } from 'sonner';
 
 import { CommentHeaderActions, CommentTimestamp } from './CommentActions';
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
-import { CommentComposer, type CommentComposerHandle } from './CommentComposer';
+import {
+  CommentComposer,
+  type CommentComposerHandle,
+  ComposerTrigger,
+} from './CommentComposer';
 import {
   CommentDeleteConfirm,
   CommentEditComposer,
@@ -431,13 +435,11 @@ interface ReplyComposerProps {
 function ReplyComposer({ state, onReply }: ReplyComposerProps) {
   if (!state.isOpen) {
     return (
-      <button
-        type="button"
-        className="text-muted-foreground hover:border-foreground/30 hover:text-foreground w-full cursor-text rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))] bg-[var(--diffshub-annotation-bg,var(--color-card))] px-3 py-1.5 text-left text-[13px] transition-colors"
-        onClick={state.open}
-      >
-        Reply…
-      </button>
+      <ComposerTrigger
+        className="border-[var(--diffshub-annotation-border,var(--color-border))] bg-[var(--diffshub-annotation-bg,var(--color-card))]"
+        label="Reply…"
+        onOpen={state.open}
+      />
     );
   }
 

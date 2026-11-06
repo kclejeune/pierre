@@ -747,6 +747,7 @@ function ReviewUIInner({
         ? undefined
         : {
             canWrite: hasGitHubToken,
+            draftKey: `discussion-new:${pullRequest.owner}/${pullRequest.repo}#${pullRequest.number}`,
             onDelete: handleDiscussionDelete,
             onEdit: handleDiscussionEdit,
             onPost: handleDiscussionPost,

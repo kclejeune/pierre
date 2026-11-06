@@ -29,9 +29,13 @@ describe('toAPICompareRange', () => {
     expect(toAPICompareRange('octocat:topic')).toBe('HEAD...octocat:topic');
   });
 
-  test('passes ranges that name a base through unchanged', () => {
+  test('passes three-dot ranges that name a base through unchanged', () => {
     expect(toAPICompareRange('main...feat/thing')).toBe('main...feat/thing');
-    expect(toAPICompareRange('v6.0..v7.0')).toBe('v6.0..v7.0');
+  });
+
+  test('sends two-dot ranges as three-dot, the only form the API accepts', () => {
+    expect(toAPICompareRange('v6.0..v7.0')).toBe('v6.0...v7.0');
+    expect(toAPICompareRange('1.75.0..1.75.1')).toBe('1.75.0...1.75.1');
   });
 });
 

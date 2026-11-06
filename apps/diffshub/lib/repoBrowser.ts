@@ -154,15 +154,20 @@ export function splitCompareRange(range: string): {
   return { base: match[1] === '' ? null : match[1], head: match[2] ?? '' };
 }
 
-// The range to send GitHub's REST compare endpoint. The web UI accepts the
-// bare `compare/<head>` shorthand and an empty base (`...head`), both meaning
-// "against the default branch", but the API answers either with 404. `HEAD`
-// is the repository's symbolic ref to its default branch, so it fills the
-// missing base without a lookup and gives the same base and merge-base
-// commits as naming the branch.
+// The range to send GitHub's REST compare endpoint, which only accepts the
+// three-dot `base...head` form and answers anything else with 404.
+//
+// - The web UI's bare `compare/<head>` shorthand and an empty base (`...head`)
+//   both mean "against the default branch". `HEAD` is the repository's
+//   symbolic ref to its default branch, so it fills the missing base without a
+//   lookup and gives the same base and merge-base commits as naming the branch.
+// - The web UI's two-dot `base..head` is sent as `base...head`. The API diffs
+//   from the merge base, so this matches the web UI's direct two-dot diff
+//   whenever `head` contains `base` (e.g. consecutive release tags); when the
+//   refs have diverged it omits changes made only on the base side.
 export function toAPICompareRange(range: string): string {
   const { base, head } = splitCompareRange(range);
-  return base == null ? `HEAD...${head}` : range;
+  return `${base ?? 'HEAD'}...${head}`;
 }
 
 // `owner:branch` compare refs name a branch in a fork; the file browser has

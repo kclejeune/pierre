@@ -8,6 +8,7 @@ import {
 } from '@/lib/githubCommitServer';
 import { isFullCommitSha } from '@/lib/githubDiffSource';
 import { readNonEmptyString } from '@/lib/githubOAuthGrant';
+import { readPageCursor, walkGraphQLConnection } from '@/lib/githubPagination';
 import {
   type PullBodyRef,
   readPullBodyRef,
@@ -193,20 +194,6 @@ function incompletePendingReviewError(missing?: number): GitHubCommitError {
   );
 }
 
-// The cursor of a connection's next page in `direction` (its pageInfo), or
-// null when it was the last.
-function readPageCursor(
-  connection: unknown,
-  direction: 'backward' | 'forward'
-): string | null {
-  const pageInfo = asRecord(asRecord(connection)?.pageInfo);
-  const [hasMore, cursor] =
-    direction === 'forward'
-      ? [pageInfo?.hasNextPage, pageInfo?.endCursor]
-      : [pageInfo?.hasPreviousPage, pageInfo?.startCursor];
-  return hasMore === true && typeof cursor === 'string' ? cursor : null;
-}
-
 // Adds a page of pending comments (PENDING_COMMENT_FIELDS) to `into`.
 function readPendingCommentPage(
   connection: unknown,
@@ -309,51 +296,44 @@ async function loadPendingReview(
   }
   const bodies = new Map<string, PendingCommentBody>();
   readPendingCommentPage(review.firstComments, bodies);
-  let cursor = readPageCursor(review.firstComments, 'forward');
-  for (let page = 1; cursor != null; page += 1) {
-    if (page >= MAX_PAGES) {
+  const cursor = readPageCursor(review.firstComments, 'forward');
+  if (cursor != null) {
+    // Page one came with the review, so the walk gets the remaining pages.
+    const { exhausted } = await walkGraphQLConnection({
+      cursor,
+      direction: 'forward',
+      maxPages: MAX_PAGES - 1,
+      onPage: (connection) => readPendingCommentPage(connection, bodies),
+      query: PENDING_COMMENTS_QUERY,
+      readConnection: (data) => asRecord(asRecord(data)?.node)?.comments,
+      token,
+      variables: { id: review.id },
+    });
+    if (!exhausted) {
       throw incompletePendingReviewError();
     }
-    const connection = asRecord(
-      asRecord(
-        await sendGitHubGraphQL(
-          PENDING_COMMENTS_QUERY,
-          { after: cursor, id: review.id },
-          token
-        )
-      )?.node
-    )?.comments;
-    readPendingCommentPage(connection, bodies);
-    cursor = readPageCursor(connection, 'forward');
   }
   const comments: RemotePendingComment[] = [];
-  let before: string | null = null;
-  for (
-    let page = 0;
-    page < MAX_PAGES && comments.length < bodies.size;
-    page += 1
-  ) {
-    const threads = asRecord(
-      asRecord(
+  if (bodies.size > 0) {
+    await walkGraphQLConnection({
+      direction: 'backward',
+      maxPages: MAX_PAGES,
+      onPage: (threads) => {
+        const nodes = asRecord(threads)?.nodes;
+        for (const thread of Array.isArray(nodes) ? nodes : []) {
+          comments.push(...readPendingThreadComments(thread, bodies));
+        }
+        return comments.length < bodies.size;
+      },
+      query: REVIEW_THREADS_QUERY,
+      readConnection: (data) =>
         asRecord(
-          asRecord(
-            await sendGitHubGraphQL(
-              REVIEW_THREADS_QUERY,
-              { ...pull, before },
-              token
-            )
-          )?.repository
-        )?.pullRequest
-      )?.reviewThreads
-    );
-    const nodes = Array.isArray(threads?.nodes) ? threads.nodes : [];
-    for (const thread of nodes) {
-      comments.push(...readPendingThreadComments(thread, bodies));
-    }
-    before = readPageCursor(threads, 'backward');
-    if (before == null) {
-      break;
-    }
+          asRecord(asRecord(asRecord(data)?.repository)?.pullRequest)
+            ?.reviewThreads
+        ),
+      token,
+      variables: { ...pull },
+    });
   }
   if (comments.length < bodies.size) {
     throw incompletePendingReviewError(bodies.size - comments.length);

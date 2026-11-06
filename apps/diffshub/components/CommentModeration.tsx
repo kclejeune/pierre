@@ -1,11 +1,9 @@
 'use client';
 
-import { IconPencil, IconTrash } from '@pierre/icons';
 import { useState } from 'react';
 
 import { CommentComposer } from './CommentComposer';
 import { InlineConfirm } from './InlineConfirm';
-import { Button } from '@/components/Button';
 
 // The own-comment edit/delete state machine shared by the sidebar's
 // Conversation rows and the inline diff thread comments: an edit-mode toggle,
@@ -53,46 +51,6 @@ export function useCommentModeration(
       setIsEditing(true);
     },
   };
-}
-
-// The pencil/trash icon pair. `onBeginEdit` lets a site run extra work before
-// the composer opens (e.g. expanding a collapsed discussion row).
-export function CommentModerationButtons({
-  moderation,
-  onBeginEdit,
-}: {
-  moderation: CommentModeration;
-  onBeginEdit?(): void;
-}) {
-  return (
-    <>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-label="Edit comment"
-        title="Edit comment"
-        disabled={moderation.isDeleting}
-        onClick={() => {
-          onBeginEdit?.();
-          moderation.startEditing();
-        }}
-      >
-        <IconPencil size={12} />
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-label="Delete comment"
-        title="Delete comment"
-        disabled={moderation.isDeleting}
-        onClick={moderation.requestDelete}
-      >
-        <IconTrash size={12} />
-      </Button>
-    </>
-  );
 }
 
 // The comment body swapped into a save-mode composer while editing.

@@ -1,7 +1,7 @@
 'use client';
 
 import type { AnnotationSide } from '@pierre/diffs';
-import { IconArrowUpRight, IconConvoFill, IconPlus } from '@pierre/icons';
+import { IconCheck, IconConvoFill, IconPlus } from '@pierre/icons';
 import {
   createContext,
   type HTMLAttributes,
@@ -16,17 +16,16 @@ import {
   useState,
 } from 'react';
 
+import { CommentHeaderActions, CommentTimestamp } from './CommentActions';
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { CommentComposer } from './CommentComposer';
 import {
   CommentDeleteConfirm,
   CommentEditComposer,
-  CommentModerationButtons,
   useCommentModeration,
 } from './CommentModeration';
-import { CommentReactions } from './CommentReactions';
+import { ReactionChipList, useCommentReactions } from './CommentReactions';
 import { MarkdownContent, RawMarkdownFallback } from './MarkdownContent';
-import { RelativeTime } from './RelativeTime';
 import { useGitHubUser } from './useGitHubUser';
 import { cn } from '@/lib/cn';
 import { createCommentSidebarPreview } from '@/lib/commentSidebarPreview';
@@ -312,9 +311,12 @@ function CommentRow({
       )}
       onClick={(event) => {
         const target = event.target as HTMLElement;
+        // Clicks inside portaled menus (reaction picker, comment actions)
+        // bubble here through React even though they sit outside the row.
         if (
-          target !== event.currentTarget &&
-          target.closest('a, button, form') != null
+          !event.currentTarget.contains(target) ||
+          (target !== event.currentTarget &&
+            target.closest('a, button, form') != null)
         ) {
           return;
         }
@@ -338,10 +340,11 @@ function CommentRow({
 // A PR-level conversation entry. There is no diff anchor to scroll to, so the
 // row's default click expands the body in place — collapsed rows clamp the
 // rendered markdown to a few lines, expanded rows show all of it — so
-// reading the comment stays in-app. The upstream GitHub permalink is an
-// explicit arrow affordance, matching the embedded thread cards, rather than
-// the whole-row default. Signed-in authors get edit/delete on their own
-// conversation comments (never on review summaries — see DiscussionActions).
+// reading the comment stays in-app. The header matches the inline thread
+// cards (CommentActions): the timestamp links to GitHub, and the Author
+// badge, reaction picker, and overflow menu sit at its right. Signed-in
+// authors get edit/delete in that menu on their own conversation comments
+// (never on review summaries — see DiscussionActions).
 function DiscussionRow({
   actions,
   comment,
@@ -360,6 +363,12 @@ function DiscussionRow({
     comment.kind === 'comment' &&
     githubUser?.login === comment.author.login;
   const preview = createCommentSidebarPreview(comment.body);
+  const reactions = useCommentReactions({
+    canReact:
+      actions?.canWrite === true && comment.reactionsViewerUnknown !== true,
+    nodeId: comment.nodeId,
+    reactions: comment.reactions,
+  });
 
   const toggleExpanded = () => {
     if (!moderation.isEditing && !moderation.isConfirmingDelete) {
@@ -368,45 +377,33 @@ function DiscussionRow({
   };
 
   return (
-    <CommentRow
-      aria-expanded={expanded}
-      className="group/discussion"
-      onActivate={toggleExpanded}
-    >
+    <CommentRow aria-expanded={expanded} onActivate={toggleExpanded}>
       <CommentAuthorAvatar author={comment.author} className="size-5" />
       <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 select-text">
-        <div className="text-muted-foreground flex w-full flex-wrap items-center gap-x-1">
+        <div className="text-muted-foreground flex min-h-6 w-full flex-wrap items-center gap-x-1">
           <span className="text-foreground font-medium">
             @{comment.author.login}
           </span>
           <span className={cn(getDiscussionVerbClassName(comment))}>
             {getDiscussionVerb(comment)}
           </span>
-          <span>
-            · <RelativeTime iso={comment.createdAt} />
-          </span>
-          <span className="ml-auto flex shrink-0 items-center gap-1">
-            {canModify && !moderation.isEditing && (
-              <span className="flex gap-1 opacity-0 transition-opacity duration-100 group-focus-within/discussion:opacity-100 group-hover/discussion:opacity-100">
-                <CommentModerationButtons
-                  moderation={moderation}
-                  onBeginEdit={() => setExpanded(true)}
-                />
-              </span>
-            )}
-            {comment.htmlUrl != null && (
-              <a
-                className="hover:text-foreground"
-                aria-label="Open comment on GitHub"
-                title="Open comment on GitHub"
-                href={comment.htmlUrl}
-                rel="noreferrer noopener"
-                target="_blank"
-              >
-                <IconArrowUpRight size={14} />
-              </a>
-            )}
-          </span>
+          <span aria-hidden>·</span>
+          <CommentTimestamp
+            className="text-[length:inherit]"
+            htmlUrl={comment.htmlUrl}
+            iso={comment.createdAt}
+          />
+          <CommentHeaderActions
+            authorLogin={comment.author.login}
+            editing={moderation.isEditing}
+            menu={{
+              canModify,
+              htmlUrl: comment.htmlUrl,
+              moderation,
+              onBeginEdit: () => setExpanded(true),
+            }}
+            reactions={reactions}
+          />
         </div>
         {moderation.isEditing && actions != null ? (
           <div className="w-full pt-1">
@@ -430,14 +427,7 @@ function DiscussionRow({
           )
         )}
         {!moderation.isEditing && (
-          <CommentReactions
-            canReact={
-              actions?.canWrite === true &&
-              comment.reactionsViewerUnknown !== true
-            }
-            nodeId={comment.nodeId}
-            reactions={comment.reactions}
-          />
+          <ReactionChipList className="mt-1" state={reactions} />
         )}
         {moderation.isConfirmingDelete && actions != null && (
           <div className="w-full pt-1">
@@ -631,7 +621,7 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
                     className="size-5"
                   />
                   <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 select-text">
-                    <div className="text-muted-foreground flex flex-wrap gap-x-1">
+                    <div className="text-muted-foreground flex w-full flex-wrap items-center gap-x-1">
                       <span className="text-foreground font-medium">
                         @{comment.author.login}
                       </span>
@@ -651,6 +641,12 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
                           comment.lineType
                         )}
                       </span>
+                      {comment.resolved === true && (
+                        <span className="ml-auto inline-flex items-center gap-1 text-[12px]">
+                          <IconCheck size={12} aria-hidden />
+                          Resolved
+                        </span>
+                      )}
                     </div>
                     <DeferredMarkdown
                       className={COLLAPSED_SIDEBAR_MARKDOWN_CLASS}

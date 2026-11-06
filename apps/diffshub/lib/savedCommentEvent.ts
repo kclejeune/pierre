@@ -39,6 +39,7 @@ export function createThreadSavedCommentEvent(
     participants,
     range: thread.range,
     replyCount: thread.comments.length - 1,
+    ...(thread.state?.isResolved === true ? { resolved: true as const } : {}),
     side: thread.side,
   };
 }

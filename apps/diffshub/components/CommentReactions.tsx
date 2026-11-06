@@ -34,17 +34,24 @@ interface CommentReactionsProps {
   onChange?(reactions: readonly CommentReaction[]): void;
 }
 
-// A comment's emoji reactions: a chip per reaction with its count
-// (highlighted when one is the viewer's; clicking toggles it) and a picker
-// for adding one. Changes show immediately and roll back if GitHub refuses.
-// One toggle is sent at a time: GitHub can apply concurrent add and remove
-// requests in either order, and a rollback would undo a later toggle.
-export function CommentReactions({
+// Reaction state for one comment: the current tallies (optimistic while a
+// toggle is in flight) and a toggle that rolls back if GitHub refuses. One
+// toggle is sent at a time: GitHub can apply concurrent add and remove
+// requests in either order, and a rollback would undo a later toggle. Split
+// from the rendering so a layout can place the chips and the picker apart.
+export interface CommentReactionsState {
+  interactive: boolean;
+  isSaving: boolean;
+  reactions: readonly CommentReaction[];
+  toggle(content: ReactionContent): void;
+}
+
+export function useCommentReactions({
   canReact,
   nodeId,
   reactions: reactionsProp,
   onChange,
-}: CommentReactionsProps) {
+}: CommentReactionsProps): CommentReactionsState {
   const [reactions, setReactions] = useState<readonly CommentReaction[]>(
     reactionsProp ?? []
   );
@@ -54,7 +61,6 @@ export function CommentReactions({
     setSeenProp(reactionsProp);
     setReactions(reactionsProp ?? []);
   }
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const interactive = canReact && nodeId != null;
 
@@ -77,16 +83,27 @@ export function CommentReactions({
       .finally(() => setIsSaving(false));
   };
 
-  if (reactions.length === 0 && !interactive) {
+  return { interactive, isSaving, reactions, toggle };
+}
+
+// A comment's reaction chips in a wrapping row; renders nothing when the
+// comment has no reactions.
+export function ReactionChipList({
+  className,
+  state,
+}: {
+  className?: string;
+  state: CommentReactionsState;
+}) {
+  if (state.reactions.length === 0) {
     return null;
   }
-
   return (
     <div
-      aria-busy={isSaving}
-      className="mt-1 flex flex-wrap items-center gap-1"
+      aria-busy={state.isSaving}
+      className={cn('flex flex-wrap items-center gap-1', className)}
     >
-      {reactions.map((reaction) => {
+      {state.reactions.map((reaction) => {
         const { emoji, label } = getReactionDefinition(reaction.content);
         return (
           <button
@@ -94,60 +111,60 @@ export function CommentReactions({
             type="button"
             aria-label={`${label}: ${reaction.count}`}
             aria-pressed={reaction.viewerHasReacted}
-            disabled={!interactive}
+            disabled={!state.interactive}
             title={label}
             className={cn(
               'flex h-6 items-center gap-1 rounded-full border px-2 text-[12px] tabular-nums transition-colors',
               reaction.viewerHasReacted
                 ? 'border-blue-500/60 bg-blue-500/10 text-blue-600 dark:text-blue-300'
                 : 'text-muted-foreground border-[var(--diffshub-annotation-border,var(--color-border))]',
-              interactive && 'hover:border-foreground/30 cursor-pointer'
+              state.interactive && 'hover:border-foreground/30 cursor-pointer'
             )}
-            onClick={() => toggle(reaction.content)}
+            onClick={() => state.toggle(reaction.content)}
           >
             <span aria-hidden>{emoji}</span>
             {reaction.count}
           </button>
         );
       })}
-      {interactive && (
-        <DropdownMenu
-          modal={false}
-          open={pickerOpen}
-          onOpenChange={setPickerOpen}
-        >
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Add reaction"
-              title="Add reaction"
-              className={cn(
-                'text-muted-foreground size-6 rounded-full',
-                reactions.length === 0 &&
-                  'opacity-0 group-focus-within/comment:opacity-100 group-hover/comment:opacity-100 group-focus-within/discussion:opacity-100 group-hover/discussion:opacity-100 data-[state=open]:opacity-100'
-              )}
-            >
-              <IconEmojiSmile size={14} />
-            </Button>
-          </DropdownMenuTrigger>
-          <ReactionPicker
-            reactions={reactions}
-            onPick={(content) => {
-              setPickerOpen(false);
-              toggle(content);
-            }}
-          />
-        </DropdownMenu>
-      )}
     </div>
   );
 }
 
+// The smiley button that opens the reaction picker; callers gate it on
+// `state.interactive`. The picker body mounts only while open so closed
+// pickers don't each resolve the dropdown chrome theme.
+export function AddReactionButton({ state }: { state: CommentReactionsState }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  return (
+    <DropdownMenu modal={false} open={pickerOpen} onOpenChange={setPickerOpen}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Add reaction"
+          title="Add reaction"
+          className="text-muted-foreground size-6 rounded-full"
+        >
+          <IconEmojiSmile size={14} />
+        </Button>
+      </DropdownMenuTrigger>
+      {pickerOpen && (
+        <ReactionPicker
+          reactions={state.reactions}
+          onPick={(content) => {
+            setPickerOpen(false);
+            state.toggle(content);
+          }}
+        />
+      )}
+    </DropdownMenu>
+  );
+}
+
 // The picker menu's body. Its own component so the chrome-theme hook runs
-// only while a picker is open (Radix mounts menu content on open), not once
-// per rendered comment.
+// only while a picker is open, not once per rendered comment.
 function ReactionPicker({
   onPick,
   reactions,

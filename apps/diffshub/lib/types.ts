@@ -130,6 +130,21 @@ export interface PullReviewThread {
   range: SelectedLineRange;
   rootId: number;
   side: AnnotationSide;
+  // Resolution status from GitHub's GraphQL API. Absent when it couldn't be
+  // read (anonymous requests, an instance without the fields), in which case
+  // the thread renders open with no resolve control.
+  state?: PullReviewThreadState;
+}
+
+// A review thread's resolution status and what the viewer may do about it.
+// `nodeId` is the PullRequestReviewThread's GraphQL id, the subject of the
+// resolve/unresolve mutations.
+export interface PullReviewThreadState {
+  isResolved: boolean;
+  nodeId: string;
+  resolvedBy: string | null;
+  viewerCanResolve: boolean;
+  viewerCanUnresolve: boolean;
 }
 
 // Annotation payload for a GitHub-backed review thread rendered in the diff.
@@ -184,6 +199,8 @@ export interface DiffsHubSavedCommentEvent {
   participants: CommentAuthor[];
   range: SelectedLineRange;
   replyCount: number;
+  // Set on GitHub threads marked resolved, so the sidebar can say so.
+  resolved?: true;
   side: AnnotationSide;
 }
 
@@ -202,6 +219,7 @@ export interface DiffsHubSavedCommentEntry {
   participants: CommentAuthor[];
   range: SelectedLineRange;
   replyCount: number;
+  resolved?: true;
   side: AnnotationSide;
 }
 

@@ -1,9 +1,11 @@
 'use client';
 
 import type { CodeViewHandle } from '@pierre/diffs/react';
-import { type RefObject, useEffect, useRef, useState } from 'react';
+import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 
+import { fetchReviewThreadStates } from './reviewThreadsClient';
 import { applyViewerAnnotations } from '@/lib/applyViewerAnnotations';
+import { isThreadAnnotation } from '@/lib/isThreadAnnotation';
 import {
   fetchPullComments,
   type PullRequestRef,
@@ -12,12 +14,17 @@ import {
   createThreadAnnotation,
   groupPullReviewThreads,
 } from '@/lib/pullReviewThreads';
+import {
+  applyReviewThreadStates,
+  isSameReviewThreadState,
+} from '@/lib/reviewThreadState';
 import { createThreadSavedCommentEvent } from '@/lib/savedCommentEvent';
 import type {
   CommentMetadata,
   DiffsHubSavedCommentEvent,
   PullDiscussionComment,
   PullReviewThread,
+  PullReviewThreadState,
   ViewerLoadState,
 } from '@/lib/types';
 
@@ -46,8 +53,11 @@ interface UsePullReviewThreadsOptions {
 
 // Loads the pull request's review comments, groups them into threads, and
 // injects each thread as an annotation on the matching file item once the
-// viewer has finished loading. Threads apply exactly once per viewer
-// generation (viewerKey); a reload rebuilds the items and re-applies.
+// viewer has finished loading. Threads' resolution status loads separately
+// (GraphQL, token only) so the comments don't wait on it; when it arrives,
+// or changes on a refetch, it is merged into cards already in the diff.
+// Re-applies after every fetch: already-injected threads are deduped by key,
+// so only new threads and changed states land.
 export function usePullReviewThreads({
   loadState,
   onDiscussionLoaded,
@@ -62,7 +72,13 @@ export function usePullReviewThreads({
   viewerRef,
 }: UsePullReviewThreadsOptions): void {
   const [threads, setThreads] = useState<PullReviewThread[] | null>(null);
-  const appliedViewerKeyRef = useRef<number | null>(null);
+  const [threadStates, setThreadStates] = useState<ReadonlyMap<
+    number,
+    PullReviewThreadState
+  > | null>(null);
+  // The thread list last injected, so the apply effect runs once per change
+  // to it rather than on every viewer tick.
+  const appliedThreadsRef = useRef<PullReviewThread[] | null>(null);
   const onThreadAppliedRef = useRef(onThreadApplied);
   onThreadAppliedRef.current = onThreadApplied;
   const onDiscussionLoadedRef = useRef(onDiscussionLoaded);
@@ -70,7 +86,8 @@ export function usePullReviewThreads({
 
   useEffect(() => {
     setThreads(null);
-    appliedViewerKeyRef.current = null;
+    setThreadStates(null);
+    appliedThreadsRef.current = null;
     if (pullRequest == null || !tokenHydrated) {
       return;
     }
@@ -88,38 +105,88 @@ export function usePullReviewThreads({
         // review comments (e.g. anonymous rate-limited requests).
       }
     );
+    if (token !== '') {
+      void fetchReviewThreadStates(pullRequest, token, controller.signal).then(
+        (states) => {
+          if (!controller.signal.aborted) {
+            setThreadStates(states);
+          }
+        },
+        () => {
+          // Best-effort too: without states threads render open and
+          // unresolvable.
+        }
+      );
+    }
     return () => {
       controller.abort();
     };
     // token re-runs the fetch when the user signs in/out; viewerKey re-runs
     // it on reload so re-applied annotations are fresh; refreshTick re-runs
-    // it after a review submission. Resetting appliedViewerKeyRef above lets
-    // the apply effect run again — already-injected threads are deduped by
-    // key, so only the fresh ones land.
+    // it after a review submission.
   }, [pullRequest, refreshTick, token, tokenHydrated, viewerKey]);
+
+  const statefulThreads = useMemo(
+    () =>
+      threads == null || threadStates == null
+        ? threads
+        : applyReviewThreadStates(threads, threadStates),
+    [threadStates, threads]
+  );
 
   useEffect(() => {
     const viewer = viewerRef.current;
     if (
-      threads == null ||
-      threads.length === 0 ||
+      statefulThreads == null ||
+      statefulThreads.length === 0 ||
       pathToItemId == null ||
       viewer == null ||
       loadState !== 'ready' ||
-      appliedViewerKeyRef.current === viewerKey
+      appliedThreadsRef.current === statefulThreads
     ) {
       return;
     }
-    appliedViewerKeyRef.current = viewerKey;
+    appliedThreadsRef.current = statefulThreads;
 
-    applyViewerAnnotations(viewer, pathToItemId, threads, {
-      createAnnotation: createThreadAnnotation,
+    applyViewerAnnotations(viewer, pathToItemId, statefulThreads, {
+      // A card already in the diff keeps its comments (it may hold replies
+      // posted since this fetch) and takes the fetched state.
+      createAnnotation: (thread, fileDiff, existing) =>
+        existing != null && isThreadAnnotation(existing)
+          ? {
+              ...existing,
+              metadata: {
+                ...existing.metadata,
+                thread: { ...existing.metadata.thread, state: thread.state },
+              },
+            }
+          : createThreadAnnotation(thread, fileDiff),
       getKey: (thread) => thread.key,
       getPath: (thread) => thread.path,
-      onApplied: (fileDiff, itemId, thread) =>
+      // Only a fetched state replaces a card's; a refetch that couldn't read
+      // states leaves the ones cards already show.
+      isStale: (thread, annotation) =>
+        isThreadAnnotation(annotation) &&
+        thread.state != null &&
+        !isSameReviewThreadState(
+          thread.state,
+          annotation.metadata.thread.state
+        ),
+      onApplied: (fileDiff, itemId, _thread, annotation) =>
         onThreadAppliedRef.current(
-          createThreadSavedCommentEvent(fileDiff, itemId, thread)
+          createThreadSavedCommentEvent(
+            fileDiff,
+            itemId,
+            annotation.metadata.thread
+          )
         ),
     });
-  }, [loadState, pathToItemId, threads, viewerKey, viewerReadyTick, viewerRef]);
+  }, [
+    loadState,
+    pathToItemId,
+    statefulThreads,
+    viewerKey,
+    viewerReadyTick,
+    viewerRef,
+  ]);
 }

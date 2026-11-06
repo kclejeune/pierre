@@ -19,7 +19,12 @@ import {
 } from '@pierre/diffs';
 import type { EditorChangeEvent, EditorType } from '@pierre/diffs/edit';
 import { type CodeViewHandle, useStableCallback } from '@pierre/diffs/react';
-import { IconBook, IconChevronSm, IconPencil } from '@pierre/icons';
+import {
+  IconBook,
+  IconChevronSm,
+  IconComment,
+  IconPencil,
+} from '@pierre/icons';
 import {
   memo,
   type RefObject,
@@ -64,9 +69,12 @@ import {
   type PullRequestRef,
 } from '@/lib/pullCommentsClient';
 import {
+  createFileCommentRange,
   createPullReviewThread,
   createThreadAnnotation,
   FILE_COMMENT_LINE,
+  getCommentAnnotationSide,
+  isFileCommentRange,
 } from '@/lib/pullReviewThreads';
 import type { CommentReaction } from '@/lib/reactions';
 import {
@@ -312,10 +320,11 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
     }
   );
 
+  // Opens a draft on `range`: lines, or the whole file for a file-level
+  // range (lib/pullReviewThreads createFileCommentRange).
   const handleCreateDraftComment = useStableCallback(
     (range: SelectedLineRange, itemId: string) => {
-      const side = range.endSide ?? range.side;
-      if (side == null) {
+      if ((range.endSide ?? range.side) == null) {
         return;
       }
 
@@ -324,13 +333,16 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       if (viewer == null) {
         return;
       }
-      // Pull-request comments end up on GitHub (directly or via the batched
-      // review), which rejects anchors outside the diff's hunks.
       const targetItem = viewer.getItem(itemId);
+      if (targetItem == null || !isDiffItem(targetItem)) {
+        return;
+      }
+      const side = getCommentAnnotationSide(range, targetItem.fileDiff);
+      // Pull-request comments end up on GitHub (directly or via the batched
+      // review), which rejects line anchors outside the diff's hunks.
       if (
         pullRequest != null &&
-        targetItem != null &&
-        isDiffItem(targetItem) &&
+        !isFileCommentRange(range) &&
         !isRangeInsideSingleHunk(targetItem.fileDiff, range)
       ) {
         toast(
@@ -375,6 +387,10 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
           (annotation) => !isDraftMetadata(annotation.metadata)
         );
         item.annotations = [...nonDraftAnnotations, draftAnnotation];
+        // A collapsed file (Viewed, or matched by a collapse pattern) renders
+        // no annotations, so the composer would stay hidden; the header's
+        // "Comment on this file" is reachable while collapsed.
+        item.collapsed = false;
         return true;
       });
 
@@ -1193,6 +1209,19 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
               <IconPencil aria-hidden="true" className="size-4" />
             </button>
           )}
+          <button
+            type="button"
+            aria-label="Comment on this file"
+            title="Comment on this file"
+            className="text-muted-foreground hover:bg-muted hover:text-foreground inline-flex size-6 cursor-pointer items-center justify-center rounded-md transition"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              handleStartDraftComment(createFileCommentRange(), item.id);
+            }}
+          >
+            <IconComment aria-hidden="true" className="size-4" />
+          </button>
           {isMarkdownFileName(item.fileDiff.name) && (
             <button
               type="button"
@@ -1279,6 +1308,18 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
     editSession.isFileLocked(itemId)
   );
 
+  // Opens a draft from the diff (gutter or the header's "Comment on this
+  // file"), unless the file has uncommitted edits that would shift its lines.
+  const handleStartDraftComment = useStableCallback(
+    (range: SelectedLineRange, itemId: string) => {
+      if (isEditLocked(itemId)) {
+        toast('Commit or discard your edits before commenting on this file.');
+        return;
+      }
+      handleCreateDraftComment(range, itemId);
+    }
+  );
+
   // NOTE(amadeus): For some insane reason, the react compiler did not know how
   // to properly memoize this, so we pulled it into a `useMemo` for safety...
   const options: CodeViewOptions<CommentMetadata, undefined> = useMemo(
@@ -1305,13 +1346,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
           if (context.item.type !== 'diff') {
             return;
           }
-          if (isEditLocked(context.item.id)) {
-            toast(
-              'Commit or discard your edits before commenting on this file.'
-            );
-            return;
-          }
-          handleCreateDraftComment(range, context.item.id);
+          handleStartDraftComment(range, context.item.id);
         },
         onLineSelectionEnd(range, context) {
           handleLineSelectionEnd(range, context.item);
@@ -1344,9 +1379,8 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       hasSymbolNavigation,
       diffIndicators,
       diffStyle,
-      handleCreateDraftComment,
       handleLineSelectionEnd,
-      isEditLocked,
+      handleStartDraftComment,
       lineNumbers,
       loadDiffFiles,
       overflow,

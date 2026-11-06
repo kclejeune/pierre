@@ -18,7 +18,11 @@ import {
 } from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseJSONBody } from '@/lib/parseJSONBody';
-import { isGitHubDiffSide, readCommentAnchor } from '@/lib/pullReviewThreads';
+import {
+  isFileCommentAnchor,
+  isGitHubDiffSide,
+  readCommentAnchor,
+} from '@/lib/pullReviewThreads';
 import {
   type CommentReaction,
   readReactionGroups,
@@ -294,7 +298,10 @@ async function handlePOST(request: NextRequest) {
     const anchor = parseCommentAnchor(payload ?? {});
     if (anchor == null) {
       return createJSONResponse(
-        { error: 'path, line, and side are required for a new comment.' },
+        {
+          error:
+            "path, line, and side (or subjectType 'file') are required for a new comment.",
+        },
         { status: 400 }
       );
     }
@@ -535,15 +542,12 @@ function normalizeReviewDraftComments(
 function parseCommentAnchor(
   record: Record<string, unknown>
 ): Record<string, unknown> | null {
-  const anchor = readCommentAnchor({
-    line: record.line,
-    path: record.path,
-    side: record.side,
-    startLine: record.startLine,
-    startSide: record.startSide,
-  });
+  const anchor = readCommentAnchor(record);
   if (anchor == null) {
     return null;
+  }
+  if (isFileCommentAnchor(anchor)) {
+    return { path: anchor.path, subject_type: 'file' };
   }
   const { line, path, side, startLine, startSide } = anchor;
   return startLine == null

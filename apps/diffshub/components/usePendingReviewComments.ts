@@ -41,8 +41,9 @@ import {
   submitPullReview,
 } from '@/lib/pullCommentsClient';
 import {
+  type CommentAnchor,
   getCommentAnnotationSide,
-  type GitHubCommentAnchor,
+  isFileCommentAnchor,
 } from '@/lib/pullReviewThreads';
 import {
   chooseReviewCommit,
@@ -562,12 +563,29 @@ export function usePendingReviewComments({
             describeStaleReviewEntries(commitChoice.staleEntries)
           );
         }
+        // That call takes line comments only; file-level drafts reach
+        // GitHub through the pending review, so their failed saves are
+        // retried for the next attempt.
         const comments: PullReviewDraftComment[] = [];
+        const fileLevel: PendingReviewComment[] = [];
         for (const entry of entries) {
           const anchor = createCommentAnchor(entry.path, entry.range);
-          if (anchor != null) {
+          if (anchor == null) {
+            continue;
+          }
+          if (isFileCommentAnchor(anchor)) {
+            fileLevel.push(entry);
+          } else {
             comments.push({ ...anchor, body: entry.message });
           }
+        }
+        if (fileLevel.length > 0) {
+          for (const entry of fileLevel) {
+            void saveDraft(entry.key);
+          }
+          throw new Error(
+            "File-level draft comments couldn't be saved to your pending review on GitHub yet, so the review wasn't submitted. Try again in a moment."
+          );
         }
         await submitPullReview(
           pullRequest,
@@ -674,7 +692,7 @@ function needsSave(entry: PendingReviewComment): boolean {
 function getDraftTarget(
   entry: PendingReviewComment,
   review: { commitId: string } | null | undefined
-): { anchor: GitHubCommentAnchor; commitId: string } | 'stale' | 'unsaveable' {
+): { anchor: CommentAnchor; commitId: string } | 'stale' | 'unsaveable' {
   if (
     entry.commitId != null &&
     review != null &&

@@ -16,13 +16,16 @@ import {
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseJSONBody } from '@/lib/parseJSONBody';
 import type {
+  PendingDraftComment,
   PendingReviewPayload,
-  RemotePendingAnchor,
   RemotePendingComment,
   RemotePendingReview,
 } from '@/lib/pendingReview';
-import type { PullReviewDraftComment } from '@/lib/pullCommentsClient';
-import { readCommentAnchor } from '@/lib/pullReviewThreads';
+import {
+  type CommentAnchor,
+  isFileCommentAnchor,
+  readCommentAnchor,
+} from '@/lib/pullReviewThreads';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 import { asRecord } from '@/lib/untypedJson';
@@ -363,19 +366,15 @@ async function loadPendingReview(
 // which is ignored.
 function readThreadAnchor(
   thread: Record<string, unknown> | null
-): RemotePendingAnchor | null {
-  if (thread?.subjectType !== 'FILE') {
-    return readCommentAnchor({
-      line: thread?.line ?? thread?.originalLine,
-      path: thread?.path,
-      side: thread?.diffSide,
-      startLine: thread?.startLine ?? thread?.originalStartLine,
-      startSide: thread?.startDiffSide,
-    });
-  }
-  return typeof thread.path === 'string' && thread.path !== ''
-    ? { path: thread.path, subjectType: 'file' }
-    : null;
+): CommentAnchor | null {
+  return readCommentAnchor({
+    line: thread?.line ?? thread?.originalLine,
+    path: thread?.path,
+    side: thread?.diffSide,
+    startLine: thread?.startLine ?? thread?.originalStartLine,
+    startSide: thread?.startDiffSide,
+    subjectType: thread?.subjectType === 'FILE' ? 'file' : undefined,
+  });
 }
 
 // A review thread's comments that are among the pending review's
@@ -415,10 +414,11 @@ const ADD_THREAD_MUTATION = `
     $reviewId: ID!
     $path: String!
     $body: String!
-    $line: Int!
-    $side: DiffSide!
+    $line: Int
+    $side: DiffSide
     $startLine: Int
     $startSide: DiffSide
+    $subjectType: PullRequestReviewThreadSubjectType
   ) {
     addPullRequestReviewThread(
       input: {
@@ -429,6 +429,7 @@ const ADD_THREAD_MUTATION = `
         side: $side
         startLine: $startLine
         startSide: $startSide
+        subjectType: $subjectType
       }
     ) {
       thread { comments(first: 1) { nodes { id } } }
@@ -489,7 +490,7 @@ async function addComment(
     return createJSONResponse(
       {
         error:
-          'A draft needs commitId and {path, line, side, body} (startLine and startSide optional).',
+          "A draft needs commitId and {path, line, side, body} (startLine and startSide optional), or {path, subjectType: 'file', body}.",
       },
       { status: 400 }
     );
@@ -502,7 +503,9 @@ async function addComment(
       : await findOrStartReview(pull, token, commitId);
   const added = await sendGitHubGraphQL(
     ADD_THREAD_MUTATION,
-    { ...anchor, reviewId },
+    isFileCommentAnchor(anchor)
+      ? { body: anchor.body, path: anchor.path, reviewId, subjectType: 'FILE' }
+      : { ...anchor, reviewId },
     token
   );
   const commentId = readStringPath(added, [
@@ -609,14 +612,8 @@ async function submitReview(
 // The GraphQL variables for a draft's anchor and text.
 function readAnchor(
   record: Record<string, unknown>
-): PullReviewDraftComment | null {
-  const anchor = readCommentAnchor({
-    line: record.line,
-    path: record.path,
-    side: record.side,
-    startLine: record.startLine,
-    startSide: record.startSide,
-  });
+): PendingDraftComment | null {
+  const anchor = readCommentAnchor(record);
   return anchor == null || readNonEmptyString(record.body) == null
     ? null
     : { ...anchor, body: record.body as string };

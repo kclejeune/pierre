@@ -5,6 +5,7 @@ import {
   storedGitHubTokenHeaders,
 } from './githubSession';
 import type {
+  PendingDraftComment,
   PendingReviewPayload,
   RemotePendingReview,
 } from '@/lib/pendingReview';
@@ -12,7 +13,6 @@ import {
   postPullJSON,
   pullParams,
   type PullRequestRef,
-  type PullReviewDraftComment,
   type PullReviewEvent,
   requestJSON,
 } from '@/lib/pullCommentsClient';
@@ -50,7 +50,7 @@ export async function addPendingComment(
   pull: PullRequestRef,
   commitId: string,
   reviewId: string | undefined,
-  comment: PullReviewDraftComment
+  comment: PendingDraftComment
 ): Promise<{ commentId: string; reviewId: string }> {
   const payload = (await postAction(pull, 'add', {
     comment,

@@ -2,7 +2,7 @@ import type {
   RemotePendingComment,
   RemotePendingReview,
 } from './pendingReview';
-import { createFileCommentRange, getAnchorRange } from './pullReviewThreads';
+import { getAnchorRange } from './pullReviewThreads';
 import type { CommentAuthor, PendingReviewComment } from './types';
 
 // Reconciles this browser's copy of a pending review batch with the viewer's
@@ -69,10 +69,7 @@ function remoteDraftEntry(
     key: remoteDraftKey(comment.id),
     message: comment.body,
     path: comment.path,
-    range:
-      'subjectType' in comment
-        ? createFileCommentRange()
-        : getAnchorRange(comment),
+    range: getAnchorRange(comment),
     remoteId: comment.id,
     syncedMessage: comment.body,
   };

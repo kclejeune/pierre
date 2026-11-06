@@ -7,6 +7,7 @@ import { useThemeController } from '@pierre/theming/react';
 import { useRouter } from 'next/navigation';
 import {
   type ReactNode,
+  type Ref,
   useCallback,
   useEffect,
   useMemo,
@@ -36,6 +37,7 @@ import {
 } from './PullConflictResolver';
 import { PullDetailsControl } from './PullDetailsControl';
 import { ReviewSubmitControl } from './ReviewSubmitControl';
+import { SidebarResizeHandle } from './SidebarResizeHandle';
 import { ThemeSourceProvider } from './ThemeSourceProvider';
 import { useDiffSearchController } from './useDiffSearchController';
 import { useDiffSearchUI } from './useDiffSearchUI';
@@ -240,6 +242,8 @@ function ReviewUIInner({
     themeController.setThemeNameForScheme('dark', name);
   }, []);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // The review grid, whose sidebar column SidebarResizeHandle resizes.
+  const gridRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<CodeViewHandle<CommentMetadata, undefined> | null>(
     null
   );
@@ -968,7 +972,7 @@ function ReviewUIInner({
 
   return (
     <PullAuthorContext value={pullAuthorLogin ?? null}>
-      <ReviewGrid>
+      <ReviewGrid ref={gridRef}>
         <DiffsHubHeader
           className="[grid-area:header]"
           collapseMode={collapseMode}
@@ -1070,6 +1074,7 @@ function ReviewUIInner({
               stressTest={stressTest}
               onSelectItem={handleSelectTreeItem}
             />
+            <SidebarResizeHandle gridRef={gridRef} />
             <DiffsHubViewer
               key={viewerKey}
               className="[grid-area:viewer]"
@@ -1145,11 +1150,17 @@ function ReviewUIInner({
 
 interface ReviewGridProps {
   children: ReactNode;
+  ref?: Ref<HTMLDivElement>;
 }
 
-function ReviewGrid({ children }: ReviewGridProps) {
+// The sidebar column's width comes from --diffshub-sidebar-width (default
+// 320px), which SidebarResizeHandle sets on this element.
+function ReviewGrid({ children, ref }: ReviewGridProps) {
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] overflow-hidden overscroll-contain contain-strict [grid-template-areas:'header''viewer'] md:grid-cols-[320px_minmax(0,1fr)] md:[grid-template-areas:'header_header''tree_viewer']">
+    <div
+      ref={ref}
+      className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] overflow-hidden overscroll-contain contain-strict [grid-template-areas:'header''viewer'] md:grid-cols-[var(--diffshub-sidebar-width,320px)_minmax(0,1fr)] md:[grid-template-areas:'header_header''tree_viewer']"
+    >
       {children}
     </div>
   );

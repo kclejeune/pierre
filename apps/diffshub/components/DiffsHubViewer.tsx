@@ -76,7 +76,6 @@ import {
   createFileCommentRange,
   createPullReviewThread,
   createThreadAnnotation,
-  FILE_COMMENT_LINE,
   getCommentAnnotationSide,
   isFileCommentRange,
 } from '@/lib/pullReviewThreads';
@@ -102,13 +101,16 @@ import type {
   ThreadCommentMetadata,
 } from '@/lib/types';
 
-const EMPTY_DOC_RAIL_COMMENTS: DiffLineAnnotation<CommentMetadata>[] = [];
+const EMPTY_DOC_COMMENTS: DiffLineAnnotation<CommentMetadata>[] = [];
 
-// The single predicate for both halves of the doc-rail partition: comments it
-// matches render in the rendered document's margin rail while the doc is
-// open, and are suppressed at their diff lines. Keeping one predicate ensures
-// no annotation is ever shown twice or silently dropped.
-function isDocRailComment(
+// The single predicate for both halves of the doc-comment partition: comments it
+// matches render inside the rendered document while it is open (line
+// comments in its margin rail, file-level comments in a block above its
+// body), and are suppressed at their diff lines. Keeping one predicate
+// ensures no annotation is ever shown twice or silently dropped. File-level
+// comments must be included: they share the doc's line-0 slot, where the
+// library would otherwise place them below the entire document.
+function isDocOwnedComment(
   annotation:
     | DiffLineAnnotation<CommentMetadata>
     | LineAnnotation<CommentMetadata>,
@@ -117,8 +119,6 @@ function isDocRailComment(
   return (
     isDiffAnnotation<CommentMetadata>(annotation) &&
     annotation.metadata.kind !== 'doc' &&
-    // File-level comments keep their place beside the document.
-    annotation.lineNumber !== FILE_COMMENT_LINE &&
     annotation.side === getDocAnnotationSide(item.fileDiff)
   );
 }
@@ -1174,29 +1174,29 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
     }
   );
 
-  // Returns the comments that belong in an item's doc margin rail, cached by
-  // the annotations array's identity so the memoized doc component sees the
-  // same array across unrelated re-renders.
-  const docRailCommentsCacheRef = useRef(
+  // Returns the comments that render inside an item's rendered document,
+  // cached by the annotations array's identity so the memoized doc component
+  // sees the same array across unrelated re-renders.
+  const docCommentsCacheRef = useRef(
     new WeakMap<
       DiffLineAnnotation<CommentMetadata>[],
       DiffLineAnnotation<CommentMetadata>[]
     >()
   );
-  const getDocRailComments = (
+  const getDocComments = (
     item: CodeViewDiffItem<CommentMetadata>
   ): DiffLineAnnotation<CommentMetadata>[] => {
     const { annotations } = item;
     if (annotations == null) {
-      return EMPTY_DOC_RAIL_COMMENTS;
+      return EMPTY_DOC_COMMENTS;
     }
-    const cache = docRailCommentsCacheRef.current;
+    const cache = docCommentsCacheRef.current;
     const cached = cache.get(annotations);
     if (cached != null) {
       return cached;
     }
     const comments = annotations.filter((candidate) =>
-      isDocRailComment(candidate, item)
+      isDocOwnedComment(candidate, item)
     );
     cache.set(annotations, comments);
     return comments;
@@ -1227,16 +1227,16 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
             onCommentAtLine={handleCommentAtDocLine}
             onOpenFile={onOpenDocFile}
             sourcePath={sourcePath}
-            commentAnnotations={getDocRailComments(item)}
+            commentAnnotations={getDocComments(item)}
             renderComment={renderCommentCard}
           />
         );
       }
 
-      // While the rendered document is open, its rail's comments render there
-      // instead of at their diff lines.
+      // While the rendered document is open, the comments it owns render
+      // there instead of at their diff lines.
       if (
-        isDocRailComment(annotation, item) &&
+        isDocOwnedComment(annotation, item) &&
         hasDocAnnotation(item.annotations)
       ) {
         return null;

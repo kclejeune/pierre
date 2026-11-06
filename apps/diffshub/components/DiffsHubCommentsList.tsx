@@ -30,26 +30,51 @@ import { useGitHubUser } from './useGitHubUser';
 import { cn } from '@/lib/cn';
 import { createCommentSidebarPreview } from '@/lib/commentSidebarPreview';
 import type {
+  CommentAuthor,
   CommentLineType,
   DiffsHubSavedCommentEntry,
   DiffsHubSavedCommentItem,
   PullDiscussionComment,
 } from '@/lib/types';
 
-// Card chrome shared by the sidebar's stacked card sections. The border and
-// surface come from themed CSS variables (set on the sidebar wrapper) so
-// cards stay on-palette for mixed-light/dark themes like slack-ochin
-// (light-typed but uses a dark navy sidebar); the hardcoded fallbacks cover
-// the brief window before the Shiki theme resolves on first render.
-const CARD_BORDER_CLASS =
-  'border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]';
+// One sidebar entry. Every entry (the description, each conversation
+// comment, each review thread) is its own bordered card in a gapped stack, as
+// on GitHub's timeline, so independent comments don't read as one thread.
+// The border and surface come from themed CSS variables (set on the sidebar
+// wrapper) so cards stay on-palette for mixed-light/dark themes like
+// slack-ochin (light-typed but uses a dark navy sidebar); the hardcoded
+// fallbacks cover the brief window before the Shiki theme resolves on first
+// render.
+const CARD_CLASS =
+  'rounded-lg border border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]';
 
-// A row inside a card stack: hairline separators between rows, with the
-// stack's outer rounding echoed on the first/last rows.
-const CARD_ROW_CLASS = cn(
-  CARD_BORDER_CLASS,
-  'border-b bg-[var(--diffshub-card-bg,var(--color-card))] first:rounded-t-lg last:rounded-b-lg last:border-b-0'
-);
+// The gapped stack of cards under each section heading.
+const CARD_STACK_CLASS = 'flex flex-col gap-2';
+
+// A card's header line: the author's avatar, the who/what/when text in
+// `children`, and an optional `trailing` slot (actions, a status tag). The
+// text wraps within its own column so the trailing slot never drops below it.
+function CardHeader({
+  author,
+  children,
+  trailing,
+}: {
+  author: CommentAuthor | null;
+  children: ReactNode;
+  trailing?: ReactNode;
+}) {
+  return (
+    <div className="text-muted-foreground flex min-h-6 w-full items-center gap-2">
+      {author != null && (
+        <CommentAuthorAvatar author={author} className="size-5" />
+      )}
+      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1">
+        {children}
+      </span>
+      {trailing}
+    </div>
+  );
+}
 
 // Comment bodies in sidebar rows render as markdown at the row's 14px size,
 // with the prose spacing tightened so a one-line comment stays one line.
@@ -305,8 +330,8 @@ function CommentRow({
       // swap, so a smooth color transition on each card visibly trails the
       // rest of the UI (header, file tree, diff body) which snap instantly.
       className={cn(
-        CARD_ROW_CLASS,
-        'focus-visible:ring-ring flex w-full cursor-pointer items-start gap-2 p-3 text-left text-sm outline-none hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2',
+        CARD_CLASS,
+        'focus-visible:ring-ring flex w-full cursor-pointer flex-col items-start gap-1.5 p-3 text-left text-sm outline-none select-text hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2',
         className
       )}
       onClick={(event) => {
@@ -378,21 +403,9 @@ function DiscussionRow({
 
   return (
     <CommentRow aria-expanded={expanded} onActivate={toggleExpanded}>
-      <CommentAuthorAvatar author={comment.author} className="size-5" />
-      <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 select-text">
-        <div className="text-muted-foreground flex min-h-6 w-full flex-wrap items-center gap-x-1">
-          <span className="text-foreground font-medium">
-            @{comment.author.login}
-          </span>
-          <span className={cn(getDiscussionVerbClassName(comment))}>
-            {getDiscussionVerb(comment)}
-          </span>
-          <span aria-hidden>·</span>
-          <CommentTimestamp
-            className="text-[length:inherit]"
-            htmlUrl={comment.htmlUrl}
-            iso={comment.createdAt}
-          />
+      <CardHeader
+        author={comment.author}
+        trailing={
           <CommentHeaderActions
             authorLogin={comment.author.login}
             editing={moderation.isEditing}
@@ -404,37 +417,48 @@ function DiscussionRow({
             }}
             reactions={reactions}
           />
+        }
+      >
+        <span className="text-foreground font-medium">
+          @{comment.author.login}
+        </span>
+        <span className={cn(getDiscussionVerbClassName(comment))}>
+          {getDiscussionVerb(comment)}
+        </span>
+        <span aria-hidden>·</span>
+        <CommentTimestamp
+          className="text-[length:inherit]"
+          htmlUrl={comment.htmlUrl}
+          iso={comment.createdAt}
+        />
+      </CardHeader>
+      {moderation.isEditing && actions != null ? (
+        <div className="w-full">
+          <CommentEditComposer
+            draftKey={`discussion-edit:${comment.id}`}
+            initialBody={comment.body}
+            moderation={moderation}
+            onEdit={(body) => actions.onEdit(comment.id, body)}
+          />
         </div>
-        {moderation.isEditing && actions != null ? (
-          <div className="w-full pt-1">
-            <CommentEditComposer
-              draftKey={`discussion-edit:${comment.id}`}
-              initialBody={comment.body}
-              moderation={moderation}
-              onEdit={(body) => actions.onEdit(comment.id, body)}
-            />
-          </div>
-        ) : (
-          preview !== '' && (
-            <DeferredMarkdown
-              className={
-                expanded
-                  ? SIDEBAR_MARKDOWN_CLASS
-                  : COLLAPSED_SIDEBAR_MARKDOWN_CLASS
-              }
-              markdown={preview}
-            />
-          )
-        )}
-        {!moderation.isEditing && (
-          <ReactionChipList className="mt-1" state={reactions} />
-        )}
-        {moderation.isConfirmingDelete && actions != null && (
-          <div className="w-full pt-1">
-            <CommentDeleteConfirm moderation={moderation} />
-          </div>
-        )}
-      </div>
+      ) : (
+        preview !== '' && (
+          <DeferredMarkdown
+            className={
+              expanded
+                ? SIDEBAR_MARKDOWN_CLASS
+                : COLLAPSED_SIDEBAR_MARKDOWN_CLASS
+            }
+            markdown={preview}
+          />
+        )
+      )}
+      {!moderation.isEditing && <ReactionChipList state={reactions} />}
+      {moderation.isConfirmingDelete && actions != null && (
+        <div className="w-full">
+          <CommentDeleteConfirm moderation={moderation} />
+        </div>
+      )}
     </CommentRow>
   );
 }
@@ -449,40 +473,36 @@ function DescriptionRow({ description }: { description: PullDescription }) {
       aria-expanded={expanded}
       onActivate={() => setExpanded((prev) => !prev)}
     >
-      {description.authorLogin != null && (
-        <CommentAuthorAvatar
-          author={{ avatarUrl: '', login: description.authorLogin }}
-          className="size-5"
+      <CardHeader
+        author={
+          description.authorLogin != null
+            ? { avatarUrl: '', login: description.authorLogin }
+            : null
+        }
+      >
+        {description.authorLogin != null && (
+          <span className="text-foreground font-medium">
+            @{description.authorLogin}
+          </span>
+        )}
+        <span>
+          {description.authorLogin != null
+            ? 'opened this pull request'
+            : 'Description'}
+        </span>
+      </CardHeader>
+      {preview === '' ? (
+        <p className="text-muted-foreground m-0 text-[13px]">
+          No description provided.
+        </p>
+      ) : (
+        <DeferredMarkdown
+          className={
+            expanded ? SIDEBAR_MARKDOWN_CLASS : COLLAPSED_SIDEBAR_MARKDOWN_CLASS
+          }
+          markdown={preview}
         />
       )}
-      <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 select-text">
-        <div className="text-muted-foreground flex w-full flex-wrap items-center gap-x-1">
-          {description.authorLogin != null && (
-            <span className="text-foreground font-medium">
-              @{description.authorLogin}
-            </span>
-          )}
-          <span>
-            {description.authorLogin != null
-              ? 'opened this pull request'
-              : 'Description'}
-          </span>
-        </div>
-        {preview === '' ? (
-          <p className="text-muted-foreground m-0 text-[13px]">
-            No description provided.
-          </p>
-        ) : (
-          <DeferredMarkdown
-            className={
-              expanded
-                ? SIDEBAR_MARKDOWN_CLASS
-                : COLLAPSED_SIDEBAR_MARKDOWN_CLASS
-            }
-            markdown={preview}
-          />
-        )}
-      </div>
     </CommentRow>
   );
 }
@@ -495,16 +515,14 @@ function DiscussionComposerRow({ actions }: { actions: DiscussionActions }) {
 
   if (!actions.canWrite) {
     return (
-      <div
-        className={cn(CARD_ROW_CLASS, 'text-muted-foreground p-3 text-[13px]')}
-      >
+      <div className={cn(CARD_CLASS, 'text-muted-foreground p-3 text-[13px]')}>
         Sign in with GitHub or save a token to comment.
       </div>
     );
   }
 
   return (
-    <div className={cn(CARD_ROW_CLASS, 'p-3')}>
+    <div className={cn(CARD_CLASS, 'p-3')}>
       {isOpen ? (
         <CommentComposer
           autoFocus
@@ -576,7 +594,7 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
             <div className="text-muted-foreground p-3 pb-2 text-sm font-medium">
               Conversation
             </div>
-            <div className={cn(CARD_BORDER_CLASS, 'rounded-lg border')}>
+            <div className={CARD_STACK_CLASS}>
               {description != null && (
                 <DescriptionRow description={description} />
               )}
@@ -610,70 +628,63 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
                 {section.path}
               </div>
             )}
-            <div className={cn(CARD_BORDER_CLASS, 'rounded-lg border')}>
+            <div className={CARD_STACK_CLASS}>
               {section.comments.map((comment) => (
                 <CommentRow
                   key={comment.key}
                   onActivate={() => onSelectComment?.(comment)}
                 >
-                  <CommentAuthorAvatar
+                  <CardHeader
                     author={comment.author}
-                    className="size-5"
-                  />
-                  <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 select-text">
-                    <div className="text-muted-foreground flex w-full flex-wrap items-center gap-x-1">
-                      <span className="text-foreground font-medium">
-                        @{comment.author.login}
-                      </span>
-                      <span>commented on</span>
-                      <span
-                        className={cn(
-                          getCommentLineClassName(
-                            comment.side,
-                            comment.lineType
-                          ),
-                          'font-medium'
-                        )}
-                      >
-                        {getCommentLineLabel(
-                          comment.side,
-                          comment.lineNumber,
-                          comment.lineType
-                        )}
-                      </span>
-                      {comment.resolved === true && (
-                        <span className="ml-auto inline-flex items-center gap-1 text-[12px]">
+                    trailing={
+                      comment.resolved === true && (
+                        <span className="inline-flex shrink-0 items-center gap-1 text-[12px]">
                           <IconCheck size={12} aria-hidden />
                           Resolved
                         </span>
+                      )
+                    }
+                  >
+                    <span className="text-foreground font-medium">
+                      @{comment.author.login}
+                    </span>
+                    <span>commented on</span>
+                    <span
+                      className={cn(
+                        getCommentLineClassName(comment.side, comment.lineType),
+                        'font-medium'
                       )}
+                    >
+                      {getCommentLineLabel(
+                        comment.side,
+                        comment.lineNumber,
+                        comment.lineType
+                      )}
+                    </span>
+                  </CardHeader>
+                  <DeferredMarkdown
+                    className={COLLAPSED_SIDEBAR_MARKDOWN_CLASS}
+                    markdown={comment.message}
+                  />
+                  {comment.replyCount > 0 && (
+                    <div className="text-muted-foreground flex items-center gap-1.5 text-[12px]">
+                      <span className="flex -space-x-1.5">
+                        {comment.participants.slice(0, 4).map((participant) => (
+                          <CommentAuthorAvatar
+                            key={participant.login}
+                            author={participant}
+                            className="size-4 text-[8px] ring-2 ring-[var(--diffshub-card-bg,var(--color-card))]"
+                          />
+                        ))}
+                      </span>
+                      <span>
+                        {comment.replyCount}{' '}
+                        {comment.replyCount === 1 ? 'reply' : 'replies'}
+                        {comment.participants.length > 1 &&
+                          ` · ${comment.participants.length} participants`}
+                      </span>
                     </div>
-                    <DeferredMarkdown
-                      className={COLLAPSED_SIDEBAR_MARKDOWN_CLASS}
-                      markdown={comment.message}
-                    />
-                    {comment.replyCount > 0 && (
-                      <div className="text-muted-foreground mt-1 flex items-center gap-1.5 text-[12px]">
-                        <span className="flex -space-x-1.5">
-                          {comment.participants
-                            .slice(0, 4)
-                            .map((participant) => (
-                              <CommentAuthorAvatar
-                                key={participant.login}
-                                author={participant}
-                                className="size-4 text-[8px] ring-2 ring-[var(--diffshub-card-bg,var(--color-card))]"
-                              />
-                            ))}
-                        </span>
-                        <span>
-                          {comment.replyCount}{' '}
-                          {comment.replyCount === 1 ? 'reply' : 'replies'}
-                          {comment.participants.length > 1 &&
-                            ` · ${comment.participants.length} participants`}
-                        </span>
-                      </div>
-                    )}
-                  </div>
+                  )}
                 </CommentRow>
               ))}
             </div>

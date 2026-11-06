@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { type Ref, useImperativeHandle, useRef, useState } from 'react';
 
 import { InlineConfirm } from './InlineConfirm';
 import { MarkdownEditor } from './MarkdownEditor';
@@ -10,6 +10,17 @@ import {
   readCommentDraft,
   writeCommentDraft,
 } from '@/lib/commentDrafts';
+
+// Lets an owner add text to an open composer (e.g. "Quote reply" while a
+// reply is already being written) without remounting it and losing its
+// editor state.
+export interface CommentComposerHandle {
+  // Appends `text` as a new paragraph and focuses the end of the body.
+  // Returns false without changing anything while a submit is in flight:
+  // that submit already captured the body, and success clears the draft, so
+  // appended text would be lost.
+  append(text: string): boolean;
+}
 
 interface CommentComposerProps {
   autoFocus?: boolean;
@@ -24,6 +35,7 @@ interface CommentComposerProps {
   // May reject to signal a failed submit (already surfaced to the user); the
   // composer stays open with the draft intact in that case.
   onSubmit(body: string): void | Promise<void>;
+  ref?: Ref<CommentComposerHandle>;
 }
 
 // Markdown composer with submit/cancel for replies, edits, and new comments.
@@ -37,6 +49,7 @@ export function CommentComposer({
   submitLabel,
   onCancel,
   onSubmit,
+  ref,
 }: CommentComposerProps) {
   const [body, setBody] = useState(
     () =>
@@ -55,6 +68,24 @@ export function CommentComposer({
       writeCommentDraft(draftKey, next === initialBody ? '' : next);
     }
   }
+
+  useImperativeHandle(ref, () => ({
+    append(text) {
+      if (isSubmitting) {
+        return false;
+      }
+      const existing = body.trimEnd();
+      const next = existing === '' ? text : `${existing}\n\n${text}`;
+      updateBody(next);
+      // After React commits the new value, put the caret at its end.
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        textarea?.focus({ preventScroll: true });
+        textarea?.setSelectionRange(next.length, next.length);
+      });
+      return true;
+    },
+  }));
 
   function discard() {
     if (draftKey != null) {

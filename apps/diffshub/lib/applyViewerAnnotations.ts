@@ -10,9 +10,12 @@ interface ApplyViewerAnnotationsOptions<
   Metadata extends CommentMetadata,
 > {
   // `fileDiff` is the entry's file, for annotations whose side depends on it.
+  // `existing` is the annotation being replaced when `isStale` flagged it, so
+  // a source can merge into it instead of discarding local changes.
   createAnnotation(
     entry: Entry,
-    fileDiff: FileDiffMetadata
+    fileDiff: FileDiffMetadata,
+    existing?: DiffLineAnnotation<CommentMetadata>
   ): DiffLineAnnotation<Metadata>;
   // Annotation identity within an item: entries whose key is already present
   // on the item are skipped, so re-application is idempotent.
@@ -86,7 +89,11 @@ export function applyViewerAnnotations<Entry, Metadata extends CommentMetadata>(
       if (existing != null && options.isStale?.(entry, existing) !== true) {
         continue;
       }
-      const annotation = options.createAnnotation(entry, item.fileDiff);
+      const annotation = options.createAnnotation(
+        entry,
+        item.fileDiff,
+        existing
+      );
       fresh.push({ annotation, entry });
       next.set(key, annotation);
     }

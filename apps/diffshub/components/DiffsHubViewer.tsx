@@ -39,8 +39,12 @@ import { DraftAnnotation } from './DraftAnnotation';
 import { ExampleAnnotation } from './ExampleAnnotation';
 import type { SuggestionTarget } from './MarkdownContent';
 import { MarkdownDocAnnotation } from './MarkdownDocAnnotation';
+import {
+  fetchNewReviewThreadState,
+  setReviewThreadResolved,
+} from './reviewThreadsClient';
 import { ThemedCodeView } from './ThemedCodeView';
-import { ThreadAnnotation } from './ThreadAnnotation';
+import { ExpandedThreadsContext, ThreadAnnotation } from './ThreadAnnotation';
 import { useChromeThemeProps } from './useChromeThemeProps';
 import type { SuggestionCommitInput } from './usePullEditSession';
 import { buildAnnotationThemeStyle } from '@/lib/annotationThemeStyle';
@@ -237,6 +241,9 @@ export interface SymbolTarget {
 export interface SymbolNavigateRequest extends SymbolTarget {
   action: 'definition' | 'usages';
 }
+
+// Pause before re-asking GitHub for a just-posted thread's state.
+const NEW_THREAD_RETRY_MS = 2000;
 
 export const DiffsHubViewer = memo(function DiffsHubViewer({
   className,
@@ -539,6 +546,42 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
     return { savedAnnotation, updatedItem };
   };
 
+  // Fetches a just-posted thread's resolution status in the background, so
+  // the new conversation gets the same resolve control as loaded ones.
+  // GitHub's GraphQL view can trail the REST write that created the thread,
+  // so a miss is retried once after a pause. Best effort: without a state the
+  // card works, just without the control (a later refetch can still add it).
+  const loadNewThreadState = (itemId: string, key: string, rootId: number) => {
+    if (pullRequest == null) {
+      return;
+    }
+    const attempt = (retriesLeft: number) => {
+      fetchNewReviewThreadState(pullRequest, rootId).then(
+        (state) => {
+          if (state != null) {
+            const updated = updateThread(itemId, key, (thread) => ({
+              ...thread,
+              state,
+            }));
+            if (updated?.thread != null) {
+              onCommentSaved(
+                createThreadSavedCommentEvent(
+                  updated.item.fileDiff,
+                  itemId,
+                  updated.thread
+                )
+              );
+            }
+          } else if (retriesLeft > 0) {
+            setTimeout(() => attempt(retriesLeft - 1), NEW_THREAD_RETRY_MS);
+          }
+        },
+        () => {}
+      );
+    };
+    attempt(1);
+  };
+
   const handleSaveDraftComment = useStableCallback(
     async (
       itemId: string,
@@ -601,6 +644,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
                 thread
               )
             );
+            loadNewThreadState(itemId, thread.key, thread.rootId);
             return;
           }
           // GitHub accepted the comment but echoed no usable anchor; fall
@@ -643,6 +687,10 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
     return token == null || token === '' ? undefined : token;
   };
 
+  // Resolved threads the reader expanded; lives as long as this viewer (one
+  // diff load), so it can't grow across pull requests.
+  const [expandedThreads] = useState(() => new Set<string>());
+
   // A thread annotation in a mounted item, by card key.
   const findThreadAnnotation = (itemId: string, key: string) => {
     const { current: viewer } = viewerRef;
@@ -668,28 +716,45 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       : { ...found, pullRequest, token };
   };
 
-  // Replaces one comment of a thread annotation with `patch` applied and
-  // returns the updated thread.
-  const replaceThreadComment = (
-    viewer: CodeViewHandle<CommentMetadata, undefined>,
+  // Applies `update` to a thread annotation's current thread, read at apply
+  // time rather than captured before a request, so a write that finishes late
+  // (a reply landing after a resolve) can't put back a stale copy over
+  // changes made meanwhile. `update` returning null removes the card. Returns
+  // the updated thread (null when removed) and its item, or null when the card
+  // is gone.
+  const updateThread = (
     itemId: string,
-    annotation: DiffLineAnnotation<ThreadCommentMetadata>,
+    key: string,
+    update: (thread: PullReviewThread) => PullReviewThread | null
+  ) => {
+    const found = findThreadAnnotation(itemId, key);
+    if (found == null) {
+      return null;
+    }
+    const { annotation, item, viewer } = found;
+    const thread = update(annotation.metadata.thread);
+    replaceAnnotation(
+      viewer,
+      itemId,
+      key,
+      thread == null
+        ? null
+        : { ...annotation, metadata: { ...annotation.metadata, thread } }
+    );
+    return { item, thread };
+  };
+
+  // A thread with one comment patched.
+  const patchComment = (
+    thread: PullReviewThread,
     commentId: number,
     patch: Partial<PullReviewComment>
-  ): PullReviewThread => {
-    const { thread } = annotation.metadata;
-    const nextThread = {
-      ...thread,
-      comments: thread.comments.map((comment) =>
-        comment.id === commentId ? { ...comment, ...patch } : comment
-      ),
-    };
-    replaceAnnotation(viewer, itemId, annotation.metadata.key, {
-      ...annotation,
-      metadata: { ...annotation.metadata, thread: nextThread },
-    });
-    return nextThread;
-  };
+  ): PullReviewThread => ({
+    ...thread,
+    comments: thread.comments.map((comment) =>
+      comment.id === commentId ? { ...comment, ...patch } : comment
+    ),
+  });
 
   // The head-side lines a range covers in an item, or null when the range
   // touches the base side or lines the diff didn't load. Suggestions replace
@@ -754,23 +819,28 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       if (context == null) {
         return;
       }
-      const { annotation, token, viewer } = context;
-      const { thread } = annotation.metadata;
       const comment = await postPullReviewReply(
         context.pullRequest,
-        token,
-        thread.rootId,
+        context.token,
+        context.annotation.metadata.thread.rootId,
         body
       ).catch((error: unknown) =>
         toastRequestError(error, 'Posting the reply failed.')
       );
-      replaceAnnotation(viewer, itemId, key, {
-        ...annotation,
-        metadata: {
-          ...annotation.metadata,
-          thread: { ...thread, comments: [...thread.comments, comment] },
-        },
-      });
+      const updated = updateThread(itemId, key, (thread) => ({
+        ...thread,
+        comments: [...thread.comments, comment],
+      }));
+      // The sidebar row counts replies and participants; keep it in sync.
+      if (updated?.thread != null) {
+        onCommentSaved(
+          createThreadSavedCommentEvent(
+            updated.item.fileDiff,
+            itemId,
+            updated.thread
+          )
+        );
+      }
     }
   );
 
@@ -783,16 +853,42 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       commentId: number,
       reactions: readonly CommentReaction[]
     ) => {
-      const found = findThreadAnnotation(itemId, key);
-      if (found != null) {
-        replaceThreadComment(
-          found.viewer,
-          itemId,
-          found.annotation,
-          commentId,
-          {
-            reactions: [...reactions],
-          }
+      updateThread(itemId, key, (thread) =>
+        patchComment(thread, commentId, { reactions: [...reactions] })
+      );
+    }
+  );
+
+  // Resolves (or reopens) a thread on GitHub, then writes the returned state
+  // onto its annotation and the sidebar row. Rejects after toasting so the
+  // card can re-enable its button.
+  const handleThreadResolve = useStableCallback(
+    async (itemId: string, key: string, resolved: boolean) => {
+      const nodeId = findThreadAnnotation(itemId, key)?.annotation.metadata
+        .thread.state?.nodeId;
+      if (nodeId == null) {
+        return;
+      }
+      const state = await setReviewThreadResolved(nodeId, resolved).catch(
+        (error: unknown) =>
+          toastRequestError(
+            error,
+            resolved
+              ? 'Resolving the conversation failed.'
+              : 'Reopening the conversation failed.'
+          )
+      );
+      const updated = updateThread(itemId, key, (thread) => ({
+        ...thread,
+        state,
+      }));
+      if (updated?.thread != null) {
+        onCommentSaved(
+          createThreadSavedCommentEvent(
+            updated.item.fileDiff,
+            itemId,
+            updated.thread
+          )
         );
       }
     }
@@ -804,26 +900,25 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       if (context == null) {
         return;
       }
-      const { annotation, item, token, viewer } = context;
       const edited = await editPullReviewComment(
         context.pullRequest,
-        token,
+        context.token,
         commentId,
         body
       ).catch((error: unknown) =>
         toastRequestError(error, 'Editing the comment failed.')
       );
-      const nextThread = replaceThreadComment(
-        viewer,
-        itemId,
-        annotation,
-        commentId,
-        { body: edited.body }
+      const updated = updateThread(itemId, key, (thread) =>
+        patchComment(thread, commentId, { body: edited.body })
       );
       // The sidebar shows the thread's first comment; keep it in sync.
-      if (annotation.metadata.thread.comments[0]?.id === commentId) {
+      if (updated?.thread?.comments[0]?.id === commentId) {
         onCommentSaved(
-          createThreadSavedCommentEvent(item.fileDiff, itemId, nextThread)
+          createThreadSavedCommentEvent(
+            updated.item.fileDiff,
+            itemId,
+            updated.thread
+          )
         );
       }
     }
@@ -835,31 +930,33 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       if (context == null) {
         return;
       }
-      const { annotation, item, token, viewer } = context;
-      const { thread } = annotation.metadata;
       await deletePullReviewComment(
         context.pullRequest,
-        token,
+        context.token,
         commentId
       ).catch((error: unknown) =>
         toastRequestError(error, 'Deleting the comment failed.')
       );
-      const remaining = thread.comments.filter(
-        (comment) => comment.id !== commentId
-      );
-      if (remaining.length === 0) {
-        replaceAnnotation(viewer, itemId, key, null);
-        onCommentDeleted({ itemId, key });
+      let deletedRoot = false;
+      const updated = updateThread(itemId, key, (thread) => {
+        deletedRoot = thread.comments[0]?.id === commentId;
+        const comments = thread.comments.filter(
+          (comment) => comment.id !== commentId
+        );
+        return comments.length === 0 ? null : { ...thread, comments };
+      });
+      if (updated == null) {
         return;
       }
-      const nextThread = { ...thread, comments: remaining };
-      replaceAnnotation(viewer, itemId, key, {
-        ...annotation,
-        metadata: { ...annotation.metadata, thread: nextThread },
-      });
-      if (thread.comments[0]?.id === commentId) {
+      if (updated.thread == null) {
+        onCommentDeleted({ itemId, key });
+      } else if (deletedRoot) {
         onCommentSaved(
-          createThreadSavedCommentEvent(item.fileDiff, itemId, nextThread)
+          createThreadSavedCommentEvent(
+            updated.item.fileDiff,
+            itemId,
+            updated.thread
+          )
         );
       }
     }
@@ -1054,6 +1151,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
             onDeleteComment={handleThreadDeleteComment}
             onEditComment={handleThreadEditComment}
             onReply={handleThreadReply}
+            onResolve={handleThreadResolve}
             suggestionTarget={getSuggestionTarget(itemId, annotation)}
             onReactionsChange={handleThreadReactionsChange}
           />
@@ -1389,24 +1487,26 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
     ]
   );
   return (
-    <ThemedCodeView<CommentMetadata>
-      ref={handleViewerRef}
-      containerRef={scrollRef}
-      initialItems={initialItems}
-      className={cn(
-        className,
-        'cv-scrollbar relative h-full min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip overscroll-contain border-b border-border w-full [contain:strict] [overflow-anchor:none] [will-change:scroll-position] md:border-b-0 [&_diffs-container]:overflow-clip [&_diffs-container]:[contain:layout_paint_style] [&_diffs-container]:shadow-[0_-1px_0_var(--diffshub-diff-separator,var(--color-border-opaque)),0_1px_0_var(--diffshub-diff-separator,var(--color-border-opaque))]'
-      )}
-      options={options}
-      style={annotationThemeStyle}
-      selectedLines={selectedLines}
-      onItemEditChange={editSession.onItemEditChange}
-      onItemEditComplete={editSession.onItemEditComplete}
-      onSelectedLinesChange={handleSetSelection}
-      renderAnnotation={renderCommentAnnotation}
-      renderHeaderPrefix={renderHeaderPrefix}
-      renderHeaderMetadata={renderHeaderMetadata}
-    />
+    <ExpandedThreadsContext value={expandedThreads}>
+      <ThemedCodeView<CommentMetadata>
+        ref={handleViewerRef}
+        containerRef={scrollRef}
+        initialItems={initialItems}
+        className={cn(
+          className,
+          'cv-scrollbar relative h-full min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip overscroll-contain border-b border-border w-full [contain:strict] [overflow-anchor:none] [will-change:scroll-position] md:border-b-0 [&_diffs-container]:overflow-clip [&_diffs-container]:[contain:layout_paint_style] [&_diffs-container]:shadow-[0_-1px_0_var(--diffshub-diff-separator,var(--color-border-opaque)),0_1px_0_var(--diffshub-diff-separator,var(--color-border-opaque))]'
+        )}
+        options={options}
+        style={annotationThemeStyle}
+        selectedLines={selectedLines}
+        onItemEditChange={editSession.onItemEditChange}
+        onItemEditComplete={editSession.onItemEditComplete}
+        onSelectedLinesChange={handleSetSelection}
+        renderAnnotation={renderCommentAnnotation}
+        renderHeaderPrefix={renderHeaderPrefix}
+        renderHeaderMetadata={renderHeaderMetadata}
+      />
+    </ExpandedThreadsContext>
   );
 });
 

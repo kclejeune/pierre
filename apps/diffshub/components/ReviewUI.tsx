@@ -27,6 +27,7 @@ import { DiffsHubSidebar } from './DiffsHubSidebar';
 import { DiffsHubStatusPanel } from './DiffsHubStatusPanel';
 import { DiffsHubViewer } from './DiffsHubViewer';
 import { FileSearchPalette } from './FileSearchPalette';
+import { PullAuthorContext } from './PullAuthorContext';
 import { PullCommitPanel } from './PullCommitPanel';
 import { PullCommitRangePicker } from './PullCommitRangePicker';
 import {
@@ -966,7 +967,7 @@ function ReviewUIInner({
       (loadState === 'streaming' && initialItems.length > 0));
 
   return (
-    <>
+    <PullAuthorContext value={pullAuthorLogin ?? null}>
       <ReviewGrid>
         <DiffsHubHeader
           className="[grid-area:header]"
@@ -1138,7 +1139,7 @@ function ReviewUIInner({
             onStale={handleConflictsSettled}
           />
         )}
-    </>
+    </PullAuthorContext>
   );
 }
 

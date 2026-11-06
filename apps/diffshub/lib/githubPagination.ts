@@ -1,5 +1,7 @@
-import { fetchGitHubJSON } from './githubCommitServer';
+import { fetchGitHubJSON, sendGitHubGraphQL } from './githubCommitServer';
+import { githubFetch } from './githubFetch';
 import type { PlainFetch } from './plainFetch';
+import { asRecord } from './untypedJson';
 
 // GitHub REST list pagination: the last page number from a response's Link
 // header, so callers can fetch the remaining pages in parallel after page 1.
@@ -51,4 +53,83 @@ export async function fetchAllGitHubPages(
     }
   }
   return items;
+}
+
+// The cursor of a connection's next page in `direction` (its pageInfo), or
+// null when it was the last.
+export function readPageCursor(
+  connection: unknown,
+  direction: 'backward' | 'forward'
+): string | null {
+  const pageInfo = asRecord(asRecord(connection)?.pageInfo);
+  const [hasMore, cursor] =
+    direction === 'forward'
+      ? [pageInfo?.hasNextPage, pageInfo?.endCursor]
+      : [pageInfo?.hasPreviousPage, pageInfo?.startCursor];
+  return hasMore === true && typeof cursor === 'string' ? cursor : null;
+}
+
+interface GraphQLConnectionWalk {
+  query: string;
+  // The query's variables other than the cursor.
+  variables: Record<string, unknown>;
+  token: string;
+  // 'forward' passes the cursor as `$after` and follows endCursor;
+  // 'backward' passes `$before` and follows startCursor.
+  direction: 'backward' | 'forward';
+  // Picks the connection out of a response's `data`.
+  readConnection(data: unknown): unknown;
+  // Receives each page's connection; return false to stop walking.
+  onPage(connection: unknown): boolean | void;
+  // Cursor to start from, when an earlier read already covered page one.
+  cursor?: string | null;
+  maxPages: number;
+  // Stops between pages and cancels the in-flight request once aborted.
+  signal?: AbortSignal;
+}
+
+// Walks a GraphQL connection page by page (GraphQL cursors chain, so pages
+// can't fan out like REST's numbered ones). Returns whether it reached the
+// connection's end, as opposed to stopping at maxPages, onPage, or the
+// signal. Request errors propagate; callers that can use a partial result
+// collect it in onPage and catch.
+export async function walkGraphQLConnection({
+  cursor = null,
+  direction,
+  maxPages,
+  onPage,
+  query,
+  readConnection,
+  signal,
+  token,
+  variables,
+}: GraphQLConnectionWalk): Promise<{ exhausted: boolean }> {
+  const fetcher: PlainFetch | undefined =
+    signal == null
+      ? undefined
+      : (input, init) => githubFetch(input, { ...init, signal });
+  const cursorName = direction === 'forward' ? 'after' : 'before';
+  let next = cursor;
+  for (let page = 0; page < maxPages; page++) {
+    if (signal?.aborted === true) {
+      return { exhausted: false };
+    }
+    const connection = readConnection(
+      await sendGitHubGraphQL(
+        query,
+        { ...variables, [cursorName]: next },
+        token,
+        fetcher
+      )
+    );
+    const keepGoing = onPage(connection) !== false;
+    next = readPageCursor(connection, direction);
+    if (next == null) {
+      return { exhausted: true };
+    }
+    if (!keepGoing) {
+      return { exhausted: false };
+    }
+  }
+  return { exhausted: false };
 }

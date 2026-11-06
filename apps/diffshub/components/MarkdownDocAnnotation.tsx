@@ -39,6 +39,7 @@ import {
   rehypeGitHubHeadingIds,
   scrollToDocFragment,
 } from '@/lib/markdownHeadingIds';
+import { FILE_COMMENT_LINE } from '@/lib/pullReviewThreads';
 import { DOC_OPEN_ATTR, DOC_RENDERED_EVENT } from '@/lib/renderedDocDom';
 import type { CommentMetadata } from '@/lib/types';
 
@@ -57,7 +58,8 @@ interface MarkdownDocAnnotationProps {
   sourcePath?: string;
   // Comment annotations on this document's side of the diff, shown in a
   // margin rail beside the block containing each comment's line while the
-  // rendered view is open. `renderComment` supplies the card for each one;
+  // rendered view is open. File-level comments (line 0) show in a block above
+  // the document instead. `renderComment` supplies the card for each one;
   // both props should be identity-stable so the memo on this component can
   // skip re-parsing the document when nothing changed.
   commentAnnotations?: DiffLineAnnotation<CommentMetadata>[];
@@ -102,12 +104,20 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
     if (renderComment == null || commentAnnotations == null) {
       return null;
     }
-    return {
-      annotations: [...commentAnnotations].sort(
-        (a, b) => a.lineNumber - b.lineNumber
-      ),
-      renderComment,
-    };
+    const annotations = [...commentAnnotations].sort(
+      (a, b) => a.lineNumber - b.lineNumber
+    );
+    // File-level comments lead the document; line comments go beside the
+    // block that claims their line.
+    const fileAnnotations: typeof annotations = [];
+    const lineAnnotations: typeof annotations = [];
+    for (const annotation of annotations) {
+      (annotation.lineNumber === FILE_COMMENT_LINE
+        ? fileAnnotations
+        : lineAnnotations
+      ).push(annotation);
+    }
+    return { annotations, fileAnnotations, lineAnnotations, renderComment };
   }, [commentAnnotations, renderComment]);
 
   // While the document renders, hide the source diff underneath: stamp the
@@ -239,7 +249,7 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
         const blockComments =
           rail == null
             ? []
-            : rail.annotations.filter(
+            : rail.lineAnnotations.filter(
                 (annotation) =>
                   annotation.lineNumber >= claimStart &&
                   annotation.lineNumber <= claimEnd
@@ -325,6 +335,21 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
           </span>
         )}
       </div>
+      {contentsState.kind === 'ready' &&
+        rail != null &&
+        rail.fileAnnotations.length > 0 && (
+          // Comments on the whole file, GitHub's file-level threads and new
+          // drafts from the header's comment button, lead the document.
+          <div className="border-b border-[var(--diffshub-annotation-border,var(--color-border))] px-4 py-2">
+            <div className="flex max-w-[620px] flex-col">
+              <CommentCards
+                annotations={rail.fileAnnotations}
+                itemId={itemId}
+                renderComment={rail.renderComment}
+              />
+            </div>
+          </div>
+        )}
       <div className="px-6 py-4">
         {contentsState.kind === 'loading' && (
           <p className="text-muted-foreground m-0 text-[13px]">

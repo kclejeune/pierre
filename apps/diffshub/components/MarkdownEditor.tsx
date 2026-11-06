@@ -39,8 +39,12 @@ function isSubmitChord(event: KeyboardEvent): boolean {
 }
 
 // Edits through execCommand so they join the undo stack and fire input events.
-// The setRangeText fallback skips undo.
-function applyEdit(textarea: HTMLTextAreaElement, edit: MarkdownEdit): void {
+// The setRangeText fallback skips undo. Exported for composer buttons that
+// insert text at the cursor (e.g. "Suggest change").
+export function applyEdit(
+  textarea: HTMLTextAreaElement,
+  edit: MarkdownEdit
+): void {
   const start = textarea.selectionStart;
   textarea.focus();
   const inserted =

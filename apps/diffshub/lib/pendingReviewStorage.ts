@@ -4,10 +4,11 @@ import { isFullCommitSha } from './githubDiffSource';
 import { readStoredJSON, writeStoredJSON } from './storedJSON';
 import type { CommentAuthor, PendingReviewComment } from './types';
 
-// Persistence for the in-progress batched review. GitHub keeps pending
-// reviews server-side, so reviewers trust that a half-written batch survives
-// a reload — mirroring that, the batch is stored per pull request in
-// localStorage and restored into the viewer on the next visit.
+// Local copy of the in-progress batched review, per pull request. GitHub's
+// pending review is the source of truth once a draft is saved there
+// (lib/pendingReview); this copy keeps drafts GitHub hasn't confirmed yet
+// (offline, a failed save, signed out) so they survive a reload and are
+// saved on the next visit.
 
 const STORAGE_PREFIX = 'diffshub.pending-review.';
 
@@ -28,13 +29,18 @@ export function loadPendingReviewComments(
   }
   // A corrupt commit id degrades to "unknown revision" rather than discarding
   // the comment text along with it.
-  return parsed
-    .filter(isPendingReviewComment)
-    .map((entry) =>
-      entry.commitId === undefined || isFullCommitSha(entry.commitId)
-        ? entry
-        : { ...entry, commitId: undefined }
-    );
+  return parsed.filter(isPendingReviewComment).map((entry) => ({
+    ...entry,
+    commitId:
+      entry.commitId !== undefined && isFullCommitSha(entry.commitId)
+        ? entry.commitId
+        : undefined,
+    inReplyTo:
+      typeof entry.inReplyTo === 'number' ? entry.inReplyTo : undefined,
+    remoteId: typeof entry.remoteId === 'string' ? entry.remoteId : undefined,
+    syncedMessage:
+      typeof entry.syncedMessage === 'string' ? entry.syncedMessage : undefined,
+  }));
 }
 
 export function savePendingReviewComments(

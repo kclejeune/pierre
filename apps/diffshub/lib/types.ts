@@ -1,6 +1,8 @@
 import type { AnnotationSide, SelectedLineRange } from '@pierre/diffs';
 import type { FileTreeGitStatusPatch, GitStatusEntry } from '@pierre/trees';
 
+import type { CommentReaction } from './reactions';
+
 export type ViewerLoadState =
   | 'fetching'
   | 'streaming'
@@ -47,10 +49,20 @@ export interface PendingReviewComment {
   // the review's commit_id. Absent on entries stored before it was recorded,
   // or when the diff loaded without a known head.
   commitId?: string;
+  // Set on a pending reply that GitHub's UI started on an existing thread;
+  // DiffsHub's own drafts are always new threads.
+  inReplyTo?: number;
   key: string;
   message: string;
   path: string;
+  // A file-level comment's range ends at line 0 (lib/pullReviewThreads
+  // isFileCommentRange); only GitHub's UI starts those.
   range: SelectedLineRange;
+  // The draft's comment in the viewer's pending review on GitHub, once saved
+  // there (lib/pendingReview), and the text GitHub has for it. A message that
+  // differs from `syncedMessage` is an edit not yet saved to GitHub.
+  remoteId?: string;
+  syncedMessage?: string;
 }
 
 // Which side of the pull-request diff a GitHub review comment anchors to,
@@ -71,10 +83,22 @@ export interface PullReviewComment {
   id: number;
   inReplyToId: number | null;
   line: number | null;
+  // GraphQL node id, the subject reactions are added to; absent on payloads
+  // that don't carry it.
+  nodeId?: string;
   path: string;
+  // Non-zero emoji reaction tallies, in GitHub's picker order.
+  reactions?: CommentReaction[];
+  // Set when GitHub couldn't say which reactions are the viewer's: the
+  // tallies show, but toggling one could add a reaction the viewer already
+  // left, so they are read-only.
+  reactionsViewerUnknown?: true;
   side: GitHubDiffSide | null;
   startLine: number | null;
   startSide: GitHubDiffSide | null;
+  // Set on a file-level comment (about the whole file, not lines); its
+  // line and side are then meaningless.
+  subjectType?: 'file';
 }
 
 // A pull-request-level comment with no diff anchor: an issue comment on the
@@ -87,13 +111,17 @@ export interface PullDiscussionComment {
   htmlUrl: string | null;
   id: number;
   kind: 'comment' | 'review';
+  nodeId?: string;
+  reactions?: CommentReaction[];
+  reactionsViewerUnknown?: true;
   // GitHub review verdict (APPROVED, CHANGES_REQUESTED, COMMENTED, …) when
   // kind is 'review'; null for conversation comments.
   reviewState: string | null;
 }
 
 // A review conversation: the root comment plus its replies in creation order,
-// anchored to a line range in one file of the pull-request diff.
+// anchored to a line range in one file of the pull-request diff, or to the
+// whole file (lineNumber 0, see lib/pullReviewThreads FILE_COMMENT_LINE).
 export interface PullReviewThread {
   comments: PullReviewComment[];
   key: string;
@@ -138,9 +166,10 @@ export type DiffsHubCommentFileByItemId = ReadonlyMap<
 >;
 
 // Whether the line the comment is anchored to is a real addition/deletion or
-// an unchanged context line shown in the diff. Tracked so the sidebar can
-// render "Line N" without a misleading + / - sigil for context lines.
-export type CommentLineType = 'change' | 'context';
+// an unchanged context line shown in the diff, or 'file' for a file-level
+// comment. Tracked so the sidebar can render "Line N" without a misleading
+// + / - sigil for context lines, and "the file" for file-level ones.
+export type CommentLineType = 'change' | 'context' | 'file';
 
 export interface DiffsHubSavedCommentEvent {
   author: CommentAuthor;

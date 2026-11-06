@@ -12,13 +12,19 @@ import {
   CommentModerationButtons,
   useCommentModeration,
 } from './CommentModeration';
-import { DeferredMarkdownContent } from './MarkdownContent';
+import { CommentReactions } from './CommentReactions';
+import {
+  DeferredMarkdownContent,
+  type SuggestionTarget,
+  SuggestionTargetContext,
+} from './MarkdownContent';
 import { RelativeTime } from './RelativeTime';
 import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
 import { annotationCardBase } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import { readCommentDraft } from '@/lib/commentDrafts';
+import type { CommentReaction } from '@/lib/reactions';
 import type { PullReviewComment, ThreadCommentMetadata } from '@/lib/types';
 
 interface ThreadAnnotationProps {
@@ -38,6 +44,17 @@ interface ThreadAnnotationProps {
     body: string
   ): Promise<void>;
   onReply(itemId: string, key: string, body: string): Promise<void>;
+  // What suggestion fences in this thread replace and whether they can be
+  // committed; null when the thread has none or they can't be shown as diffs.
+  suggestionTarget?: SuggestionTarget | null;
+  // Keeps a comment's reaction tallies on the thread after a toggle, so a
+  // remounted card shows them.
+  onReactionsChange?(
+    itemId: string,
+    key: string,
+    commentId: number,
+    reactions: readonly CommentReaction[]
+  ): void;
 }
 
 // A GitHub review conversation rendered inline in the diff: every comment in
@@ -50,50 +67,62 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
   onDeleteComment,
   onEditComment,
   onReply,
+  suggestionTarget = null,
+  onReactionsChange,
 }: ThreadAnnotationProps) {
   const { key, thread } = annotation.metadata;
   const githubUser = useGitHubUser();
 
   return (
-    <div className={cn(annotationCardBase, 'flex-col gap-3')}>
-      {thread.comments.map((comment) => (
-        <ThreadComment
-          key={comment.id}
-          comment={comment}
-          canModify={canWrite && githubUser?.login === comment.author.login}
-          editDraftKey={`edit:${comment.id}`}
-          onDelete={() => onDeleteComment(itemId, key, comment.id)}
-          onEdit={(body) => onEditComment(itemId, key, comment.id, body)}
-        />
-      ))}
-      {canWrite ? (
-        <ReplyComposer
-          draftKey={`reply:${itemId}:${key}`}
-          onReply={(body) => onReply(itemId, key, body)}
-        />
-      ) : (
-        <p className="text-muted-foreground m-0 text-[13px]">
-          Sign in with GitHub or save a token to reply.
-        </p>
-      )}
-    </div>
+    <SuggestionTargetContext value={suggestionTarget}>
+      <div className={cn(annotationCardBase, 'flex-col gap-3')}>
+        {thread.comments.map((comment) => (
+          <ThreadComment
+            key={comment.id}
+            comment={comment}
+            canModify={canWrite && githubUser?.login === comment.author.login}
+            canReact={canWrite && comment.reactionsViewerUnknown !== true}
+            editDraftKey={`edit:${comment.id}`}
+            onDelete={() => onDeleteComment(itemId, key, comment.id)}
+            onEdit={(body) => onEditComment(itemId, key, comment.id, body)}
+            onReactionsChange={(reactions) =>
+              onReactionsChange?.(itemId, key, comment.id, reactions)
+            }
+          />
+        ))}
+        {canWrite ? (
+          <ReplyComposer
+            draftKey={`reply:${itemId}:${key}`}
+            onReply={(body) => onReply(itemId, key, body)}
+          />
+        ) : (
+          <p className="text-muted-foreground m-0 text-[13px]">
+            Sign in with GitHub or save a token to reply.
+          </p>
+        )}
+      </div>
+    </SuggestionTargetContext>
   );
 });
 
 interface ThreadCommentProps {
   canModify: boolean;
+  canReact: boolean;
   comment: PullReviewComment;
   editDraftKey: string;
   onDelete(): Promise<void>;
   onEdit(body: string): Promise<void>;
+  onReactionsChange(reactions: readonly CommentReaction[]): void;
 }
 
 function ThreadComment({
   canModify,
+  canReact,
   comment,
   editDraftKey,
   onDelete,
   onEdit,
+  onReactionsChange,
 }: ThreadCommentProps) {
   // Reopen an edit that was in progress when the card scrolled away.
   const [hadEditDraft] = useState(
@@ -148,6 +177,14 @@ function ThreadComment({
           />
         ) : (
           <DeferredMarkdownContent flavor="comment" markdown={comment.body} />
+        )}
+        {!moderation.isEditing && (
+          <CommentReactions
+            canReact={canReact}
+            nodeId={comment.nodeId}
+            reactions={comment.reactions}
+            onChange={onReactionsChange}
+          />
         )}
         {moderation.isConfirmingDelete && (
           <CommentDeleteConfirm moderation={moderation} />

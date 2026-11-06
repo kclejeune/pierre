@@ -34,11 +34,11 @@ import {
 } from 'react';
 
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
-import { CommandPaletteTrigger } from './CommandPaletteTrigger';
 import { DiffRefsBadge } from './DiffRefsBadge';
 import { DiffsHubLogo } from './DiffsHubLogo';
 import { DiffUrlForm } from './DiffUrlForm';
 import { FileSearchPaletteTrigger } from './FileSearchPaletteTrigger';
+import { RepoPaletteButton } from './RepoPaletteButton';
 import { useChromeThemeProps } from './useChromeThemeProps';
 import { usePinnedRepos } from './usePinnedRepos';
 import { Button } from '@/components/Button';
@@ -232,6 +232,9 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
             // hug it; the home page keeps the wider default for full URLs.
             inputClassName="w-full md:w-auto md:min-w-[12ch]"
           />
+          {/* cmd+K lives beside the address it searches from, apart from the
+              right-hand "Go to file". */}
+          <RepoPaletteButton />
         </div>
         {diffRefs != null && (
           <DiffRefsBadge
@@ -254,7 +257,6 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
           <IconFileTreeFill className="size-4 md:size-3" />
         </Button>
         <div className="flex items-center gap-2">
-          <CommandPaletteTrigger className="hidden w-36 2xl:inline-flex" />
           {fileSearchAvailable && (
             <FileSearchPaletteTrigger className="hidden w-36 2xl:inline-flex" />
           )}

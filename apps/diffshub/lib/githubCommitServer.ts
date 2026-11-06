@@ -50,8 +50,12 @@ export interface LeafEntry {
 export type GitHubCommitErrorCode =
   | 'forbidden'
   | 'github'
+  // A pending review too large to read in full (/api/pull-review).
+  | 'incomplete-review'
   | 'protected-branch'
-  | 'stale-head';
+  | 'stale-head'
+  // A pending review pinned to another commit than a draft's.
+  | 'stale-review';
 
 export class GitHubCommitError extends Error {
   code: GitHubCommitErrorCode;

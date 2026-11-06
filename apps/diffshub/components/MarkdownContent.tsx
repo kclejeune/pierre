@@ -2,7 +2,14 @@
 
 import { IconImage } from '@pierre/icons';
 import type { Element as HastElement } from 'hast';
-import { memo, useDeferredValue, useState, useSyncExternalStore } from 'react';
+import {
+  createContext,
+  memo,
+  use,
+  useDeferredValue,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
@@ -17,6 +24,7 @@ import {
   subscribeToGitHubToken,
 } from './githubSession';
 import { MermaidDiagram } from './MermaidDiagram';
+import { Button } from '@/components/Button';
 import { cn } from '@/lib/cn';
 import { createGitHubWebAssetProxyURL } from '@/lib/githubWebAssets';
 import { remarkMentions } from '@/lib/remarkMentions';
@@ -175,33 +183,95 @@ function getFence(
   };
 }
 
-// A review suggestion shown as added lines; an empty one deletes the lines.
+// What a review thread knows about the lines its suggestions replace, so a
+// suggestion fence inside it can render as a diff and be committed. Outside
+// a thread (or when the lines aren't loaded) suggestions show added lines
+// only.
+export interface SuggestionTarget {
+  // Commits the suggestion to the pull's head branch; absent when the viewer
+  // can't push or the thread isn't on the current head.
+  onApply?(suggestion: string): Promise<void>;
+  // The head-side lines the thread is anchored to, or null when unknown.
+  originalLines: readonly string[] | null;
+}
+
+export const SuggestionTargetContext = createContext<SuggestionTarget | null>(
+  null
+);
+
+// A review suggestion: the anchored lines it replaces (when known) above the
+// lines it suggests, with a commit button when the thread allows applying.
 // div/span, not pre/code, so prose code styles don't apply.
 function SuggestedChange({ code }: { code: string }) {
-  const lines = code.replace(/\n$/, '').split('\n');
-  const isDeletion = code.trim() === '';
+  const target = use(SuggestionTargetContext);
+  const suggestion = code.replace(/\n$/, '');
+  const lines = suggestion === '' ? [] : suggestion.split('\n');
+  const originalLines = target?.originalLines ?? null;
+  const isApplied =
+    originalLines != null && originalLines.join('\n') === suggestion;
+  const [isApplying, setIsApplying] = useState(false);
+  const onApply = target?.onApply;
   return (
     <div className="my-2 overflow-hidden rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))]">
-      <div className="text-muted-foreground border-b border-[var(--diffshub-annotation-border,var(--color-border))] px-3 py-1 text-[12px] font-medium">
-        {isDeletion
-          ? 'Suggested change: remove these lines'
-          : 'Suggested change'}
+      <div className="text-muted-foreground flex items-center gap-2 border-b border-[var(--diffshub-annotation-border,var(--color-border))] px-3 py-1 text-[12px] font-medium">
+        <span className="flex-1">
+          {lines.length === 0
+            ? 'Suggested change: remove these lines'
+            : 'Suggested change'}
+        </span>
+        {isApplied ? (
+          <span>Applied</span>
+        ) : (
+          onApply != null && (
+            <Button
+              size="sm"
+              variant="muted"
+              disabled={isApplying}
+              onClick={() => {
+                setIsApplying(true);
+                onApply(suggestion)
+                  .catch(() => undefined)
+                  .finally(() => setIsApplying(false));
+              }}
+            >
+              {isApplying ? 'Committing…' : 'Commit suggestion'}
+            </Button>
+          )
+        )}
       </div>
-      {!isDeletion && (
-        <div className="overflow-x-auto bg-[color-mix(in_srgb,var(--diffshub-comment-add-fg,#047857)_10%,transparent)] py-1 font-mono text-[0.9em]">
-          {lines.map((line, index) => (
-            <div key={index} className="flex px-3">
-              <span
-                aria-hidden
-                className="mr-2 text-[var(--diffshub-comment-add-fg,#047857)] select-none"
-              >
-                +
-              </span>
-              <span className="whitespace-pre">{line}</span>
-            </div>
+      <div className="overflow-x-auto py-1 font-mono text-[0.9em]">
+        {!isApplied &&
+          originalLines?.map((line, index) => (
+            <SuggestionLine key={`-${index}`} kind="deletion" text={line} />
           ))}
-        </div>
-      )}
+        {lines.map((line, index) => (
+          <SuggestionLine key={`+${index}`} kind="addition" text={line} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SuggestionLine({
+  kind,
+  text,
+}: {
+  kind: 'addition' | 'deletion';
+  text: string;
+}) {
+  const color =
+    kind === 'addition'
+      ? 'var(--diffshub-comment-add-fg,#047857)'
+      : 'var(--diffshub-comment-del-fg,#be123c)';
+  return (
+    <div
+      className="flex px-3"
+      style={{ background: `color-mix(in srgb, ${color} 10%, transparent)` }}
+    >
+      <span aria-hidden className="mr-2 select-none" style={{ color }}>
+        {kind === 'addition' ? '+' : '-'}
+      </span>
+      <span className="whitespace-pre">{text}</span>
     </div>
   );
 }

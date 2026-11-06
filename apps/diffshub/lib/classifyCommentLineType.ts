@@ -1,6 +1,7 @@
 import type { AnnotationSide, FileDiffMetadata } from '@pierre/diffs';
 
 import { iterateHunkLineBlocks } from './hunkLineBlocks';
+import { FILE_COMMENT_LINE } from './pullReviewThreads';
 import type { CommentLineType } from './types';
 
 // Classifies a 1-based line number on a given diff side as either an actual
@@ -12,6 +13,9 @@ export function classifyCommentLineType(
   side: AnnotationSide,
   lineNumber: number
 ): CommentLineType {
+  if (lineNumber === FILE_COMMENT_LINE) {
+    return 'file';
+  }
   for (const block of iterateHunkLineBlocks(fileDiff, side)) {
     if (block.lineCount === 0) {
       continue;

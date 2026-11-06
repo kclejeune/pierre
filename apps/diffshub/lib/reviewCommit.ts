@@ -1,3 +1,4 @@
+import { isFileCommentRange } from './pullReviewThreads';
 import type { PendingReviewComment } from './types';
 
 // Which commit a batched review anchors to. GitHub resolves each comment's
@@ -38,23 +39,81 @@ export function chooseReviewCommit(
   };
 }
 
-const STALE_ENTRY_PREVIEW_COUNT = 3;
+const ENTRY_PREVIEW_COUNT = 3;
 
 // The user-facing refusal for a batch that spans revisions: which pending
 // comments are on an older push, and what to do about them.
 export function describeStaleReviewEntries(
   staleEntries: readonly PendingReviewComment[]
 ): string {
-  const locations = staleEntries
-    .slice(0, STALE_ENTRY_PREVIEW_COUNT)
-    .map((entry) => `${entry.path}:${entry.range.end}`);
-  const remaining = staleEntries.length - locations.length;
+  return describeEntries(
+    staleEntries,
+    ['1 pending comment was', 'pending comments were'],
+    "written on an earlier push of this pull request and can't be submitted with the rest",
+    'Copy their text, delete them, and add them again on the current diff.'
+  );
+}
+
+// What to do while the viewer's pending review on GitHub is pinned to an
+// earlier push than the drafts being added to it: GitHub reads a review's
+// lines against its commit, so they can't join it.
+export const OUTDATED_PENDING_REVIEW_HINT =
+  'That review was started on an earlier push of this pull request. Submit or discard it on GitHub to add drafts written on this push; until then they stay in this browser.';
+
+// Why submitting refuses drafts written on the current push while the
+// viewer's pending review on GitHub is pinned to an earlier one.
+export function describeOutdatedPendingReview(
+  entries: readonly PendingReviewComment[]
+): string {
+  return describeEntries(
+    entries,
+    ["1 draft comment on this push can't", "draft comments on this push can't"],
+    'be added to your pending review on GitHub, which was started on an earlier push of this pull request',
+    'Submit or discard that review on GitHub, then submit again.'
+  );
+}
+
+// Why submitting refuses drafts that can't be added to the pending review on
+// GitHub: no recorded commit (saved by an earlier version of DiffsHub), no
+// diff anchor, or a reply GitHub doesn't have.
+export function describeUnsaveableReviewEntries(
+  entries: readonly PendingReviewComment[]
+): string {
+  return describeEntries(
+    entries,
+    ["1 pending comment can't", "pending comments can't"],
+    'be added to your pending review on GitHub',
+    'Copy their text, delete them, and add them again on the current diff.'
+  );
+}
+
+// "<count> <what> (<locations>). <remedy>": `one` is the phrase for a single
+// entry, `many` the plural one that follows the count.
+function describeEntries(
+  entries: readonly PendingReviewComment[],
+  [one, many]: readonly [string, string],
+  what: string,
+  remedy: string
+): string {
+  const count = entries.length === 1 ? one : `${entries.length} ${many}`;
+  return `${count} ${what} (${describeEntryLocations(entries)}). ${remedy}`;
+}
+
+// "path:line" (or "path" for a file-level comment) for the first few
+// entries, then a count of the rest.
+function describeEntryLocations(
+  entries: readonly PendingReviewComment[]
+): string {
+  const locations = entries
+    .slice(0, ENTRY_PREVIEW_COUNT)
+    .map((entry) =>
+      isFileCommentRange(entry.range)
+        ? entry.path
+        : `${entry.path}:${entry.range.end}`
+    );
+  const remaining = entries.length - locations.length;
   if (remaining > 0) {
     locations.push(`${remaining} more`);
   }
-  const count =
-    staleEntries.length === 1
-      ? '1 pending comment was'
-      : `${staleEntries.length} pending comments were`;
-  return `${count} written on an earlier push of this pull request and can't be submitted with the rest (${locations.join(', ')}). Copy their text, delete them, and add them again on the current diff.`;
+  return locations.join(', ');
 }

@@ -66,18 +66,14 @@ import {
 } from '@/lib/displaySettings';
 import { parseGitHubDiffSource } from '@/lib/githubDiffSource';
 import { incrementItemVersion } from '@/lib/incrementItemVersion';
-import { isDiffItem } from '@/lib/isDiffItem';
 import { getOpenDocDiff } from '@/lib/isDocAnnotation';
 import { onPreferencesRestored } from '@/lib/preferenceSync';
 import {
-  createCommentAnchor,
   deletePullDiscussionComment,
   editPullDiscussionComment,
   postPullDiscussionComment,
   type PullRequestRef,
-  type PullReviewDraftComment,
   type PullReviewEvent,
-  submitPullReview,
 } from '@/lib/pullCommentsClient';
 import {
   fetchPullConflicts,
@@ -87,10 +83,6 @@ import { recordRecentDiff } from '@/lib/recentDiffs';
 import { removeSavedCommentSidebarEntry } from '@/lib/removeSavedCommentSidebarEntry';
 import { docCommentTarget } from '@/lib/renderedDocDom';
 import { buildDiffHeadTreePath } from '@/lib/repoBrowser';
-import {
-  chooseReviewCommit,
-  describeStaleReviewEntries,
-} from '@/lib/reviewCommit';
 import { scrollDocTargetIntoView } from '@/lib/scrollDocTargetIntoView';
 import type { DarkThemeName, LightThemeName } from '@/lib/themeNames';
 import { toastRequestError } from '@/lib/toastRequestError';
@@ -775,12 +767,13 @@ function ReviewUIInner({
   // whole batch with a verdict, and the hook persists it per pull request so
   // a reload restores the cards instead of discarding them.
   const {
-    clearPendingReviewComments,
     handlePendingReviewCommentRemoved,
     handlePendingReviewCommentUpserted,
     pendingReviewComments,
+    submitPendingReview,
   } = usePendingReviewComments({
     loadState,
+    onCardRemoved: handleCommentDeleted,
     onRestored: handleCommentSaved,
     pathToItemId: treeSource?.pathToItemId ?? null,
     pullHeadSha,
@@ -806,92 +799,21 @@ function ReviewUIInner({
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [editSession.dirtyFiles.length, pendingReviewComments.size]);
+  // Submits the batch through the pending-review hook, which keeps every
+  // draft when GitHub refuses; on success the refetch re-injects the
+  // submitted comments as real threads and adds the summary to the feed.
   const handleSubmitReview = useCallback(
     async (event: PullReviewEvent, body: string) => {
-      const token = getGitHubToken();
-      if (pullRequest == null || token === '') {
-        throw new Error(
-          'Submitting a review requires signing in or saving a token.'
-        );
+      try {
+        await submitPendingReview(event, body);
+      } catch (error) {
+        toastRequestError(error, 'Submitting the review failed.');
+        throw error;
       }
-      const entries = [...pendingReviewComments.values()];
-      const commitChoice = chooseReviewCommit(entries, pullHeadSha);
-      if (commitChoice.staleEntries.length > 0) {
-        toastRequestError(
-          new Error(describeStaleReviewEntries(commitChoice.staleEntries)),
-          'Submitting the review failed.'
-        );
-      }
-      const comments: PullReviewDraftComment[] = [];
-      for (const entry of entries) {
-        const anchor = createCommentAnchor(entry.path, entry.range);
-        if (anchor != null) {
-          comments.push({ ...anchor, body: entry.message });
-        }
-      }
-      await submitPullReview(
-        pullRequest,
-        token,
-        event,
-        body,
-        comments,
-        commitChoice.commitId
-      ).catch((error: unknown) =>
-        toastRequestError(error, 'Submitting the review failed.')
-      );
-      // Drop the local pending cards and their sidebar entries; the refetch
-      // below re-injects the submitted comments as real GitHub threads and
-      // adds the review summary to the discussion feed. Entries carry only
-      // their file path, so each resolves its item id here; removals are
-      // grouped per file so each item re-renders once, not once per comment.
-      const viewer = viewerRef.current;
-      const pathToItemId = treeSource?.pathToItemId;
-      const keysByItemId = new Map<string, Set<string>>();
-      for (const entry of entries) {
-        const itemId = pathToItemId?.get(entry.path);
-        if (itemId == null) {
-          continue;
-        }
-        let keys = keysByItemId.get(itemId);
-        if (keys == null) {
-          keys = new Set();
-          keysByItemId.set(itemId, keys);
-        }
-        keys.add(entry.key);
-        handleCommentDeleted({ itemId, key: entry.key });
-      }
-      for (const [itemId, keys] of keysByItemId) {
-        const item = viewer?.getItem(itemId);
-        if (
-          viewer == null ||
-          item == null ||
-          !isDiffItem(item) ||
-          item.annotations == null
-        ) {
-          continue;
-        }
-        const nextAnnotations = item.annotations.filter(
-          (annotation) => !keys.has(annotation.metadata.key)
-        );
-        if (nextAnnotations.length !== item.annotations.length) {
-          item.annotations = nextAnnotations;
-          incrementItemVersion(item);
-          viewer.updateItem(item);
-        }
-      }
-      clearPendingReviewComments();
       setThreadsRefreshTick((tick) => tick + 1);
       toast.success('Review submitted.');
     },
-    [
-      clearPendingReviewComments,
-      getGitHubToken,
-      handleCommentDeleted,
-      pendingReviewComments,
-      pullHeadSha,
-      pullRequest,
-      treeSource,
-    ]
+    [submitPendingReview]
   );
   const handleToggleFileTreeOverlay = useCallback(() => {
     setFileTreeOverlayOpen((open) => !open);
@@ -904,6 +826,11 @@ function ReviewUIInner({
       setFileTreeOverlayOpen(false);
       const viewer = viewerRef.current;
       if (viewer == null) {
+        return;
+      }
+      // A file-level comment sits above the file's lines: go to the file.
+      if (comment.lineType === 'file') {
+        handleFileHeaderSelect(comment.itemId);
         return;
       }
       viewer.setSelectedLines({
@@ -932,7 +859,7 @@ function ReviewUIInner({
         behavior: 'smooth-auto',
       });
     },
-    [recordViewTarget]
+    [handleFileHeaderSelect, recordViewTarget]
   );
   const paletteCommands = useMemo((): PaletteRunnableEntry[] => {
     const commands: PaletteRunnableEntry[] = [

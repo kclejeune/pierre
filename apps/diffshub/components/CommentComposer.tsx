@@ -5,6 +5,7 @@ import { type Ref, useImperativeHandle, useRef, useState } from 'react';
 import { InlineConfirm } from './InlineConfirm';
 import { MarkdownEditor } from './MarkdownEditor';
 import { Button } from '@/components/Button';
+import { cn } from '@/lib/cn';
 import {
   clearCommentDraft,
   readCommentDraft,
@@ -20,6 +21,33 @@ export interface CommentComposerHandle {
   // that submit already captured the body, and success clears the draft, so
   // appended text would be lost.
   append(text: string): boolean;
+}
+
+// The collapsed stand-in for a composer: an input-looking button that opens
+// the real CommentComposer when clicked, so a page of threads doesn't mount an
+// editor per thread. Callers pass the surface colors (border, background) for
+// the card it sits on through `className`.
+export function ComposerTrigger({
+  className,
+  label,
+  onOpen,
+}: {
+  className?: string;
+  label: string;
+  onOpen(): void;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'text-muted-foreground hover:border-foreground/30 hover:text-foreground focus-visible:ring-ring w-full min-w-0 cursor-text rounded-md border px-3 py-1.5 text-left text-[13px] transition-colors outline-none focus-visible:ring-2',
+        className
+      )}
+      onClick={onOpen}
+    >
+      {label}
+    </button>
+  );
 }
 
 interface CommentComposerProps {

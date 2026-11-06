@@ -1,12 +1,12 @@
 import type { SelectedLineRange } from '@pierre/diffs';
 
-import { toGitHubDiffSide } from './pullReviewThreads';
+import {
+  type GitHubCommentAnchor,
+  isFileCommentRange,
+  toGitHubDiffSide,
+} from './pullReviewThreads';
 import { fetchReportingRejection } from './rejectedCredential';
-import type {
-  GitHubDiffSide,
-  PullDiscussionComment,
-  PullReviewComment,
-} from './types';
+import type { PullDiscussionComment, PullReviewComment } from './types';
 
 // Identifies the pull request a viewer route displays, for review-comment
 // API calls.
@@ -14,14 +14,6 @@ export interface PullRequestRef {
   number: string;
   owner: string;
   repo: string;
-}
-
-interface NewCommentAnchor {
-  line: number;
-  path: string;
-  side: GitHubDiffSide;
-  startLine?: number;
-  startSide?: GitHubDiffSide;
 }
 
 export interface PullCommentsPayload {
@@ -77,7 +69,7 @@ export async function postPullReviewReply(
 export async function postPullReviewComment(
   pull: PullRequestRef,
   token: string,
-  anchor: NewCommentAnchor,
+  anchor: GitHubCommentAnchor,
   body: string,
   commitId?: string
 ): Promise<PullReviewComment> {
@@ -137,7 +129,7 @@ export type PullReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
 
 // One batched inline comment in a review submission: the anchor fields plus
 // the comment text.
-export interface PullReviewDraftComment extends NewCommentAnchor {
+export interface PullReviewDraftComment extends GitHubCommentAnchor {
   body: string;
 }
 
@@ -230,12 +222,14 @@ export async function deletePullDiscussionComment(
 export function createCommentAnchor(
   path: string,
   range: SelectedLineRange
-): NewCommentAnchor | null {
+): GitHubCommentAnchor | null {
   const endSide = range.endSide ?? range.side;
-  if (endSide == null) {
+  // File-level ranges have no line anchor; DiffsHub can't start file-level
+  // comments.
+  if (endSide == null || isFileCommentRange(range)) {
     return null;
   }
-  const anchor: NewCommentAnchor = {
+  const anchor: GitHubCommentAnchor = {
     line: range.end,
     path,
     side: toGitHubDiffSide(endSide),

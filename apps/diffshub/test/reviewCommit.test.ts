@@ -2,7 +2,9 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   chooseReviewCommit,
+  describeOutdatedPendingReview,
   describeStaleReviewEntries,
+  describeUnsaveableReviewEntries,
 } from '@/lib/reviewCommit';
 import type { PendingReviewComment } from '@/lib/types';
 
@@ -73,5 +75,26 @@ describe('describeStaleReviewEntries', () => {
       '5 pending comments were written on an earlier push'
     );
     expect(message).toContain('(src/a.ts:4, src/b.ts:4, src/c.ts:4, 2 more)');
+  });
+});
+
+describe('describeUnsaveableReviewEntries', () => {
+  test('names the drafts GitHub cannot take', () => {
+    expect(
+      describeUnsaveableReviewEntries([
+        entry('a', undefined, 7),
+        entry('b', undefined),
+      ])
+    ).toStartWith(
+      "2 pending comments can't be added to your pending review on GitHub (src/a.ts:7, src/b.ts:4)."
+    );
+  });
+});
+
+describe('describeOutdatedPendingReview', () => {
+  test('points at the older review on GitHub', () => {
+    expect(describeOutdatedPendingReview([entry('a', NEW, 3)])).toBe(
+      "1 draft comment on this push can't be added to your pending review on GitHub, which was started on an earlier push of this pull request (src/a.ts:3). Submit or discard that review on GitHub, then submit again."
+    );
   });
 });

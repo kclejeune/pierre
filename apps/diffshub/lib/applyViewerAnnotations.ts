@@ -9,12 +9,24 @@ interface ApplyViewerAnnotationsOptions<
   Entry,
   Metadata extends CommentMetadata,
 > {
-  createAnnotation(entry: Entry): DiffLineAnnotation<Metadata>;
+  // `fileDiff` is the entry's file, for annotations whose side depends on it.
+  createAnnotation(
+    entry: Entry,
+    fileDiff: FileDiffMetadata
+  ): DiffLineAnnotation<Metadata>;
   // Annotation identity within an item: entries whose key is already present
   // on the item are skipped, so re-application is idempotent.
   getKey(entry: Entry): string;
   getPath(entry: Entry): string;
-  // Fired once per injected annotation after the item accepts the update.
+  // Whether an annotation already on the item under the entry's key shows
+  // outdated content and should be replaced by a fresh one. Without it,
+  // present annotations are always kept.
+  isStale?(
+    entry: Entry,
+    annotation: DiffLineAnnotation<CommentMetadata>
+  ): boolean;
+  // Fired once per injected or replaced annotation after the item accepts
+  // the update.
   onApplied(
     fileDiff: FileDiffMetadata,
     itemId: string,
@@ -27,7 +39,8 @@ interface ApplyViewerAnnotationsOptions<
 // generation (review threads, pending review cards): resolves each entry's
 // item by file path, batches per file so each updateItem call — a synchronous
 // layout/render pass — happens once per item, dedupes against annotations the
-// item already has, and reports every injected annotation via onApplied.
+// item already has (replacing ones `isStale` flags), and reports every
+// injected annotation via onApplied.
 // Entries whose path is absent from the diff are skipped.
 export function applyViewerAnnotations<Entry, Metadata extends CommentMetadata>(
   viewer: CodeViewHandle<CommentMetadata, undefined>,
@@ -55,23 +68,32 @@ export function applyViewerAnnotations<Entry, Metadata extends CommentMetadata>(
       continue;
     }
     const annotations = item.annotations ?? [];
-    const existingKeys = new Set(
-      annotations.map((annotation) => annotation.metadata.key)
+    const existingByKey = new Map(
+      annotations.map((annotation) => [annotation.metadata.key, annotation])
     );
-    const fresh = itemEntries
-      .filter((entry) => !existingKeys.has(options.getKey(entry)))
-      .map((entry) => ({ annotation: options.createAnnotation(entry), entry }));
+    // Keys are unique per item; a Map keeps replacements in place and
+    // appends new keys.
+    const next = new Map<string, DiffLineAnnotation<CommentMetadata>>(
+      existingByKey
+    );
+    const fresh: {
+      annotation: DiffLineAnnotation<Metadata>;
+      entry: Entry;
+    }[] = [];
+    for (const entry of itemEntries) {
+      const key = options.getKey(entry);
+      const existing = existingByKey.get(key);
+      if (existing != null && options.isStale?.(entry, existing) !== true) {
+        continue;
+      }
+      const annotation = options.createAnnotation(entry, item.fileDiff);
+      fresh.push({ annotation, entry });
+      next.set(key, annotation);
+    }
     if (fresh.length === 0) {
       continue;
     }
-    // The upcast to the metadata union is safe (Metadata extends
-    // CommentMetadata) but unprovable to TS: DiffLineAnnotation wraps its
-    // parameter in a distributive conditional that an unresolved generic
-    // cannot flow through.
-    item.annotations = [
-      ...annotations,
-      ...fresh.map((f) => f.annotation as DiffLineAnnotation<CommentMetadata>),
-    ];
+    item.annotations = [...next.values()];
     incrementItemVersion(item);
     if (!viewer.updateItem(item)) {
       continue;

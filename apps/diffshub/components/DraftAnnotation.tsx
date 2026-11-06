@@ -5,11 +5,12 @@ import { useEffect, useRef, useState } from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { InlineConfirm } from './InlineConfirm';
-import { MarkdownEditor } from './MarkdownEditor';
+import { applyEdit, MarkdownEditor } from './MarkdownEditor';
 import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
 import { annotationCardBase, getRandomPersonaAuthor } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
+import { buildSuggestionBlock } from '@/lib/suggestedChange';
 import type { CommentAuthor, DraftCommentMetadata } from '@/lib/types';
 
 interface DraftAnnotationProps {
@@ -21,6 +22,9 @@ interface DraftAnnotationProps {
   // Whether batching into a review is possible at all (a PR view with a
   // saved token). When false the card keeps its single-action layout.
   reviewEnabled?: boolean;
+  // The head-side lines the draft is anchored to, when it can carry a
+  // suggested change (a pull request view, head side, lines loaded).
+  suggestionLines?: readonly string[] | null;
   onCancel(itemId: string, key: string): void;
   // May reject when publishing to GitHub fails (already surfaced to the
   // user); the draft stays open with its text intact in that case.
@@ -43,6 +47,7 @@ export function DraftAnnotation({
   itemId,
   pendingReviewCount = 0,
   reviewEnabled = false,
+  suggestionLines,
   onCancel,
   onSave,
   onSaveToReview,
@@ -92,6 +97,36 @@ export function DraftAnnotation({
   // primary action (GitHub muscle memory); otherwise single comment.
   async function handleSave() {
     await submitWith(reviewActive ? 'review' : 'single');
+  }
+
+  // Text changes also land on the annotation metadata, which carries the
+  // draft across virtualizer remounts (see the state seed above).
+  function updateMessage(next: string) {
+    annotation.metadata.message = next;
+    setMessage(next);
+  }
+
+  // Inserts a ```suggestion fence holding the anchored lines at the cursor,
+  // on its own line, and selects the lines so typing replaces them.
+  function insertSuggestion() {
+    const textarea = textareaRef.current;
+    if (suggestionLines == null) {
+      return;
+    }
+    const block = buildSuggestionBlock(suggestionLines);
+    if (textarea == null) {
+      updateMessage(message === '' ? block : `${message}\n${block}`);
+      return;
+    }
+    const before = textarea.value.slice(0, textarea.selectionStart);
+    const prefix = before === '' || before.endsWith('\n') ? '' : '\n';
+    const bodyStart = prefix.length + block.indexOf('\n') + 1;
+    const bodyEnd = prefix.length + block.lastIndexOf('\n');
+    applyEdit(textarea, {
+      replacement: `${prefix}${block}\n`,
+      selectionEnd: Math.max(bodyStart, bodyEnd),
+      selectionStart: bodyStart,
+    });
   }
 
   function tryCancel() {
@@ -174,10 +209,7 @@ export function DraftAnnotation({
           textareaRef={textareaRef}
           value={message}
           onCancel={tryCancel}
-          onChange={(next) => {
-            annotation.metadata.message = next;
-            setMessage(next);
-          }}
+          onChange={updateMessage}
           onSubmit={() => void handleSave()}
         />
       </div>
@@ -190,6 +222,19 @@ export function DraftAnnotation({
         >
           Cancel
         </Button>
+        {suggestionLines != null && (
+          <Button
+            type="button"
+            variant="muted"
+            size="sm"
+            disabled={isSaving}
+            className="text-muted-foreground hover:text-foreground mr-auto font-normal hover:no-underline"
+            title="Suggest a replacement for the selected lines"
+            onClick={insertSuggestion}
+          >
+            Suggest change
+          </Button>
+        )}
         {reviewAvailable ? (
           <span className="flex items-center gap-2">
             <Button

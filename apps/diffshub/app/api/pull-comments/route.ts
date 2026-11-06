@@ -1,5 +1,6 @@
 import { type NextRequest } from 'next/server';
 
+import { sendGitHubGraphQL } from '@/lib/githubCommitServer';
 import { isFullCommitSha } from '@/lib/githubDiffSource';
 import {
   createGitHubAPIURL,
@@ -17,13 +18,16 @@ import {
 } from '@/lib/githubProxyResponse';
 import { createJSONResponse } from '@/lib/jsonResponse';
 import { parseJSONBody } from '@/lib/parseJSONBody';
+import { isGitHubDiffSide, readCommentAnchor } from '@/lib/pullReviewThreads';
+import {
+  type CommentReaction,
+  readReactionGroups,
+  readRestReactions,
+} from '@/lib/reactions';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
-import type {
-  GitHubDiffSide,
-  PullDiscussionComment,
-  PullReviewComment,
-} from '@/lib/types';
+import type { PullDiscussionComment, PullReviewComment } from '@/lib/types';
+import { asRecord } from '@/lib/untypedJson';
 
 // Proxies GitHub pull-request review comments for the configured instance:
 //   GET    ?owner&repo&pull            → all review comments plus PR-level
@@ -78,26 +82,34 @@ async function handleGET(request: NextRequest) {
   // The PR-level discussion (issue comments, review summaries) is best-effort
   // extra context: any failure there degrades to an empty list rather than
   // blocking the inline threads.
-  const [reviewResult, issueResult, reviewsResult] = await Promise.all([
-    fetchAllPages(
-      environment,
-      `/repos/${owner}/${repo}/pulls/${pull}/comments`,
-      token,
-      request.signal
-    ).catch(() => 'unreachable' as const),
-    fetchAllPages(
-      environment,
-      `/repos/${owner}/${repo}/issues/${pull}/comments`,
-      token,
-      request.signal
-    ).catch(() => null),
-    fetchAllPages(
-      environment,
-      `/repos/${owner}/${repo}/pulls/${pull}/reviews`,
-      token,
-      request.signal
-    ).catch(() => null),
-  ]);
+  // Review summaries' reactions come from GraphQL alongside the REST reads:
+  // REST reports no tallies on reviews.
+  const [reviewResult, issueResult, reviewsResult, reviewReactions] =
+    await Promise.all([
+      fetchAllPages(
+        environment,
+        `/repos/${owner}/${repo}/pulls/${pull}/comments`,
+        token,
+        request.signal
+      ).catch(() => 'unreachable' as const),
+      fetchAllPages(
+        environment,
+        `/repos/${owner}/${repo}/issues/${pull}/comments`,
+        token,
+        request.signal
+      ).catch(() => null),
+      fetchAllPages(
+        environment,
+        `/repos/${owner}/${repo}/pulls/${pull}/reviews`,
+        token,
+        request.signal
+      ).catch(() => null),
+      token == null
+        ? null
+        : fetchReviewReactions(owner, repo, Number(pull), token).catch(
+            () => null
+          ),
+    ]);
   if (reviewResult === 'unreachable') {
     return createUnreachableResponse(environment);
   }
@@ -105,8 +117,25 @@ async function handleGET(request: NextRequest) {
     return reviewResult.failure;
   }
 
+  // The requester's pending comments belong to the pending batch (shown as
+  // pending cards), not the published threads. GitHub Enterprise leaves them
+  // out of this list; this drops them should an instance include them.
+  const pendingReviewIds = new Set(
+    reviewsResult != null && 'records' in reviewsResult
+      ? reviewsResult.records.flatMap((record) => {
+          const review = asRecord(record);
+          return review?.state === 'PENDING' && typeof review.id === 'number'
+            ? [review.id]
+            : [];
+        })
+      : []
+  );
   const comments: PullReviewComment[] = [];
   for (const record of reviewResult.records) {
+    const reviewId = asRecord(record)?.pull_request_review_id;
+    if (typeof reviewId === 'number' && pendingReviewIds.has(reviewId)) {
+      continue;
+    }
     const normalized = normalizeReviewComment(record);
     if (normalized != null) {
       comments.push(normalized);
@@ -131,6 +160,9 @@ async function handleGET(request: NextRequest) {
     }
   }
   discussion.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  if (token != null) {
+    await addViewerReactions(comments, discussion, reviewReactions, token);
+  }
 
   return createJSONResponse({ comments, discussion });
 }
@@ -503,25 +535,20 @@ function normalizeReviewDraftComments(
 function parseCommentAnchor(
   record: Record<string, unknown>
 ): Record<string, unknown> | null {
-  const path = record.path;
-  const line = record.line;
-  const side = record.side;
-  if (
-    typeof path !== 'string' ||
-    path === '' ||
-    typeof line !== 'number' ||
-    !isGitHubDiffSide(side)
-  ) {
+  const anchor = readCommentAnchor({
+    line: record.line,
+    path: record.path,
+    side: record.side,
+    startLine: record.startLine,
+    startSide: record.startSide,
+  });
+  if (anchor == null) {
     return null;
   }
-  const anchor: Record<string, unknown> = { line, path, side };
-  if (typeof record.startLine === 'number' && record.startLine !== line) {
-    anchor.start_line = record.startLine;
-    anchor.start_side = isGitHubDiffSide(record.startSide)
-      ? record.startSide
-      : side;
-  }
-  return anchor;
+  const { line, path, side, startLine, startSide } = anchor;
+  return startLine == null
+    ? { line, path, side }
+    : { line, path, side, start_line: startLine, start_side: startSide };
 }
 
 // Resolves the pull's current head commit, or a ready-to-return failure
@@ -587,10 +614,12 @@ function normalizeReviewComment(comment: unknown): PullReviewComment | null {
     inReplyToId:
       typeof record.in_reply_to_id === 'number' ? record.in_reply_to_id : null,
     line: typeof record.line === 'number' ? record.line : null,
+    ...readReactionFields(record),
     path: record.path,
     side: isGitHubDiffSide(record.side) ? record.side : null,
     startLine: typeof record.start_line === 'number' ? record.start_line : null,
     startSide: isGitHubDiffSide(record.start_side) ? record.start_side : null,
+    ...(record.subject_type === 'file' ? { subjectType: 'file' as const } : {}),
   };
 }
 
@@ -621,6 +650,7 @@ function normalizeDiscussionComment(
     htmlUrl: typeof record.html_url === 'string' ? record.html_url : null,
     id: record.id,
     kind: 'comment',
+    ...readReactionFields(record),
     reviewState: null,
   };
 }
@@ -659,6 +689,7 @@ function normalizeReviewSummary(review: unknown): PullDiscussionComment | null {
     htmlUrl: typeof record.html_url === 'string' ? record.html_url : null,
     id: record.id,
     kind: 'review',
+    ...readReactionFields(record),
     reviewState: state,
   };
 }
@@ -689,15 +720,134 @@ async function forwardNormalizedResponse(
   return createJSONResponse({ comment });
 }
 
+// A REST comment's node id and reaction tallies. Review summaries carry no
+// tallies over REST; the viewer-state pass below fills them in.
+function readReactionFields(record: Record<string, unknown>): {
+  nodeId?: string;
+  reactions: CommentReaction[];
+} {
+  return {
+    ...(typeof record.node_id === 'string' ? { nodeId: record.node_id } : {}),
+    reactions: readRestReactions(record.reactions),
+  };
+}
+
+// A Reactable's reactions, with which are the viewer's.
+const REACTION_FIELDS = `
+  id
+  reactionGroups {
+    content
+    viewerHasReacted
+    reactors { totalCount }
+  }
+`;
+
+const REACTIONS_QUERY = `query ($ids: [ID!]!) {
+  nodes(ids: $ids) { ... on Reactable { ${REACTION_FIELDS} } }
+}`;
+const REACTIONS_BATCH = 100;
+
+const REVIEW_REACTIONS_QUERY = `query ($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviews(first: 100) { nodes { ${REACTION_FIELDS} } }
+    }
+  }
+}`;
+
+// The pull request's review summaries' reactions by review node id. Reviews
+// past the first 100 are absent.
+async function fetchReviewReactions(
+  owner: string,
+  repo: string,
+  number: number,
+  token: string
+): Promise<Map<string, CommentReaction[]>> {
+  const data = asRecord(
+    await sendGitHubGraphQL(
+      REVIEW_REACTIONS_QUERY,
+      { number, owner, repo },
+      token
+    )
+  );
+  const reviews = asRecord(
+    asRecord(asRecord(data?.repository)?.pullRequest)?.reviews
+  );
+  return readReactionNodes(reviews?.nodes);
+}
+
+// Reactable nodes' reactions by node id, skipping malformed ones.
+function readReactionNodes(nodes: unknown): Map<string, CommentReaction[]> {
+  const byId = new Map<string, CommentReaction[]>();
+  for (const node of Array.isArray(nodes) ? nodes : []) {
+    const record = asRecord(node);
+    const reactions = readReactionGroups(record?.reactionGroups);
+    if (typeof record?.id === 'string' && reactions != null) {
+      byId.set(record.id, reactions);
+    }
+  }
+  return byId;
+}
+
+// Replaces tallies with GitHub's GraphQL view of them, which also says which
+// reactions are the viewer's: review summaries from `reviewReactions`
+// (fetched alongside the REST reads; REST reports none for reviews), and
+// comments GitHub reports reactions on in one more request (comments without
+// any need none, so it is usually skipped). Anything GraphQL couldn't answer
+// for (an older GitHub Enterprise without ReactionGroup.reactors, a token
+// without GraphQL access) keeps its REST tallies and is marked
+// reactionsViewerUnknown.
+async function addViewerReactions(
+  comments: readonly PullReviewComment[],
+  discussion: readonly PullDiscussionComment[],
+  reviewReactions: ReadonlyMap<string, CommentReaction[]> | null,
+  token: string
+): Promise<void> {
+  const pending = new Map<string, PullReviewComment | PullDiscussionComment>();
+  const reactedIds: string[] = [];
+  for (const comment of [...comments, ...discussion]) {
+    const isReview = 'kind' in comment && comment.kind === 'review';
+    if (
+      comment.nodeId != null &&
+      (isReview || (comment.reactions?.length ?? 0) > 0)
+    ) {
+      pending.set(comment.nodeId, comment);
+      if (!isReview) {
+        reactedIds.push(comment.nodeId);
+      }
+    }
+  }
+  const batches: string[][] = [];
+  for (let index = 0; index < reactedIds.length; index += REACTIONS_BATCH) {
+    batches.push(reactedIds.slice(index, index + REACTIONS_BATCH));
+  }
+  const results = await Promise.all(
+    batches.map((batch) =>
+      sendGitHubGraphQL(REACTIONS_QUERY, { ids: batch }, token)
+        .then((data) => readReactionNodes(asRecord(data)?.nodes))
+        .catch(() => null)
+    )
+  );
+  const resolved = new Map(
+    [reviewReactions, ...results].flatMap((result) =>
+      result == null ? [] : [...result]
+    )
+  );
+  for (const [nodeId, comment] of pending) {
+    const reactions = resolved.get(nodeId);
+    if (reactions == null) {
+      comment.reactionsViewerUnknown = true;
+    } else {
+      comment.reactions = reactions;
+    }
+  }
+}
+
 function buildGitHubHeaders(token: string | undefined): HeadersInit {
   return {
     ...createGitHubJSONHeaders(token),
     'Content-Type': 'application/json',
   };
-}
-
-function isGitHubDiffSide(value: unknown): value is GitHubDiffSide {
-  return value === 'LEFT' || value === 'RIGHT';
 }
 
 function isValidSegment(value: unknown): value is string {

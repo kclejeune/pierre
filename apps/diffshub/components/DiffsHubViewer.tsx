@@ -32,10 +32,12 @@ import { toast } from 'sonner';
 
 import { DraftAnnotation } from './DraftAnnotation';
 import { ExampleAnnotation } from './ExampleAnnotation';
+import type { SuggestionTarget } from './MarkdownContent';
 import { MarkdownDocAnnotation } from './MarkdownDocAnnotation';
 import { ThemedCodeView } from './ThemedCodeView';
 import { ThreadAnnotation } from './ThreadAnnotation';
 import { useChromeThemeProps } from './useChromeThemeProps';
+import type { SuggestionCommitInput } from './usePullEditSession';
 import { buildAnnotationThemeStyle } from '@/lib/annotationThemeStyle';
 import { cn } from '@/lib/cn';
 import { isRangeInsideSingleHunk } from '@/lib/commentableRange';
@@ -64,11 +66,14 @@ import {
 import {
   createPullReviewThread,
   createThreadAnnotation,
+  FILE_COMMENT_LINE,
 } from '@/lib/pullReviewThreads';
+import type { CommentReaction } from '@/lib/reactions';
 import {
   createLocalSavedCommentEvent,
   createThreadSavedCommentEvent,
 } from '@/lib/savedCommentEvent';
+import { getNewFileLines, hasSuggestion } from '@/lib/suggestedChange';
 import { getSymbolName } from '@/lib/symbolSearch';
 import { diffshubChromeMapping } from '@/lib/theme/diffshubChromeMapping';
 import { toastRequestError } from '@/lib/toastRequestError';
@@ -77,8 +82,12 @@ import type {
   CommentMetadata,
   DiffsHubDeletedCommentEvent,
   DiffsHubSavedCommentEvent,
+  DraftCommentMetadata,
   PendingReviewComment,
+  PullReviewComment,
+  PullReviewThread,
   SavedCommentMetadata,
+  ThreadCommentMetadata,
 } from '@/lib/types';
 
 const EMPTY_DOC_RAIL_COMMENTS: DiffLineAnnotation<CommentMetadata>[] = [];
@@ -96,6 +105,8 @@ function isDocRailComment(
   return (
     isDiffAnnotation<CommentMetadata>(annotation) &&
     annotation.metadata.kind !== 'doc' &&
+    // File-level comments keep their place beside the document.
+    annotation.lineNumber !== FILE_COMMENT_LINE &&
     annotation.side === getDocAnnotationSide(item.fileDiff)
   );
 }
@@ -125,8 +136,12 @@ interface ActiveDraftComment {
 
 // The slice of the pull edit session the viewer needs: gating the per-file
 // pencil toggle, blocking new comments on files with shifted lines, and the
-// editor change/complete callbacks CodeView delivers.
+// editor change/complete callbacks CodeView delivers, plus committing review
+// suggestions.
 export interface ViewerEditSession {
+  // True once the preflight confirmed a commit can land.
+  canCommit: boolean;
+  commitSuggestion(input: SuggestionCommitInput): Promise<void>;
   canEdit(item: CodeViewItem<CommentMetadata>): boolean;
   isEditing(itemId: string): boolean;
   isFileLocked(itemId: string): boolean;
@@ -557,7 +572,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
               viewer,
               itemId,
               key,
-              createThreadAnnotation(thread)
+              createThreadAnnotation(thread, item.fileDiff)
             );
             if (updatedItem == null) {
               return;
@@ -612,25 +627,109 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
     return token == null || token === '' ? undefined : token;
   };
 
-  // Locates a thread annotation for the reply/edit/delete handlers below and
-  // asserts the preconditions they share (mounted viewer, saved token).
-  const getThreadContext = (itemId: string, key: string) => {
+  // A thread annotation in a mounted item, by card key.
+  const findThreadAnnotation = (itemId: string, key: string) => {
     const { current: viewer } = viewerRef;
-    const token = getWriteToken();
-    if (viewer == null || pullRequest == null || token == null) {
-      return null;
-    }
-    const item = viewer.getItem(itemId);
-    if (item == null || !isDiffItem(item)) {
+    const item = viewer?.getItem(itemId);
+    if (viewer == null || item == null || !isDiffItem(item)) {
       return null;
     }
     const annotation = item.annotations?.find(
       (candidate) => candidate.metadata.key === key
     );
-    if (annotation == null || !isThreadAnnotation(annotation)) {
+    return annotation != null && isThreadAnnotation(annotation)
+      ? { annotation, item, viewer }
+      : null;
+  };
+
+  // findThreadAnnotation for the reply/edit/delete handlers below, plus the
+  // preconditions they share (a pull request and a saved token).
+  const getThreadContext = (itemId: string, key: string) => {
+    const found = findThreadAnnotation(itemId, key);
+    const token = getWriteToken();
+    return found == null || pullRequest == null || token == null
+      ? null
+      : { ...found, pullRequest, token };
+  };
+
+  // Replaces one comment of a thread annotation with `patch` applied and
+  // returns the updated thread.
+  const replaceThreadComment = (
+    viewer: CodeViewHandle<CommentMetadata, undefined>,
+    itemId: string,
+    annotation: DiffLineAnnotation<ThreadCommentMetadata>,
+    commentId: number,
+    patch: Partial<PullReviewComment>
+  ): PullReviewThread => {
+    const { thread } = annotation.metadata;
+    const nextThread = {
+      ...thread,
+      comments: thread.comments.map((comment) =>
+        comment.id === commentId ? { ...comment, ...patch } : comment
+      ),
+    };
+    replaceAnnotation(viewer, itemId, annotation.metadata.key, {
+      ...annotation,
+      metadata: { ...annotation.metadata, thread: nextThread },
+    });
+    return nextThread;
+  };
+
+  // The head-side lines a range covers in an item, or null when the range
+  // touches the base side or lines the diff didn't load. Suggestions replace
+  // head lines only.
+  const getHeadLines = (
+    itemId: string,
+    range: SelectedLineRange
+  ): { end: number; lines: string[]; start: number } | null => {
+    const item = viewerRef.current?.getItem(itemId);
+    if (
+      item == null ||
+      !isDiffItem(item) ||
+      range.side !== 'additions' ||
+      (range.endSide ?? range.side) !== 'additions'
+    ) {
       return null;
     }
-    return { annotation, item, pullRequest, token, viewer };
+    const start = Math.min(range.start, range.end);
+    const end = Math.max(range.start, range.end);
+    const lines = getNewFileLines(item.fileDiff, start, end);
+    return lines == null ? null : { end, lines, start };
+  };
+
+  const getDraftSuggestionLines = (
+    itemId: string,
+    annotation: DiffLineAnnotation<DraftCommentMetadata>
+  ): readonly string[] | null =>
+    pullRequest == null
+      ? null
+      : (getHeadLines(itemId, annotation.metadata.range)?.lines ?? null);
+
+  // What a thread's suggestions replace (its head-side lines) and a commit
+  // action when the viewer can push; null for threads without a suggestion
+  // or on the base side (deleted lines have nothing on the head to replace,
+  // so their suggestions render as-is).
+  const getSuggestionTarget = (
+    itemId: string,
+    annotation: DiffLineAnnotation<ThreadCommentMetadata>
+  ): SuggestionTarget | null => {
+    const { thread } = annotation.metadata;
+    if (!thread.comments.some((comment) => hasSuggestion(comment.body))) {
+      return null;
+    }
+    const head = getHeadLines(itemId, thread.range);
+    if (head == null) {
+      return null;
+    }
+    const { end, start } = head;
+    return {
+      onApply:
+        editSession.canCommit && getWriteToken() != null
+          ? (suggestion) =>
+              editSession.commitSuggestion({ end, itemId, start, suggestion })
+          : undefined,
+      originalLines: head.lines,
+    };
   };
 
   const handleThreadReply = useStableCallback(
@@ -659,6 +758,30 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
     }
   );
 
+  // Writes a comment's toggled reactions back onto its thread annotation;
+  // GitHub was already asked by the card.
+  const handleThreadReactionsChange = useStableCallback(
+    (
+      itemId: string,
+      key: string,
+      commentId: number,
+      reactions: readonly CommentReaction[]
+    ) => {
+      const found = findThreadAnnotation(itemId, key);
+      if (found != null) {
+        replaceThreadComment(
+          found.viewer,
+          itemId,
+          found.annotation,
+          commentId,
+          {
+            reactions: [...reactions],
+          }
+        );
+      }
+    }
+  );
+
   const handleThreadEditComment = useStableCallback(
     async (itemId: string, key: string, commentId: number, body: string) => {
       const context = getThreadContext(itemId, key);
@@ -666,7 +789,6 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
         return;
       }
       const { annotation, item, token, viewer } = context;
-      const { thread } = annotation.metadata;
       const edited = await editPullReviewComment(
         context.pullRequest,
         token,
@@ -675,18 +797,15 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       ).catch((error: unknown) =>
         toastRequestError(error, 'Editing the comment failed.')
       );
-      const nextThread = {
-        ...thread,
-        comments: thread.comments.map((comment) =>
-          comment.id === commentId ? { ...comment, body: edited.body } : comment
-        ),
-      };
-      replaceAnnotation(viewer, itemId, key, {
-        ...annotation,
-        metadata: { ...annotation.metadata, thread: nextThread },
-      });
+      const nextThread = replaceThreadComment(
+        viewer,
+        itemId,
+        annotation,
+        commentId,
+        { body: edited.body }
+      );
       // The sidebar shows the thread's first comment; keep it in sync.
-      if (thread.comments[0]?.id === commentId) {
+      if (annotation.metadata.thread.comments[0]?.id === commentId) {
         onCommentSaved(
           createThreadSavedCommentEvent(item.fileDiff, itemId, nextThread)
         );
@@ -902,6 +1021,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
             itemId={itemId}
             pendingReviewCount={pendingReviewCount}
             reviewEnabled={pullRequest != null && getWriteToken() != null}
+            suggestionLines={getDraftSuggestionLines(itemId, annotation)}
             onCancel={handleRemoveComment}
             onSave={handleSaveDraftComment}
             onSaveToReview={handleSaveDraftToReview}
@@ -918,6 +1038,8 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
             onDeleteComment={handleThreadDeleteComment}
             onEditComment={handleThreadEditComment}
             onReply={handleThreadReply}
+            suggestionTarget={getSuggestionTarget(itemId, annotation)}
+            onReactionsChange={handleThreadReactionsChange}
           />
         );
       }

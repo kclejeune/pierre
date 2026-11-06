@@ -24,6 +24,7 @@ import {
   CommentModerationButtons,
   useCommentModeration,
 } from './CommentModeration';
+import { CommentReactions } from './CommentReactions';
 import { MarkdownContent, RawMarkdownFallback } from './MarkdownContent';
 import { RelativeTime } from './RelativeTime';
 import { useGitHubUser } from './useGitHubUser';
@@ -226,6 +227,9 @@ function getCommentLineLabel(
   lineNumber: number,
   lineType: CommentLineType
 ): string {
+  if (lineType === 'file') {
+    return 'the file';
+  }
   if (lineType === 'context') {
     return `Line ${lineNumber}`;
   }
@@ -237,7 +241,7 @@ function getCommentLineClassName(
   side: AnnotationSide,
   lineType: CommentLineType
 ): string {
-  if (lineType === 'context') {
+  if (lineType === 'context' || lineType === 'file') {
     return 'text-muted-foreground';
   }
   // The themed chrome sets --diffshub-comment-add-fg / -del-fg with a shade
@@ -424,6 +428,16 @@ function DiscussionRow({
               markdown={preview}
             />
           )
+        )}
+        {!moderation.isEditing && (
+          <CommentReactions
+            canReact={
+              actions?.canWrite === true &&
+              comment.reactionsViewerUnknown !== true
+            }
+            nodeId={comment.nodeId}
+            reactions={comment.reactions}
+          />
         )}
         {moderation.isConfirmingDelete && actions != null && (
           <div className="w-full pt-1">

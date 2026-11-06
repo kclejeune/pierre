@@ -36,6 +36,16 @@ describe('side mapping', () => {
 });
 
 describe('createPullReviewThread', () => {
+  test('puts a file-level comment in the file-level slot, ignoring its line', () => {
+    const thread = createPullReviewThread(
+      createComment({ id: 3, line: 1, subjectType: 'file' })
+    );
+    expect(thread).toMatchObject({
+      lineNumber: 0,
+      range: { start: 0, side: 'additions', end: 0, endSide: 'additions' },
+    });
+  });
+
   test('anchors a single-line comment', () => {
     const thread = createPullReviewThread(createComment({ id: 1 }));
     expect(thread).toEqual({

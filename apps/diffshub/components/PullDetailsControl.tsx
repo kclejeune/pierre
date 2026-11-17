@@ -67,8 +67,8 @@ import { mergePullRequest, type PullMergeMethod } from '@/lib/pullMergeClient';
 import {
   type ConversationCounts,
   describeMergeHeadline,
-  isOverviewMetric,
   type OverviewCell,
+  plural,
   summarizeApprovals,
   summarizeChecks,
   summarizeConversations,
@@ -258,8 +258,8 @@ export function PullDetailsControl({
   });
   const showMergeControls = details.state === 'open' && canWrite;
   // Unresolved review conversations, the one overview number worth showing
-  // on the closed chip: it is what a reviewer acts on next. Only shown when
-  // resolution loaded and something is still open.
+  // on the closed chip: it is what a reviewer acts on next. Only known once
+  // resolution has loaded (`counted`).
   const unresolvedCount =
     conversations?.kind === 'counted'
       ? Math.max(0, conversations.total - conversations.resolved)
@@ -299,11 +299,11 @@ export function PullDetailsControl({
           )}
           {unresolvedCount > 0 && (
             <span
-              aria-label={
-                unresolvedCount === 1
-                  ? '1 unresolved conversation'
-                  : `${unresolvedCount} unresolved conversations`
-              }
+              aria-label={plural(
+                unresolvedCount,
+                'unresolved conversation',
+                'unresolved conversations'
+              )}
               className="text-muted-foreground flex shrink-0 items-center gap-0.5 text-[11px] tabular-nums"
             >
               <IconComment aria-hidden className="size-3" />
@@ -402,13 +402,12 @@ export function PullDetailsControl({
                       supplement.kind === 'error'
                         ? 'text-destructive'
                         : 'text-muted-foreground',
-                      supplementLoading && 'animate-pulse'
+                      checksCell.kind === 'loading' && 'animate-pulse'
                     )}
                   >
-                    {!isOverviewMetric(checksCell) &&
-                    checksCell.kind === 'unavailable'
+                    {checksCell.kind === 'unavailable'
                       ? checksCell.reason
-                      : supplementLoading
+                      : checksCell.kind === 'loading'
                         ? 'Loading checks…'
                         : 'No checks reported on the head commit.'}
                   </p>
@@ -1021,17 +1020,25 @@ function CheckRow({ check }: { check: PullCheck }) {
 function ReviewerRow({ reviewer }: { reviewer: PullReviewer }) {
   const verdict =
     reviewer.state === 'APPROVED'
-      ? { className: 'text-[#18a46c]', Icon: IconCheck, label: 'Approved' }
+      ? {
+          className: TONE_TEXT_CLASS.success,
+          Icon: IconCheck,
+          label: 'Approved',
+        }
       : reviewer.state === 'CHANGES_REQUESTED'
-        ? { className: 'text-red-500', Icon: IconX, label: 'Changes requested' }
+        ? {
+            className: TONE_TEXT_CLASS.failure,
+            Icon: IconX,
+            label: 'Changes requested',
+          }
         : reviewer.state === 'COMMENTED'
           ? {
-              className: 'text-muted-foreground',
+              className: TONE_TEXT_CLASS.neutral,
               Icon: IconMinus,
               label: 'Commented',
             }
           : {
-              className: 'text-amber-500',
+              className: TONE_TEXT_CLASS.pending,
               Icon: IconClockArrow,
               label: 'Review pending',
             };

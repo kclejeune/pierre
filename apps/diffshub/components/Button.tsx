@@ -2,6 +2,7 @@ import { Slot } from '@radix-ui/react-slot';
 import { cva, type VariantProps } from 'class-variance-authority';
 import * as React from 'react';
 
+import { annotationBorderColor } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 
 const buttonVariants = cva(
@@ -16,6 +17,12 @@ const buttonVariants = cva(
           'bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60',
         outline:
           'border bg-background hover:bg-secondary hover:text-accent-foreground dark:hover:bg-input/50 dark:border-neutral-800 shadow-xs',
+        // Outline buttons on comment surfaces (composers, threads). `outline`
+        // fills with the page palette, which is white in the diff but the
+        // theme surface in the sidebar; this stays transparent over whichever
+        // surface holds it and uses the annotation border, so it looks the
+        // same in both.
+        annotationOutline: `border ${annotationBorderColor} bg-transparent text-[var(--diffshub-annotation-fg,var(--color-foreground))] hover:bg-[color-mix(in_srgb,currentColor_8%,transparent)]`,
         secondary:
           'bg-secondary text-secondary-foreground hover:bg-secondary/80',
         tertiary: 'bg-neutral-900/10 shadow-none',

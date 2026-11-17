@@ -23,7 +23,7 @@ import {
   MarkdownContent,
   MarkdownImage,
 } from './MarkdownContent';
-import { annotationBorderColor } from '@/lib/annotation';
+import { annotationBorderColor, annotationCardSurface } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import { isPlainLeftClick } from '@/lib/isPlainLeftClick';
 import {
@@ -321,7 +321,7 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
       data-diffshub-doc-item={itemId}
       data-diffshub-doc-state={contentsState.kind}
       className={cn(
-        `@container m-2 rounded-xl border ${annotationBorderColor} bg-[var(--diffshub-annotation-bg,var(--color-card))] font-sans text-[var(--diffshub-annotation-fg,var(--color-card-foreground))] shadow-[var(--diffshub-annotation-shadow,0_2px_4px_rgb(0_0_0_/_0.025),0_4px_8px_rgb(0_0_0_/_0.025))]`,
+        `@container m-2 ${annotationCardSurface}`,
         // With a comment rail the card spans the viewer column — the prose
         // track caps itself at a readable measure and the rail absorbs the
         // remaining width, so wide screens have no dead gutter to the right.

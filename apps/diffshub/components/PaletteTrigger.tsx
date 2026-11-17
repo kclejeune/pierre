@@ -10,11 +10,7 @@ interface PaletteTriggerProps {
   'aria-label': string;
   children: ReactNode;
   className?: string;
-  // Extra classes for the shortcut badge and the text label, so a cramped
-  // header can drop them at narrow widths and keep just the icon.
-  hintClassName?: string;
   icon: ReactNode;
-  labelClassName?: string;
   // The palette this opens, and the key of its shortcut for the hint.
   paletteId: PaletteId;
   shortcutKey: string;
@@ -30,10 +26,8 @@ export function PaletteTrigger({
   'aria-label': ariaLabel,
   children,
   className,
-  hintClassName,
   icon,
   initialQuery,
-  labelClassName,
   paletteId,
   shortcutKey,
 }: PaletteTriggerProps) {
@@ -48,10 +42,12 @@ export function PaletteTrigger({
       onClick={() => openPalette(paletteId, initialQuery)}
     >
       {icon}
-      <span className={cn('min-w-0 flex-1 truncate text-left', labelClassName)}>
+      {/* data-palette-label lets a cramped container (the diff header) drop
+          the text and keep the icon. */}
+      <span data-palette-label className="min-w-0 flex-1 truncate text-left">
         {children}
       </span>
-      <ShortcutHint className={hintClassName} shortcutKey={shortcutKey} />
+      <ShortcutHint shortcutKey={shortcutKey} />
     </button>
   );
 }

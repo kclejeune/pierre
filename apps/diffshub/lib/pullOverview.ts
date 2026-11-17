@@ -4,7 +4,7 @@ import type { PullCheck, PullDetails, PullReviewer } from './pullInfoClient';
 // summaries, and the headline icon.
 export type OverviewTone = 'failure' | 'neutral' | 'pending' | 'success';
 
-export interface OverviewSegment {
+interface OverviewSegment {
   count: number;
   tone: OverviewTone;
 }
@@ -12,7 +12,8 @@ export interface OverviewSegment {
 // One cell of the merge-status card (Checks, Comments, Approvals): a short
 // summary plus the segments its progress bar draws. Empty segments mean the
 // bar renders as the hatched "nothing here" placeholder.
-export interface OverviewMetric {
+interface OverviewMetric {
+  kind: 'metric';
   segments: OverviewSegment[];
   summary: string;
   tone: OverviewTone | null;
@@ -20,16 +21,12 @@ export interface OverviewMetric {
   toneCount: number;
 }
 
-// A metric still loading, or one GitHub could not report (e.g. the reviews
-// listing failed), shown in its cell instead of a summary and bar.
+// A metric, or one still loading, or one GitHub could not report (e.g. the
+// reviews listing failed), shown in its cell instead of a summary and bar.
 export type OverviewCell =
   | OverviewMetric
   | { kind: 'loading' }
   | { kind: 'unavailable'; reason: string };
-
-export function isOverviewMetric(cell: OverviewCell): cell is OverviewMetric {
-  return !('kind' in cell);
-}
 
 // Starts a metric from its bar segments (dropping empty ones); the returned
 // function finishes it with whichever summary the caller's branch picks.
@@ -39,7 +36,13 @@ function metricFrom(segments: OverviewSegment[]) {
     summary: string,
     tone: OverviewTone | null = null,
     toneCount = 0
-  ): OverviewMetric => ({ segments: nonEmpty, summary, tone, toneCount });
+  ): OverviewMetric => ({
+    kind: 'metric',
+    segments: nonEmpty,
+    summary,
+    tone,
+    toneCount,
+  });
 }
 
 // Checks cell: failing beats pending beats passing; the header trigger's CI
@@ -91,13 +94,12 @@ export function summarizeConversations(
       reason: 'Review comments could not be loaded.',
     };
   }
+  if (counts.total === 0) {
+    return metricFrom([])('No conversations');
+  }
   if (counts.kind === 'totalOnly') {
-    const metric = metricFrom([{ count: counts.total, tone: 'neutral' }]);
-    if (counts.total === 0) {
-      return metric('No conversations');
-    }
-    return metric(
-      counts.total === 1 ? '1 conversation' : `${counts.total} conversations`,
+    return metricFrom([{ count: counts.total, tone: 'neutral' }])(
+      plural(counts.total, 'conversation', 'conversations'),
       'neutral',
       counts.total
     );
@@ -108,9 +110,6 @@ export function summarizeConversations(
     { count: resolved, tone: 'success' },
     { count: unresolved, tone: 'pending' },
   ]);
-  if (total === 0) {
-    return metric('No conversations');
-  }
   if (unresolved > 0) {
     return metric(`${unresolved} unresolved`, 'pending', unresolved);
   }
@@ -153,7 +152,8 @@ export function summarizeApprovals(
   return metric(`${waiting} awaiting review`, 'pending', waiting);
 }
 
-function plural(count: number, one: string, many: string): string {
+// "1 check" / "3 checks": the count with the matching noun.
+export function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
@@ -176,8 +176,8 @@ export function describeMergeHeadline({
   details: PullDetails;
   reviewers: OverviewCell;
 }): OverviewHeadline {
-  const checks = isOverviewMetric(checksCell) ? checksCell : null;
-  const reviewers = isOverviewMetric(reviewersCell) ? reviewersCell : null;
+  const checks = checksCell.kind === 'metric' ? checksCell : null;
+  const reviewers = reviewersCell.kind === 'metric' ? reviewersCell : null;
   if (details.state === 'merged') {
     return {
       detail: 'The changes were merged into the base branch.',
@@ -244,7 +244,7 @@ export function describeMergeHeadline({
   const cells = [checksCell, reviewersCell];
   if (
     details.mergeable == null ||
-    cells.some((cell) => !isOverviewMetric(cell) && cell.kind === 'loading')
+    cells.some((cell) => cell.kind === 'loading')
   ) {
     return {
       detail: 'Waiting on GitHub for checks and mergeability.',

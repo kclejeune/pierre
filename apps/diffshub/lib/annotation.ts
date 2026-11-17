@@ -5,18 +5,11 @@ import type { CommentAuthor } from '@/lib/types';
 export const annotationBorderColor =
   'border-[var(--diffshub-annotation-border,var(--color-border))]';
 
-// Outline buttons inside comment composers and threads (Cancel, Add single
-// comment, Resolve). The stock outline variant fills with the page palette
-// (white in the diff, the theme surface in the sidebar), so the same button
-// looked different in each place. These stay transparent over whatever
-// surface holds them (the inline card, the sidebar) and share the annotation
-// border, so they read as the same outlined button everywhere. Pass as the
-// Button's className alongside variant="outline".
-export const composerSecondaryButtonClass =
-  'border-[var(--diffshub-annotation-border,var(--color-border))] bg-transparent text-[var(--diffshub-annotation-fg,var(--color-foreground))] shadow-none hover:bg-[color-mix(in_srgb,currentColor_8%,transparent)] hover:text-[var(--diffshub-annotation-fg,var(--color-foreground))] dark:border-[var(--diffshub-annotation-border,var(--color-border))] dark:hover:bg-[color-mix(in_srgb,currentColor_8%,transparent)]';
+// An annotation card's surface: rounded border, themed background and text,
+// and shadow. Cards add their own spacing and layout on top.
+export const annotationCardSurface = `rounded-xl border ${annotationBorderColor} bg-[var(--diffshub-annotation-bg,var(--color-card))] font-sans text-[var(--diffshub-annotation-fg,var(--color-card-foreground))] shadow-[var(--diffshub-annotation-shadow,0_2px_4px_rgb(0_0_0_/_0.025),0_4px_8px_rgb(0_0_0_/_0.025))]`;
 
-export const annotationCardBase =
-  'm-2 flex max-w-[600px] gap-2.5 rounded-xl border border-[var(--diffshub-annotation-border,var(--color-border))] bg-[var(--diffshub-annotation-bg,var(--color-card))] bg-clip-padding p-3 font-sans text-[var(--diffshub-annotation-fg,var(--color-card-foreground))] shadow-[var(--diffshub-annotation-shadow,0_2px_4px_rgb(0_0_0_/_0.025),0_4px_8px_rgb(0_0_0_/_0.025))]';
+export const annotationCardBase = `m-2 flex max-w-[600px] gap-2.5 bg-clip-padding p-3 ${annotationCardSurface}`;
 
 // All available reviewer personas, derived from /public/diffshub-avatars/ filenames.
 const AVATAR_NAMES = [

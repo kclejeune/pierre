@@ -15,6 +15,10 @@ import {
   groupPullReviewThreads,
 } from '@/lib/pullReviewThreads';
 import {
+  describeReviewThreadsLoad,
+  type PullReviewThreadsLoad,
+} from '@/lib/reviewThreadsLoad';
+import {
   applyReviewThreadStates,
   isSameReviewThreadState,
 } from '@/lib/reviewThreadState';
@@ -51,24 +55,15 @@ interface UsePullReviewThreadsOptions {
   viewerRef: RefObject<CodeViewHandle<CommentMetadata, undefined> | null>;
 }
 
-// How far the review threads have loaded, for consumers (the pull overview's
-// Comments cell) that must not mistake "not fetched yet" or "fetch failed"
-// for "this pull has no conversations". `ready` means the fetched threads are
-// already in the diff, so counts derived from the sidebar entries are
-// complete; `resolvedKnown` is false when thread resolution could not be read
-// (no token, or the GraphQL request failed), so resolved counts are unknown.
-export type PullReviewThreadsLoad =
-  | { kind: 'loading' }
-  | { kind: 'unavailable' }
-  | { kind: 'ready'; resolvedKnown: boolean };
-
 // Loads the pull request's review comments, groups them into threads, and
 // injects each thread as an annotation on the matching file item once the
 // viewer has finished loading. Threads' resolution status loads separately
 // (GraphQL, token only) so the comments don't wait on it; when it arrives,
 // or changes on a refetch, it is merged into cards already in the diff.
 // Re-applies after every fetch: already-injected threads are deduped by key,
-// so only new threads and changed states land.
+// so only new threads and changed states land. Returns how far loading has
+// got, with counts for threads that can't be shown (see
+// PullReviewThreadsLoad).
 export function usePullReviewThreads({
   loadState,
   onDiscussionLoaded,
@@ -82,13 +77,17 @@ export function usePullReviewThreads({
   viewerReadyTick,
   viewerRef,
 }: UsePullReviewThreadsOptions): PullReviewThreadsLoad {
-  const [threads, setThreads] = useState<PullReviewThread[] | null>(null);
-  const [threadStates, setThreadStates] = useState<ReadonlyMap<
-    number,
-    PullReviewThreadState
-  > | null>(null);
-  const [threadsFailed, setThreadsFailed] = useState(false);
-  const [statesFailed, setStatesFailed] = useState(false);
+  // The comment fetch's outcome: null while in flight. `rootIds` holds every
+  // thread's root comment id, including outdated threads, which grouping
+  // drops from `threads` because they have no current line to anchor to.
+  const [fetched, setFetched] = useState<
+    { rootIds: number[]; threads: PullReviewThread[] } | 'failed' | null
+  >(null);
+  // The resolution request's outcome: null while in flight (or never sent,
+  // without a token).
+  const [fetchedStates, setFetchedStates] = useState<
+    ReadonlyMap<number, PullReviewThreadState> | 'failed' | null
+  >(null);
   // Set once a fetched, non-empty thread list has been injected into the
   // viewer (and so reported to the sidebar).
   const [threadsApplied, setThreadsApplied] = useState(false);
@@ -101,10 +100,8 @@ export function usePullReviewThreads({
   onDiscussionLoadedRef.current = onDiscussionLoaded;
 
   useEffect(() => {
-    setThreads(null);
-    setThreadStates(null);
-    setThreadsFailed(false);
-    setStatesFailed(false);
+    setFetched(null);
+    setFetchedStates(null);
     setThreadsApplied(false);
     appliedThreadsRef.current = null;
     if (pullRequest == null || !tokenHydrated) {
@@ -115,7 +112,12 @@ export function usePullReviewThreads({
     void fetchPullComments(pullRequest, token, controller.signal).then(
       ({ comments, discussion }) => {
         if (!controller.signal.aborted) {
-          setThreads(groupPullReviewThreads(comments));
+          setFetched({
+            rootIds: comments
+              .filter((comment) => comment.inReplyToId == null)
+              .map((comment) => comment.id),
+            threads: groupPullReviewThreads(comments),
+          });
           onDiscussionLoadedRef.current(discussion);
         }
       },
@@ -123,7 +125,7 @@ export function usePullReviewThreads({
         // Thread loading is best-effort: the diff is fully usable without
         // review comments (e.g. anonymous rate-limited requests).
         if (!controller.signal.aborted) {
-          setThreadsFailed(true);
+          setFetched('failed');
         }
       }
     );
@@ -131,14 +133,14 @@ export function usePullReviewThreads({
       void fetchReviewThreadStates(pullRequest, token, controller.signal).then(
         (states) => {
           if (!controller.signal.aborted) {
-            setThreadStates(states);
+            setFetchedStates(states);
           }
         },
         () => {
           // Best-effort too: without states threads render open and
           // unresolvable.
           if (!controller.signal.aborted) {
-            setStatesFailed(true);
+            setFetchedStates('failed');
           }
         }
       );
@@ -151,6 +153,9 @@ export function usePullReviewThreads({
     // it after a review submission.
   }, [pullRequest, refreshTick, token, tokenHydrated, viewerKey]);
 
+  const threads =
+    typeof fetched === 'object' ? (fetched?.threads ?? null) : null;
+  const threadStates = typeof fetchedStates === 'object' ? fetchedStates : null;
   const statefulThreads = useMemo(
     () =>
       threads == null || threadStates == null
@@ -216,17 +221,48 @@ export function usePullReviewThreads({
     viewerRef,
   ]);
 
-  if (threadsFailed) {
-    return { kind: 'unavailable' };
-  }
-  const threadsSettled =
-    threads != null && (threads.length === 0 || threadsApplied);
-  const statesSettled = token === '' || threadStates != null || statesFailed;
-  if (!threadsSettled || !statesSettled) {
-    return { kind: 'loading' };
-  }
-  return {
-    kind: 'ready',
-    resolvedKnown: token !== '' && threadStates != null,
-  };
+  // Threads the diff can show: grouped (so anchored to a current line or the
+  // whole file) and in a file the diff contains. Derived from paths rather
+  // than from onApplied, which skips threads a refetch finds already present.
+  // Only read once the diff is ready: while it streams, the tree source keeps
+  // adding files to this same Map in place, so its identity can't signal that
+  // a thread's file has arrived (counting waits for ready anyway).
+  const attachableRootIds = useMemo(
+    () =>
+      new Set(
+        loadState !== 'ready'
+          ? []
+          : (threads ?? [])
+              .filter((thread) => pathToItemId?.has(thread.path) === true)
+              .map((thread) => thread.rootId)
+      ),
+    [loadState, pathToItemId, threads]
+  );
+  const rootIds =
+    typeof fetched === 'object' ? (fetched?.rootIds ?? null) : null;
+  const threadsFailed = fetched === 'failed';
+  const statesSettled = token === '' || fetchedStates != null;
+  // Every input is state or memoized, so the result keeps its identity until
+  // something it reports from changes.
+  return useMemo(
+    () =>
+      describeReviewThreadsLoad({
+        attachableRootIds,
+        loadState,
+        rootIds,
+        states: threadStates,
+        statesSettled,
+        threadsApplied,
+        threadsFailed,
+      }),
+    [
+      attachableRootIds,
+      loadState,
+      rootIds,
+      statesSettled,
+      threadStates,
+      threadsApplied,
+      threadsFailed,
+    ]
+  );
 }

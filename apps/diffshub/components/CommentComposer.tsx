@@ -5,7 +5,6 @@ import { type Ref, useImperativeHandle, useRef, useState } from 'react';
 import { InlineConfirm } from './InlineConfirm';
 import { MarkdownEditor } from './MarkdownEditor';
 import { Button } from '@/components/Button';
-import { composerSecondaryButtonClass } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import {
   clearCommentDraft,
@@ -183,9 +182,8 @@ export function CommentComposer({
         <div className="flex justify-end gap-2">
           <Button
             type="button"
-            variant="outline"
+            variant="annotationOutline"
             size="sm"
-            className={composerSecondaryButtonClass}
             disabled={isSubmitting}
             onClick={requestCancel}
           >

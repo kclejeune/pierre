@@ -94,7 +94,7 @@ function describeCompareEnd(
 
 // GitHub's own spelling of a pull head: the bare branch for same-repo pulls,
 // `owner:branch` when the head lives in a fork.
-function formatPullHeadLabel(refs: PullRefs): string {
+export function formatPullHeadLabel(refs: PullRefs): string {
   return isSameGitHubRepo(refs.headRepo, refs.baseRepo)
     ? refs.headRef
     : `${refs.headRepo.owner}:${refs.headRef}`;

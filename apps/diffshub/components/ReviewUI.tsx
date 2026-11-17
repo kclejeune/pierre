@@ -95,6 +95,7 @@ import type {
   DiffsHubDeletedCommentEvent,
   DiffsHubSavedCommentEntry,
   DiffsHubSavedCommentEvent,
+  DiffsHubSavedCommentItem,
   PullDiscussionComment,
 } from '@/lib/types';
 import { upsertSavedCommentSidebarEntry } from '@/lib/upsertSavedCommentSidebarEntry';
@@ -677,37 +678,30 @@ function ReviewUIInner({
     viewerReadyTick,
     viewerRef,
   });
-  // Resolved vs total GitHub review conversations on the loaded diff, for the
-  // pull overview's Comments bar. Derived from the sidebar's comment entries,
-  // which thread resolves and replies already keep current, but only once the
-  // thread fetch has settled and its threads are in the diff: before that an
-  // empty sidebar means "not loaded", not "no conversations".
-  const threadsLoadKind = reviewThreadsLoad.kind;
-  const threadsResolvedKnown =
-    reviewThreadsLoad.kind === 'ready' && reviewThreadsLoad.resolvedKnown;
+  // Resolved vs total GitHub review conversations, for the pull overview's
+  // Comments bar: the sidebar's comment entries (threads in the diff, which
+  // resolves and replies keep current) plus the hook's counts for threads
+  // that can't be shown here, such as outdated ones. Waits for the hook, since
+  // before the threads are in the diff an empty sidebar means "not loaded",
+  // not "no conversations".
   const conversationCounts = useMemo((): ConversationCounts | null => {
-    if (threadsLoadKind === 'loading') {
+    if (reviewThreadsLoad.kind === 'loading') {
       return null;
     }
-    if (threadsLoadKind === 'unavailable') {
+    if (reviewThreadsLoad.kind === 'unavailable') {
       return { kind: 'unavailable' };
     }
-    let resolved = 0;
-    let total = 0;
-    for (const section of commentSections) {
-      for (const comment of section.comments) {
-        if (comment.reviewThread === true) {
-          total += 1;
-          if (comment.resolved === true) {
-            resolved += 1;
-          }
+    const inDiff = countSidebarConversations(commentSections);
+    const { detachedCounts } = reviewThreadsLoad;
+    const total = inDiff.total + detachedCounts.total;
+    return reviewThreadsLoad.resolvedKnown
+      ? {
+          kind: 'counted',
+          resolved: inDiff.resolved + detachedCounts.resolved,
+          total,
         }
-      }
-    }
-    return threadsResolvedKnown
-      ? { kind: 'counted', resolved, total }
       : { kind: 'totalOnly', total };
-  }, [commentSections, threadsLoadKind, threadsResolvedKnown]);
+  }, [commentSections, reviewThreadsLoad]);
   // PR-level conversation writes (issue comments on the pull request). Each
   // handler posts through the API proxy, surfaces failures as a toast, and
   // rethrows so the composer keeps the draft; on success the discussion state
@@ -1188,6 +1182,27 @@ function ReviewUIInner({
 interface ReviewGridProps {
   children: ReactNode;
   ref?: Ref<HTMLDivElement>;
+}
+
+// GitHub review conversations among the sidebar's comment entries (local
+// drafts and pending-review comments are not conversations yet), and how many
+// of them are resolved.
+function countSidebarConversations(
+  sections: readonly DiffsHubSavedCommentItem[]
+): { resolved: number; total: number } {
+  let resolved = 0;
+  let total = 0;
+  for (const section of sections) {
+    for (const comment of section.comments) {
+      if (comment.reviewThread === true) {
+        total += 1;
+        if (comment.resolved === true) {
+          resolved += 1;
+        }
+      }
+    }
+  }
+  return { resolved, total };
 }
 
 // The sidebar column's width comes from --diffshub-sidebar-width (default

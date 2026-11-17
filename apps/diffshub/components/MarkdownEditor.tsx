@@ -38,6 +38,7 @@ import { cn } from '@/lib/cn';
 import {
   editMarkdown,
   HEADING_FORMATS,
+  HEADING_PREFIXES,
   headingFormatAt,
   isPastedURL,
   linkSelectionTo,
@@ -156,32 +157,28 @@ const TOOLBAR_GROUP_VISIBILITY = [
   'hidden @[17rem]:flex @[21rem]:hidden @[31rem]:flex',
 ];
 
-// Toolbar buttons shrink a step on the narrow toolbar row so all groups fit.
-const TOOLBAR_BUTTON_SIZE = 'size-6 @[21rem]:size-7';
+// Shared look of every toolbar control: muted icon, hover wash on the
+// annotation surface, focus ring.
+const TOOLBAR_BUTTON_BASE =
+  'text-muted-foreground hover:text-foreground focus-visible:ring-ring flex items-center justify-center rounded-md outline-none hover:bg-[color-mix(in_srgb,currentColor_10%,transparent)] focus-visible:ring-2 disabled:opacity-50';
 
-const HEADING_LABELS: Record<MarkdownHeadingFormat, string> = {
-  'heading-1': 'Heading 1',
-  'heading-2': 'Heading 2',
-  'heading-3': 'Heading 3',
-};
+// Toolbar controls shrink a step on the narrow toolbar row so all groups
+// fit. Square icon buttons take both; the heading trigger, wider for its
+// chevron, takes only the height.
+const TOOLBAR_BUTTON_HEIGHT = 'h-6 @[21rem]:h-7';
+const TOOLBAR_BUTTON_SIZE = `${TOOLBAR_BUTTON_HEIGHT} w-6 @[21rem]:w-7`;
 
-const HEADING_PREFIXES: Record<MarkdownHeadingFormat, string> = {
-  'heading-1': '#',
-  'heading-2': '##',
-  'heading-3': '###',
-};
-
-// Each menu item previews its level's relative size.
-const HEADING_PREVIEW_CLASS: Record<MarkdownHeadingFormat, string> = {
-  'heading-1': 'text-[17px] font-semibold',
-  'heading-2': 'text-[15px] font-semibold',
-  'heading-3': 'text-[13px] font-semibold',
+// Each heading menu item previews its level's relative size.
+const HEADING_PREVIEW_SIZES: Record<MarkdownHeadingFormat, string> = {
+  'heading-1': 'text-[17px]',
+  'heading-2': 'text-[15px]',
+  'heading-3': 'text-[13px]',
 };
 
 // Marks overlays that belong to an editor (the heading menu) so composers
 // that close on outside clicks can tell them apart from the rest of the
 // page: the menu renders in a portal, outside the composer's own DOM.
-export const COMPOSER_OVERLAY_ATTRIBUTE = 'data-composer-overlay';
+const COMPOSER_OVERLAY_ATTRIBUTE = 'data-composer-overlay';
 
 export function isComposerOverlayEvent(event: Event): boolean {
   return event
@@ -387,7 +384,15 @@ export function MarkdownEditor({
               >
                 {groupIndex > 0 && <ToolbarDivider />}
                 {groupIndex === 0 && (
-                  <HeadingMenu disabled={disabled} textareaRef={textareaRef} />
+                  <HeadingMenu
+                    disabled={disabled}
+                    textareaRef={textareaRef}
+                    onPick={(format) =>
+                      withTextarea((textarea) =>
+                        applyMarkdownAction(textarea, format)
+                      )
+                    }
+                  />
                 )}
                 {group.map((button) => (
                   <ToolbarIconButton
@@ -492,10 +497,7 @@ function ToolbarIconButton({
       title={label}
       aria-label={label}
       disabled={disabled}
-      className={cn(
-        'text-muted-foreground hover:text-foreground focus-visible:ring-ring flex items-center justify-center rounded-md outline-none hover:bg-[color-mix(in_srgb,currentColor_10%,transparent)] focus-visible:ring-2 disabled:opacity-50',
-        TOOLBAR_BUTTON_SIZE
-      )}
+      className={cn(TOOLBAR_BUTTON_BASE, TOOLBAR_BUTTON_SIZE)}
       // Keep focus (and the selection) in the textarea while clicking.
       onMouseDown={(event) => event.preventDefault()}
       onClick={onActivate}
@@ -511,18 +513,29 @@ function ToolbarIconButton({
 // and picking it again removes the heading (picking another switches level).
 function HeadingMenu({
   disabled,
+  onPick,
   textareaRef,
 }: {
   disabled: boolean;
+  onPick(format: MarkdownHeadingFormat): void;
+  // Read when the menu opens (to check the caret line's level) and focused
+  // when it closes.
   textareaRef: RefObject<HTMLTextAreaElement | null>;
 }) {
   const dropdownThemeStyle = useDropdownChromeStyle();
   const [current, setCurrent] = useState<MarkdownHeadingFormat | null>(null);
+  // Set when a click or focus outside the menu dismisses it, so closing
+  // leaves focus where the user moved it instead of pulling it back.
+  const dismissedOutsideRef = useRef(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   return (
     <DropdownMenu
       modal={false}
       onOpenChange={(open) => {
         const textarea = textareaRef.current;
+        if (open) {
+          dismissedOutsideRef.current = false;
+        }
         if (open && textarea != null) {
           setCurrent(headingFormatAt(textarea.value, textarea.selectionStart));
         }
@@ -530,14 +543,15 @@ function HeadingMenu({
     >
       <DropdownMenuTrigger asChild>
         <button
+          ref={triggerRef}
           type="button"
           title="Heading"
           aria-label="Heading"
           disabled={disabled}
           className={cn(
-            // Height tracks TOOLBAR_BUTTON_SIZE; the width grows for the
-            // chevron.
-            'text-muted-foreground hover:text-foreground focus-visible:ring-ring data-[state=open]:text-foreground flex h-6 items-center justify-center gap-px rounded-md px-1 outline-none hover:bg-[color-mix(in_srgb,currentColor_10%,transparent)] focus-visible:ring-2 disabled:opacity-50 data-[state=open]:bg-[color-mix(in_srgb,currentColor_10%,transparent)] @[21rem]:h-7'
+            TOOLBAR_BUTTON_BASE,
+            TOOLBAR_BUTTON_HEIGHT,
+            'data-[state=open]:text-foreground gap-px px-1 data-[state=open]:bg-[color-mix(in_srgb,currentColor_10%,transparent)]'
           )}
           // Keep focus (and the selection) in the textarea while clicking.
           onMouseDown={(event) => event.preventDefault()}
@@ -553,31 +567,40 @@ function HeadingMenu({
         align="start"
         className="w-44 p-1"
         style={dropdownThemeStyle}
-        // Return focus to the textarea (not the trigger) so typing continues
-        // where the heading landed.
+        // The trigger toggles the menu closed; that counts as outside to
+        // Radix but should still return focus to the textarea.
+        onInteractOutside={(event) => {
+          if (
+            !(event.target instanceof Node) ||
+            triggerRef.current?.contains(event.target) !== true
+          ) {
+            dismissedOutsideRef.current = true;
+          }
+        }}
+        // After a pick or Escape, return focus to the textarea (not the
+        // trigger) so typing continues where the heading landed. An outside
+        // dismissal keeps whatever the user clicked or tabbed to.
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          textareaRef.current?.focus({ preventScroll: true });
+          if (!dismissedOutsideRef.current) {
+            textareaRef.current?.focus({ preventScroll: true });
+          }
+          dismissedOutsideRef.current = false;
         }}
       >
-        {HEADING_FORMATS.map((format) => (
+        {HEADING_FORMATS.map((format, index) => (
           <DropdownMenuItem
             key={format}
             className="flex cursor-pointer items-center gap-2"
-            onSelect={() => {
-              const textarea = textareaRef.current;
-              if (textarea != null) {
-                applyMarkdownAction(textarea, format);
-              }
-            }}
+            onSelect={() => onPick(format)}
           >
             <span
               className={cn(
-                'min-w-0 flex-1 truncate',
-                HEADING_PREVIEW_CLASS[format]
+                'min-w-0 flex-1 truncate font-semibold',
+                HEADING_PREVIEW_SIZES[format]
               )}
             >
-              {HEADING_LABELS[format]}
+              Heading {index + 1}
             </span>
             {current === format ? (
               <IconCheck aria-label="Current level" className="size-3.5" />
@@ -586,7 +609,7 @@ function HeadingMenu({
                 aria-hidden
                 className="text-muted-foreground font-mono text-[11px]"
               >
-                {HEADING_PREFIXES[format]}
+                {HEADING_PREFIXES[format].trim()}
               </span>
             )}
           </DropdownMenuItem>

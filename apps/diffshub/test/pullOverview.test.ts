@@ -38,6 +38,7 @@ describe('summarizeChecks', () => {
 
   test('no checks has no tone and an empty bar', () => {
     expect(summarizeChecks([])).toEqual({
+      kind: 'metric',
       segments: [],
       summary: 'None reported',
       tone: null,

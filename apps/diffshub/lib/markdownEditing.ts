@@ -62,39 +62,51 @@ export function linkSelectionTo(selected: string, url: string): MarkdownEdit {
 
 // Toolbar formats that prefix each selected line rather than wrapping the
 // selection.
-export type MarkdownLineFormat =
+type MarkdownLineFormat =
   | MarkdownHeadingFormat
   | 'ordered-list'
   | 'quote'
   | 'task-list'
   | 'unordered-list';
 
-// The heading levels the toolbar offers, as `#`, `##`, and `###` prefixes.
-export type MarkdownHeadingFormat = 'heading-1' | 'heading-2' | 'heading-3';
+// The heading levels the toolbar offers and the prefix each one adds. The
+// one source for headings: the menu's levels, labels, and `#` hints, and the
+// patterns below, all derive from it.
+export const HEADING_PREFIXES = {
+  'heading-1': '# ',
+  'heading-2': '## ',
+  'heading-3': '### ',
+} as const;
 
-export const HEADING_FORMATS: readonly MarkdownHeadingFormat[] = [
-  'heading-1',
-  'heading-2',
-  'heading-3',
-];
+export type MarkdownHeadingFormat = keyof typeof HEADING_PREFIXES;
+
+export const HEADING_FORMATS = Object.keys(
+  HEADING_PREFIXES
+) as MarkdownHeadingFormat[];
 
 function isHeadingFormat(
   format: MarkdownLineFormat
 ): format is MarkdownHeadingFormat {
-  return (HEADING_FORMATS as readonly string[]).includes(format);
+  return format in HEADING_PREFIXES;
+}
+
+// A heading prefix matches its exact level only: `## ` is not a `# `
+// heading, since the character after the `#`s must be the space.
+function headingPattern(format: MarkdownHeadingFormat): RegExp {
+  return new RegExp(`^${HEADING_PREFIXES[format]}`);
 }
 
 // Any ATX heading prefix, whatever its level.
 const ANY_HEADING_PREFIX = /^#{1,6} /;
 
 // Matches a line that already carries the format's prefix, so pressing the
-// button again strips it (GitHub toggles the same way). Each heading pattern
-// matches its exact level only: `## ` is not a `# ` heading, so choosing a
-// different level switches the line instead of stripping it.
+// button again strips it (GitHub toggles the same way). Choosing a different
+// heading level switches the line instead, since each level's pattern is
+// exact.
 const LINE_PREFIX_PATTERNS: Record<MarkdownLineFormat, RegExp> = {
-  'heading-1': /^# /,
-  'heading-2': /^## /,
-  'heading-3': /^### /,
+  ...(Object.fromEntries(
+    HEADING_FORMATS.map((format) => [format, headingPattern(format)])
+  ) as Record<MarkdownHeadingFormat, RegExp>),
   'ordered-list': /^\d+\. /,
   quote: /^> ?/,
   'task-list': /^[-*] \[[ xX]\] /,
@@ -117,9 +129,7 @@ const LINE_PREFIXES: Record<
   Exclude<MarkdownLineFormat, 'ordered-list'>,
   string
 > = {
-  'heading-1': '# ',
-  'heading-2': '## ',
-  'heading-3': '### ',
+  ...HEADING_PREFIXES,
   quote: '> ',
   'task-list': '- [ ] ',
   'unordered-list': '- ',
@@ -129,9 +139,17 @@ function linePrefix(format: MarkdownLineFormat, index: number): string {
   return format === 'ordered-list' ? `${index + 1}. ` : LINE_PREFIXES[format];
 }
 
+// The [start, end) offsets of the line holding `offset`, excluding its
+// newline.
+function lineBoundsAt(value: string, offset: number): [number, number] {
+  const start = value.lastIndexOf('\n', offset - 1) + 1;
+  const newline = value.indexOf('\n', offset);
+  return [start, newline === -1 ? value.length : newline];
+}
+
 // A line-format edit: the [start, end) range of `value` to replace (the
 // selection widened to whole lines) and the replacement for it.
-export interface MarkdownLineEdit {
+interface MarkdownLineEdit {
   edit: MarkdownEdit;
   end: number;
   start: number;
@@ -147,14 +165,14 @@ export function formatLines(
   selectionEnd: number,
   format: MarkdownLineFormat
 ): MarkdownLineEdit {
-  const start = value.lastIndexOf('\n', selectionStart - 1) + 1;
+  const [start] = lineBoundsAt(value, selectionStart);
   // A selection ending right after a newline does not include the next line.
-  const effectiveEnd =
+  const [, end] = lineBoundsAt(
+    value,
     selectionEnd > selectionStart && value[selectionEnd - 1] === '\n'
       ? selectionEnd - 1
-      : selectionEnd;
-  const newline = value.indexOf('\n', effectiveEnd);
-  const end = newline === -1 ? value.length : newline;
+      : selectionEnd
+  );
   const lines = value.slice(start, end).split('\n');
   const pattern = LINE_PREFIX_PATTERNS[format];
   const contentLines = lines.filter((line) => line.trim() !== '');
@@ -172,10 +190,17 @@ export function formatLines(
       return `${linePrefix(format, numbered++)}${line.replace(existingPrefix(format), '')}`;
     })
     .join('\n');
-  // A caret on a single line keeps its offset from the line's end; anything
-  // else selects the whole rewritten block.
+  // A caret on a single line keeps its place in the line's text: measured
+  // past the prefix being stripped and re-placed past the one being added, so
+  // a caret that sat inside the old marker lands at the text's start rather
+  // than inside the new marker. Anything else selects the whole block.
   const keepCaret = lines.length === 1 && selectionStart === selectionEnd;
-  const caret = Math.max(0, selectionStart - end + replacement.length);
+  const line = lines[0];
+  const strippedLength =
+    (removing ? pattern : existingPrefix(format)).exec(line)?.[0].length ?? 0;
+  const addedLength = removing ? 0 : linePrefix(format, 0).length;
+  const caret =
+    addedLength + Math.max(0, selectionStart - start - strippedLength);
   return {
     edit: {
       replacement,
@@ -190,16 +215,8 @@ export function formatLines(
 // Everything the editor toolbar and shortcuts can do to the text.
 export type MarkdownAction = MarkdownFormat | MarkdownLineFormat | 'mention';
 
-const LINE_FORMATS: ReadonlySet<MarkdownAction> = new Set<MarkdownLineFormat>([
-  ...HEADING_FORMATS,
-  'ordered-list',
-  'quote',
-  'task-list',
-  'unordered-list',
-]);
-
 function isLineFormat(action: MarkdownAction): action is MarkdownLineFormat {
-  return LINE_FORMATS.has(action);
+  return action in LINE_PREFIX_PATTERNS;
 }
 
 // One entry point for every toolbar button and formatting shortcut: the range
@@ -243,9 +260,7 @@ export function headingFormatAt(
   value: string,
   selectionStart: number
 ): MarkdownHeadingFormat | null {
-  const start = value.lastIndexOf('\n', selectionStart - 1) + 1;
-  const newline = value.indexOf('\n', start);
-  const line = value.slice(start, newline === -1 ? value.length : newline);
+  const line = value.slice(...lineBoundsAt(value, selectionStart));
   return (
     HEADING_FORMATS.find((format) => LINE_PREFIX_PATTERNS[format].test(line)) ??
     null

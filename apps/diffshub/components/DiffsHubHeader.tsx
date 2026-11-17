@@ -64,6 +64,18 @@ import { getDropdownThemeStyle } from '@/lib/theme/dropdownChromeStyle';
 type LightThemeName = string;
 type DarkThemeName = string;
 
+// What the markdown and collapse toggles say and show, keyed by the current
+// state; shared by the header's icon buttons and the phone overflow menu.
+const MARKDOWN_VIEW_TOGGLE_LABEL = {
+  raw: 'Render markdown files',
+  rendered: 'Show raw markdown',
+} as const;
+
+const COLLAPSE_TOGGLE = {
+  collapsed: { Icon: IconCollapsedRow, label: 'Expand all files' },
+  expanded: { Icon: IconExpandAll, label: 'Collapse all files' },
+} as const;
+
 const SETTING_ROW_CLASS =
   'w-full flex cursor-pointer items-center justify-between gap-4 px-2 py-1.5 text-sm';
 
@@ -194,10 +206,14 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
       ? 'Switch to unified view'
       : 'Switch to split view';
   const toggleDiffStyle = () => setDiffStyle(nextDiffStyle);
+  const CollapseIcon = COLLAPSE_TOGGLE[collapseMode].Icon;
   return (
     <div
       className={cn(
         'diffshub-theme-bootstrap z-10 contain-layout contain-paint flex flex-wrap md:flex-nowrap items-center gap-2 md:gap-2.5 pt-3 pb-2 px-3 md:py-1.5 border-b border-[var(--color-border-opaque)]',
+        // The bar's one rule for palette triggers short on room: shortcut
+        // badges (⌘K, ⌘P) wait for xl, the Go to file label for 2xl.
+        'max-xl:[&_[data-shortcut-hint]]:hidden max-2xl:[&_[data-palette-label]]:hidden',
         themeChromeStyle == null &&
           'bg-background md:bg-[var(--diffshub-sidebar-bg)]',
         className
@@ -238,7 +254,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
           />
           {/* cmd+K lives beside the address it searches from, apart from the
               right-hand "Go to file". */}
-          <RepoPaletteButton hintClassName="max-xl:hidden" />
+          <RepoPaletteButton />
         </div>
         {diffRefs != null && (
           <DiffRefsBadge
@@ -262,13 +278,9 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
         </Button>
         <div className="flex items-center gap-1 md:gap-2">
           {fileSearchAvailable && (
-            // Icon-only until xl adds the ⌘P badge and 2xl the label; on
-            // phones it lives in the overflow menu beside the tree toggle.
-            <FileSearchPaletteTrigger
-              className="max-md:hidden 2xl:w-36"
-              hintClassName="max-xl:hidden"
-              labelClassName="max-2xl:hidden"
-            />
+            // Icon-only until xl adds the ⌘P badge and 2xl the label (see
+            // the header root); on phones it lives in the overflow menu.
+            <FileSearchPaletteTrigger className="max-md:hidden 2xl:w-36" />
           )}
           {togglePin != null && (
             <Button
@@ -358,11 +370,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
               variant="ghost"
               size="icon-md"
               aria-pressed={markdownView === 'rendered'}
-              title={
-                markdownView === 'rendered'
-                  ? 'Show raw markdown'
-                  : 'Render markdown files'
-              }
+              title={MARKDOWN_VIEW_TOGGLE_LABEL[markdownView]}
               className={cn(
                 CHROME_ICON_BUTTON_CLASS,
                 'max-md:hidden',
@@ -377,19 +385,11 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
               variant="ghost"
               size="icon-md"
               aria-pressed={collapseMode === 'collapsed'}
-              title={
-                collapseMode === 'expanded'
-                  ? 'Collapse all files'
-                  : 'Expand all files'
-              }
+              title={COLLAPSE_TOGGLE[collapseMode].label}
               className={cn(CHROME_ICON_BUTTON_CLASS, 'max-md:hidden')}
               onClick={onToggleCollapseMode}
             >
-              {collapseMode === 'expanded' ? (
-                <IconExpandAll className="size-4 md:size-3" />
-              ) : (
-                <IconCollapsedRow className="size-4 md:size-3" />
-              )}
+              <CollapseIcon className="size-4 md:size-3" />
             </Button>
             <ThemeDropdown
               colorMode={colorMode}
@@ -854,6 +854,7 @@ function HeaderOverflowMenu({
   onTogglePin,
   upstreamUrl,
 }: HeaderOverflowMenuProps) {
+  const CollapseIcon = COLLAPSE_TOGGLE[collapseMode].Icon;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -886,22 +887,14 @@ function HeaderOverflowMenu({
           onSelect={onToggleMarkdownView}
         >
           <IconBook className="size-3.5" />
-          {markdownView === 'rendered'
-            ? 'Show raw markdown'
-            : 'Render markdown files'}
+          {MARKDOWN_VIEW_TOGGLE_LABEL[markdownView]}
         </DropdownMenuItem>
         <DropdownMenuItem
           className={cn(MENU_ITEM_CLASS, 'md:hidden')}
           onSelect={onToggleCollapseMode}
         >
-          {collapseMode === 'expanded' ? (
-            <IconExpandAll className="size-3.5" />
-          ) : (
-            <IconCollapsedRow className="size-3.5" />
-          )}
-          {collapseMode === 'expanded'
-            ? 'Collapse all files'
-            : 'Expand all files'}
+          <CollapseIcon className="size-3.5" />
+          {COLLAPSE_TOGGLE[collapseMode].label}
         </DropdownMenuItem>
         {onTogglePin != null && (
           <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={onTogglePin}>

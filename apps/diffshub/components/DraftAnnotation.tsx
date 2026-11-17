@@ -10,11 +10,7 @@ import {
 } from './MarkdownEditor';
 import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
-import {
-  annotationCardBase,
-  composerSecondaryButtonClass,
-  getRandomPersonaAuthor,
-} from '@/lib/annotation';
+import { annotationCardBase, getRandomPersonaAuthor } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import { buildSuggestionBlock } from '@/lib/suggestedChange';
 import type { CommentAuthor, DraftCommentMetadata } from '@/lib/types';
@@ -228,9 +224,8 @@ export function DraftAnnotation({
         <div className="flex w-full flex-wrap items-center justify-end gap-2">
           <Button
             type="button"
-            variant="outline"
+            variant="annotationOutline"
             size="sm"
-            className={composerSecondaryButtonClass}
             disabled={isSaving}
             onClick={tryCancel}
           >
@@ -240,9 +235,8 @@ export function DraftAnnotation({
             <>
               <Button
                 type="button"
-                variant="outline"
+                variant="annotationOutline"
                 size="sm"
-                className={composerSecondaryButtonClass}
                 disabled={!canSubmit}
                 onClick={() => void submitWith('single')}
               >

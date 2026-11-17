@@ -6,21 +6,21 @@ import {
   IconClockArrow,
   IconCopy,
   IconDraft,
-  IconMerged,
   IconX,
 } from '@pierre/icons';
 import type { ReactNode } from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
+import { PULL_STATE_DISPLAY } from './pullStateDisplay';
 import { RefPillArrow } from './RefPicker';
 import { RelativeTime } from './RelativeTime';
 import { annotationBorderColor } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import { copyToClipboard } from '@/lib/copyToClipboard';
+import { formatPullHeadLabel } from '@/lib/diffRefs';
 import type { PullDetails, PullInfo } from '@/lib/pullInfoClient';
 import {
   diffstatBlocks,
-  isOverviewMetric,
   type OverviewCell,
   type OverviewHeadline,
   type OverviewTone,
@@ -46,24 +46,38 @@ const DIFFSTAT_SQUARE_CLASS: Record<
   ReturnType<typeof diffstatBlocks>[number],
   string
 > = {
-  added: 'bg-[#18a46c]',
-  deleted: 'bg-red-500',
+  added: TONE_BG_CLASS.success,
+  deleted: TONE_BG_CLASS.failure,
   neutral: 'bg-[color-mix(in_srgb,currentColor_25%,transparent)]',
 };
 
+// The headline's filled status circle. Merged and closed take their glyphs
+// from PULL_STATE_DISPLAY so they match the state badge in the same panel.
 const HEADLINE_DISPLAY: Record<
   OverviewHeadline['tone'],
   { className: string; Icon: typeof IconCheck }
 > = {
-  closed: { className: 'bg-red-500 text-white', Icon: IconX },
-  failure: { className: 'bg-red-500 text-white', Icon: IconX },
-  merged: { className: 'bg-violet-600 text-white', Icon: IconMerged },
+  closed: {
+    className: 'bg-red-600 text-white',
+    Icon: PULL_STATE_DISPLAY.closed.Icon,
+  },
+  failure: { className: `${TONE_BG_CLASS.failure} text-white`, Icon: IconX },
+  merged: {
+    className: 'bg-violet-600 text-white',
+    Icon: PULL_STATE_DISPLAY.merged.Icon,
+  },
   neutral: {
     className: 'bg-[color-mix(in_srgb,currentColor_15%,transparent)]',
     Icon: IconDraft,
   },
-  pending: { className: 'bg-amber-500 text-white', Icon: IconClockArrow },
-  success: { className: 'bg-[#18a46c] text-white', Icon: IconCheck },
+  pending: {
+    className: `${TONE_BG_CLASS.pending} text-white`,
+    Icon: IconClockArrow,
+  },
+  success: {
+    className: `${TONE_BG_CLASS.success} text-white`,
+    Icon: IconCheck,
+  },
 };
 
 // The line under the pull title, after GitHub's PR header: who opened it and
@@ -106,14 +120,18 @@ export function PullOverviewMeta({
           <RefPillArrow />
           <BranchChip
             copyValue={pullInfo.headRef}
-            label={headBranchLabel(pullInfo)}
+            label={formatPullHeadLabel(pullInfo)}
           />
         </span>
       )}
       {diffStats != null && (
         <span className="flex items-center gap-1.5 font-mono tabular-nums">
-          <span className="text-[#18a46c]">+{diffStats.addedLines}</span>
-          <span className="text-red-500">−{diffStats.deletedLines}</span>
+          <span className={TONE_TEXT_CLASS.success}>
+            +{diffStats.addedLines}
+          </span>
+          <span className={TONE_TEXT_CLASS.failure}>
+            −{diffStats.deletedLines}
+          </span>
           <DiffstatSquares
             added={diffStats.addedLines}
             deleted={diffStats.deletedLines}
@@ -122,16 +140,6 @@ export function PullOverviewMeta({
       )}
     </div>
   );
-}
-
-// The head branch, owner-qualified (`owner:branch`) when it lives in a fork.
-function headBranchLabel(pullInfo: PullInfo): string {
-  const isFork =
-    pullInfo.baseRepo.owner !== pullInfo.headRepo.owner ||
-    pullInfo.baseRepo.repo !== pullInfo.headRepo.repo;
-  return isFork
-    ? `${pullInfo.headRepo.owner}:${pullInfo.headRef}`
-    : pullInfo.headRef;
 }
 
 function BranchChip({
@@ -266,24 +274,21 @@ function MetricCell({
   label: string;
   onToggle?(): void;
 }) {
-  const summary = isOverviewMetric(cell)
-    ? cell.summary
-    : cell.kind === 'loading'
-      ? 'Loading…'
-      : 'Unavailable';
+  const summary =
+    cell.kind === 'metric'
+      ? cell.summary
+      : cell.kind === 'loading'
+        ? 'Loading…'
+        : 'Unavailable';
   const content = (
     <>
       <span className="flex min-w-0 items-baseline gap-1.5 text-xs">
         <span className="shrink-0 font-semibold">{label}</span>
         <span
-          title={
-            !isOverviewMetric(cell) && cell.kind === 'unavailable'
-              ? cell.reason
-              : summary
-          }
+          title={cell.kind === 'unavailable' ? cell.reason : summary}
           className={cn(
             'min-w-0 truncate',
-            isOverviewMetric(cell) && cell.tone != null
+            cell.kind === 'metric' && cell.tone != null
               ? TONE_TEXT_CLASS[cell.tone]
               : 'text-muted-foreground'
           )}
@@ -303,12 +308,9 @@ function MetricCell({
       <MetricBar cell={cell} />
     </>
   );
-  const className =
-    'flex min-w-0 flex-col gap-1.5 p-2.5 not-first:border-l text-left';
+  const className = `flex min-w-0 flex-col gap-1.5 p-2.5 not-first:border-l text-left ${annotationBorderColor}`;
   if (onToggle == null) {
-    return (
-      <div className={cn(className, annotationBorderColor)}>{content}</div>
-    );
+    return <div className={className}>{content}</div>;
   }
   return (
     <button
@@ -316,7 +318,6 @@ function MetricCell({
       aria-expanded={expanded}
       className={cn(
         className,
-        annotationBorderColor,
         'outline-none hover:bg-[color-mix(in_srgb,currentColor_5%,transparent)] focus-visible:bg-[color-mix(in_srgb,currentColor_5%,transparent)]'
       )}
       onClick={onToggle}
@@ -329,13 +330,13 @@ function MetricCell({
 // Segments sized by count with hairline gaps; nothing to show (or loading)
 // draws GitHub's hatched placeholder track.
 function MetricBar({ cell }: { cell: OverviewCell }) {
-  if (!isOverviewMetric(cell) || cell.segments.length === 0) {
+  if (cell.kind !== 'metric' || cell.segments.length === 0) {
     return (
       <span
         aria-hidden="true"
         className={cn(
           'block h-1.5 w-full rounded-full bg-[repeating-linear-gradient(135deg,color-mix(in_srgb,currentColor_18%,transparent)_0_2px,transparent_2px_5px)]',
-          !isOverviewMetric(cell) && cell.kind === 'loading' && 'animate-pulse'
+          cell.kind === 'loading' && 'animate-pulse'
         )}
       />
     );

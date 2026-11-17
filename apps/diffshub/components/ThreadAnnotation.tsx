@@ -32,11 +32,7 @@ import {
 } from './MarkdownContent';
 import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
-import {
-  annotationBorderColor,
-  annotationCardBase,
-  composerSecondaryButtonClass,
-} from '@/lib/annotation';
+import { annotationBorderColor, annotationCardBase } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import { readCommentDraft, writeCommentDraft } from '@/lib/commentDrafts';
 import type { CommentReaction } from '@/lib/reactions';
@@ -214,12 +210,9 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
                 <div>
                   <Button
                     type="button"
-                    variant="outline"
+                    variant="annotationOutline"
                     size="sm"
-                    className={cn(
-                      composerSecondaryButtonClass,
-                      'h-7 px-2.5 text-[12px] font-medium'
-                    )}
+                    className="h-7 px-2.5 text-[12px] font-medium"
                     disabled={isResolving}
                     onClick={() => toggleResolved(!isResolved)}
                   >

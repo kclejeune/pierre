@@ -8,6 +8,7 @@ import {
   normalizeCommitStatus,
   parsePullDetails,
   parsePullMergeCapabilities,
+  parsePullMergeQueueStatus,
   parsePullViewerPermissions,
   readPullEditRequest,
   readPullLabelChange,
@@ -173,6 +174,33 @@ describe('merge capabilities', () => {
       canMerge: false,
       methods: [],
     });
+  });
+
+  test('reads where the pull stands in a merge queue', () => {
+    expect(
+      parsePullMergeQueueStatus({
+        isMergeQueueEnabled: true,
+        mergeQueueEntry: { position: 2, state: 'AWAITING_CHECKS' },
+        autoMergeRequest: { enabledAt: '2026-11-17T20:00:00Z' },
+      })
+    ).toEqual({
+      entry: { position: 2, state: 'AWAITING_CHECKS' },
+      pendingAutoMerge: false,
+    });
+    // Auto-merge on but not queued yet: waiting on required checks.
+    expect(
+      parsePullMergeQueueStatus({
+        isMergeQueueEnabled: true,
+        mergeQueueEntry: null,
+        autoMergeRequest: { enabledAt: '2026-11-17T20:00:00Z' },
+      })
+    ).toEqual({ entry: null, pendingAutoMerge: true });
+    expect(
+      parsePullMergeQueueStatus({
+        isMergeQueueEnabled: false,
+        autoMergeRequest: {},
+      })
+    ).toBeNull();
   });
 });
 

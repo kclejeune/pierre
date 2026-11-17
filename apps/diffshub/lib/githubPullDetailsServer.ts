@@ -22,6 +22,7 @@ import type {
   PullDetails,
   PullLabel,
   PullMergeCapabilities,
+  PullMergeQueueStatus,
   PullReviewer,
   PullReviewerState,
   PullViewerPermissions,
@@ -384,6 +385,69 @@ export function parsePullMergeCapabilities(
   };
 }
 
+// The pull's merge-queue standing from a GraphQL PullRequest node carrying
+// MERGE_QUEUE_FIELDS, or null when its base branch has no queue.
+export function parsePullMergeQueueStatus(
+  pullRequest: unknown
+): PullMergeQueueStatus | null {
+  const pull = asRecord(pullRequest);
+  if (pull?.isMergeQueueEnabled !== true) {
+    return null;
+  }
+  const entry = asRecord(pull.mergeQueueEntry);
+  const position = entry?.position;
+  return {
+    entry:
+      typeof position === 'number'
+        ? { position, state: readStringPath(entry, ['state']) ?? 'QUEUED' }
+        : null,
+    pendingAutoMerge: entry == null && pull.autoMergeRequest != null,
+  };
+}
+
+// The PullRequest fields parsePullMergeQueueStatus reads.
+const MERGE_QUEUE_FIELDS = `isMergeQueueEnabled
+    mergeQueueEntry { position state }
+    autoMergeRequest { enabledAt }`;
+
+const PULL_MERGE_QUEUE_QUERY = `query ($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id
+      ${MERGE_QUEUE_FIELDS}
+    }
+  }
+}`;
+
+// The pull's GraphQL node id (which the queue mutations take) and its
+// merge-queue standing, for the merge-queue route.
+export async function fetchPullMergeQueue(
+  repo: GitRepoRef,
+  pull: string,
+  token: string,
+  fetcher: PlainFetch = githubFetch
+): Promise<{
+  pullId: string | undefined;
+  status: PullMergeQueueStatus | null;
+}> {
+  const pullRequest = asRecord(
+    asRecord(
+      asRecord(
+        await sendGitHubGraphQL(
+          PULL_MERGE_QUEUE_QUERY,
+          { name: repo.repo, number: Number(pull), owner: repo.owner },
+          token,
+          fetcher
+        )
+      )?.repository
+    )?.pullRequest
+  );
+  return {
+    pullId: readStringPath(pullRequest, ['id']),
+    status: parsePullMergeQueueStatus(pullRequest),
+  };
+}
+
 const LABEL_PERMISSIONS = new Set(['ADMIN', 'MAINTAIN', 'TRIAGE', 'WRITE']);
 
 // GitHub's own answer to what the viewer may change on this pull, rather than
@@ -400,15 +464,18 @@ export function parsePullViewerPermissions(
   };
 }
 
-// One request for both what the viewer may change on the pull and how it may
-// be merged.
+// One request for what the viewer may change on the pull, how it may be
+// merged, and where it stands in a merge queue.
 const PULL_ACCESS_QUERY = `query ($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     viewerPermission
     mergeCommitAllowed
     squashMergeAllowed
     rebaseMergeAllowed
-    pullRequest(number: $number) { viewerCanUpdate }
+    pullRequest(number: $number) {
+      viewerCanUpdate
+      ${MERGE_QUEUE_FIELDS}
+    }
   }
 }`;
 
@@ -419,6 +486,7 @@ export async function fetchPullAccess(
   fetcher: PlainFetch = githubFetch
 ): Promise<{
   mergeCapabilities: PullMergeCapabilities;
+  mergeQueue: PullMergeQueueStatus | null;
   viewerPermissions: PullViewerPermissions;
 }> {
   const data = await sendGitHubGraphQL(
@@ -429,6 +497,9 @@ export async function fetchPullAccess(
   );
   return {
     mergeCapabilities: parsePullMergeCapabilities(data),
+    mergeQueue: parsePullMergeQueueStatus(
+      asRecord(asRecord(data)?.repository)?.pullRequest
+    ),
     viewerPermissions: parsePullViewerPermissions(data),
   };
 }

@@ -65,9 +65,15 @@ import {
   type PullInfo,
   type PullLabel,
   type PullMergeCapabilities,
+  type PullMergeQueueStatus,
   type PullReviewer,
 } from '@/lib/pullInfoClient';
-import { mergePullRequest, type PullMergeMethod } from '@/lib/pullMergeClient';
+import {
+  mergePullRequest,
+  type MergeQueueAction,
+  type PullMergeMethod,
+  updateMergeQueue,
+} from '@/lib/pullMergeClient';
 import {
   type ConversationCounts,
   describeMergeHeadline,
@@ -386,6 +392,17 @@ export function PullDetailsControl({
                   getGitHubToken={getGitHubToken}
                   headSha={headSha}
                   loading={supplementLoading}
+                  mergeQueue={supplementalValue?.mergeQueue ?? null}
+                  onMergeQueueChange={(mergeQueue) =>
+                    setSupplement((current) =>
+                      current.kind === 'ready'
+                        ? {
+                            ...current,
+                            value: { ...current.value, mergeQueue },
+                          }
+                        : current
+                    )
+                  }
                   onMerged={() => {
                     // Marks the pull merged right away; the reloads that
                     // follow confirm it.
@@ -508,10 +525,14 @@ export function PullDetailsControl({
 function MergeCapabilitySection({
   capabilities,
   loading,
+  mergeQueue,
+  onMergeQueueChange,
   ...controls
 }: {
   capabilities: PullMergeCapabilities | null;
   loading: boolean;
+  mergeQueue: PullMergeQueueStatus | null;
+  onMergeQueueChange(status: PullMergeQueueStatus | null): void;
 } & Omit<ComponentProps<typeof MergeControls>, 'capabilities'>) {
   if (loading) {
     return (
@@ -535,11 +556,25 @@ function MergeCapabilitySection({
       </p>
     );
   }
+  if (mergeQueue != null) {
+    const { baseRef, details, getGitHubToken, headSha, pullRequest } = controls;
+    return (
+      <MergeQueueControls
+        baseRef={baseRef}
+        details={details}
+        getGitHubToken={getGitHubToken}
+        headSha={headSha}
+        onStatusChange={onMergeQueueChange}
+        pullRequest={pullRequest}
+        status={mergeQueue}
+      />
+    );
+  }
   if (capabilities.methods.length === 0) {
     return (
       <p className="text-muted-foreground text-xs">
         This repository does not expose a direct merge method. Use GitHub for
-        merge queues or repository-specific merge rules.
+        repository-specific merge rules.
       </p>
     );
   }
@@ -1083,6 +1118,172 @@ function ReviewerRow({ reviewer }: { reviewer: PullReviewer }) {
   );
 }
 
+// Why the pull can't be merged or queued now, or null when nothing blocks it.
+function useMergeBlockedReason(details: PullDetails): string | null {
+  const appBlocked = useAppPermissionBlock('merge');
+  if (details.draft) {
+    return 'Draft pull requests cannot be merged.';
+  }
+  if (details.mergeable === false) {
+    return 'This pull request has conflicts with its base branch.';
+  }
+  return appBlocked;
+}
+
+// Runs a merge or merge-queue request with the viewer's token, one at a time:
+// `busy` is true while it's in flight, and a failure is toasted (and
+// remembered when GitHub refused the app) instead of thrown.
+function useMergeAction(getGitHubToken: () => string | undefined): {
+  busy: boolean;
+  run(
+    request: (token: string) => Promise<void>,
+    failureMessage: string
+  ): Promise<void>;
+} {
+  const [busy, setBusy] = useState(false);
+  const rememberRefusal = useRememberAppRefusal();
+  async function run(
+    request: (token: string) => Promise<void>,
+    failureMessage: string
+  ) {
+    const token = getGitHubToken();
+    if (token == null || token === '' || busy) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await request(token);
+    } catch (error) {
+      toastError(error, failureMessage);
+      rememberRefusal('merge', error);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return { busy, run };
+}
+
+function BaseBranchLabel({ baseRef }: { baseRef: string | undefined }) {
+  return baseRef == null ? (
+    'the base branch'
+  ) : (
+    <span className="font-mono">{baseRef}</span>
+  );
+}
+
+const QUEUE_ENTRY_STATE_LABELS: Readonly<Record<string, string>> = {
+  AWAITING_CHECKS: 'waiting on checks',
+  LOCKED: 'merging',
+  MERGEABLE: 'ready to merge',
+  QUEUED: 'queued',
+  UNMERGEABLE: 'failed checks or conflicts; GitHub will remove it',
+};
+
+// The success toast for a queue action, given where the pull stands after it.
+function describeQueueChange(
+  action: MergeQueueAction,
+  status: PullMergeQueueStatus | null
+): string {
+  if (action !== 'enqueue') {
+    return 'Removed from the merge queue.';
+  }
+  if (status?.entry != null) {
+    return `Added to the merge queue at position ${status.entry.position}.`;
+  }
+  return 'Will join the merge queue once required checks pass.';
+}
+
+// The merge affordance for a base branch with a merge queue, where the queue
+// picks the method: "Merge when ready" queues the pull (now, or once required
+// checks pass), and a queued or pending pull can be taken back out. Renders
+// the panel's loaded status and reports each action's result through
+// onStatusChange, so reopening the panel shows it too.
+function MergeQueueControls({
+  baseRef,
+  details,
+  getGitHubToken,
+  headSha,
+  onStatusChange,
+  pullRequest,
+  status,
+}: {
+  baseRef: string | undefined;
+  details: PullDetails;
+  getGitHubToken(): string | undefined;
+  headSha: string | undefined;
+  onStatusChange(status: PullMergeQueueStatus | null): void;
+  pullRequest: PullRequestRef;
+  status: PullMergeQueueStatus;
+}) {
+  const blockedReason = useMergeBlockedReason(details);
+  const { busy, run } = useMergeAction(getGitHubToken);
+  const queueAction = (action: MergeQueueAction) =>
+    void run(async (token) => {
+      const next = await updateMergeQueue(pullRequest, token, action, headSha);
+      onStatusChange(next);
+      toast.success(describeQueueChange(action, next));
+    }, 'Updating the merge queue failed.');
+
+  const { entry } = status;
+  if (entry != null || status.pendingAutoMerge) {
+    return (
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span>
+          {entry != null ? (
+            <>
+              #{entry.position} in the <BaseBranchLabel baseRef={baseRef} />{' '}
+              merge queue (
+              {QUEUE_ENTRY_STATE_LABELS[entry.state] ??
+                entry.state.toLowerCase()}
+              ).
+            </>
+          ) : (
+            <>
+              Joins the <BaseBranchLabel baseRef={baseRef} /> merge queue once
+              required checks pass.
+            </>
+          )}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          disabled={busy}
+          onClick={() =>
+            queueAction(entry != null ? 'dequeue' : 'cancel-auto-merge')
+          }
+        >
+          {entry != null ? 'Remove from queue' : 'Cancel'}
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-muted-foreground text-xs">
+          <BaseBranchLabel baseRef={baseRef} /> merges through a merge queue.
+        </span>
+        <Button
+          type="button"
+          variant="default"
+          size="sm"
+          disabled={blockedReason != null || busy}
+          className="bg-emerald-600 hover:bg-emerald-700"
+          onClick={() => queueAction('enqueue')}
+        >
+          <IconMerged className="size-3.5" />
+          {busy ? 'Queueing…' : 'Merge when ready'}
+        </Button>
+      </div>
+      {blockedReason != null && (
+        <p className="text-muted-foreground text-xs">{blockedReason}</p>
+      )}
+    </div>
+  );
+}
+
 // The merge affordance: method picker plus a two-step confirm. The merge is
 // pinned to the head sha the viewer loaded, so a branch that moved since
 // fails with a stale-head error instead of merging unseen commits.
@@ -1107,47 +1308,31 @@ function MergeControls({
     capabilities.methods[0] ?? 'merge'
   );
   const [confirming, setConfirming] = useState(false);
-  const [isMerging, setIsMerging] = useState(false);
-  const appBlocked = useAppPermissionBlock('merge');
-  const rememberRefusal = useRememberAppRefusal();
-  const blockedReason = details.draft
-    ? 'Draft pull requests cannot be merged.'
-    : details.mergeable === false
-      ? 'This pull request has conflicts with its base branch.'
-      : appBlocked;
+  const blockedReason = useMergeBlockedReason(details);
+  const { busy: isMerging, run } = useMergeAction(getGitHubToken);
 
-  async function submit() {
-    const token = getGitHubToken();
-    if (token == null || token === '' || isMerging) {
-      return;
-    }
-    setIsMerging(true);
-    try {
-      const result = await mergePullRequest(
-        pullRequest,
-        token,
-        method,
-        headSha
-      );
-      if (result.merged) {
-        toast.success('Pull request merged.');
-        onMerged();
-      } else {
-        toast.error(result.message ?? 'GitHub did not merge the pull request.');
+  function submit() {
+    void run(async (token) => {
+      try {
+        const result = await mergePullRequest(
+          pullRequest,
+          token,
+          method,
+          headSha
+        );
+        if (result.merged) {
+          toast.success('Pull request merged.');
+          onMerged();
+        } else {
+          toast.error(
+            result.message ?? 'GitHub did not merge the pull request.'
+          );
+        }
+      } finally {
+        setConfirming(false);
       }
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : 'Merging the pull request failed.'
-      );
-      rememberRefusal('merge', error);
-    } finally {
-      setIsMerging(false);
-      setConfirming(false);
-    }
+    }, 'Merging the pull request failed.');
   }
-
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
@@ -1178,12 +1363,7 @@ function MergeControls({
         <div className="flex items-center justify-between gap-2 text-xs">
           <span>
             {MERGE_METHOD_LABELS[method]} #{pullRequest.number} into{' '}
-            {baseRef == null ? (
-              'the base branch'
-            ) : (
-              <span className="font-mono">{baseRef}</span>
-            )}
-            ?
+            <BaseBranchLabel baseRef={baseRef} />?
           </span>
           <span className="flex gap-1.5">
             <Button
@@ -1201,7 +1381,7 @@ function MergeControls({
               size="xs"
               disabled={isMerging}
               className="bg-emerald-600 hover:bg-emerald-700"
-              onClick={() => void submit()}
+              onClick={submit}
             >
               Confirm merge
             </Button>

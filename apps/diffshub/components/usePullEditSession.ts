@@ -39,6 +39,10 @@ import type { CommentMetadata } from '@/lib/types';
 export interface PullEditSession {
   // True once the preflight confirmed a commit can land.
   canCommit: boolean;
+  // Why commits can't land when the DiffsHub GitHub App's installation on
+  // the head repo's owner lacks the permission; null otherwise. Shown on the
+  // controls that would commit (file edit, conflict resolution).
+  commitBlockedReason: string | null;
   canEdit(item: CodeViewItem<CommentMetadata>): boolean;
   commit(message: string): Promise<void>;
   // Commits a review suggestion to the head branch: lines start..end of the
@@ -166,6 +170,10 @@ export function usePullEditSession({
   ]);
 
   const canCommit = capability?.canCommit === true;
+  const commitBlockedReason =
+    capability?.reason === 'app-permission'
+      ? (capability.message ?? null)
+      : null;
 
   const canEdit = useStableCallback((item: CodeViewItem<CommentMetadata>) => {
     return (
@@ -405,6 +413,7 @@ export function usePullEditSession({
     () => ({
       canCommit,
       canEdit,
+      commitBlockedReason,
       commit,
       commitSuggestion,
       defaultMessage,
@@ -420,6 +429,7 @@ export function usePullEditSession({
     [
       canCommit,
       canEdit,
+      commitBlockedReason,
       commit,
       commitSuggestion,
       defaultMessage,

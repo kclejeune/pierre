@@ -49,6 +49,10 @@ export interface LeafEntry {
 }
 
 export type GitHubCommitErrorCode =
+  // A GitHub App token refused outside its installation's permissions (see
+  // lib/githubAppAccess); clients key their "app can't do this" handling on
+  // it rather than on the message.
+  | 'app-refusal'
   | 'forbidden'
   | 'github'
   // A pending review too large to read in full (/api/pull-review).
@@ -79,7 +83,7 @@ export function commitErrorResponse(error: unknown): Response {
     const status =
       error.code === 'stale-head'
         ? 409
-        : error.code === 'forbidden'
+        : error.code === 'forbidden' || error.code === 'app-refusal'
           ? 403
           : error.code === 'protected-branch'
             ? 422
@@ -133,14 +137,18 @@ async function gitDataRequest(
       route: getCurrentRouteLabel('unknown'),
       upstreamURL: url,
     });
+    const refusal = explainGitHubAppRefusal(
+      detail,
+      /^\/repos\/([^/]+\/[^/]+)/.exec(path)?.[1]
+    );
     throw new GitHubCommitError(
-      detail === ''
-        ? `GitHub request ${path} failed (${response.status}).`
-        : (explainGitHubAppRefusal(
-            detail,
-            /^\/repos\/([^/]+\/[^/]+)/.exec(path)?.[1]
-          ) ?? detail),
-      classifyGitHubWriteFailure(response.status, body),
+      refusal ??
+        (detail === ''
+          ? `GitHub request ${path} failed (${response.status}).`
+          : detail),
+      refusal == null
+        ? classifyGitHubWriteFailure(response.status, body)
+        : 'app-refusal',
       response.status
     );
   }
@@ -529,12 +537,12 @@ export async function sendGitHubGraphQL(
       upstreamURL: createGitHubGraphQLURL(getGitHubEnvironment()),
     });
     const message = readStringPath(errors[0], ['message']);
+    const refusal =
+      message == null ? undefined : explainGitHubAppRefusal(message);
     throw new GitHubCommitError(
-      message == null
-        ? 'GitHub rejected the GraphQL request.'
-        : (explainGitHubAppRefusal(message) ?? message),
-      forbidden ? 'forbidden' : 'github',
-      forbidden ? 403 : 422
+      refusal ?? message ?? 'GitHub rejected the GraphQL request.',
+      refusal != null ? 'app-refusal' : forbidden ? 'forbidden' : 'github',
+      forbidden || refusal != null ? 403 : 422
     );
   }
   return payload?.data;

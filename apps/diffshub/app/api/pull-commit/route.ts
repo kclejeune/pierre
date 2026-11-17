@@ -1,5 +1,7 @@
 import { type NextRequest } from 'next/server';
 
+import { describeMissingAppPermission } from '@/lib/appPermissions';
+import { loadAppInstallations } from '@/lib/githubAppInstallations';
 import {
   commitErrorResponse,
   createBlob,
@@ -68,6 +70,9 @@ async function handleGET(request: NextRequest) {
   }
 
   try {
+    // Independent of the pull, so it runs alongside it; a failed lookup
+    // restricts nothing.
+    const installations = loadAppInstallations(token).catch(() => null);
     const data = await fetchPullData({ owner, repo }, pull, token);
     const refs = parsePullRefs(data, { owner, repo });
     if (readStringPath(data, ['state']) !== 'open') {
@@ -75,6 +80,23 @@ async function handleGET(request: NextRequest) {
         canCommit: false,
         headSha: refs.headSha,
         reason: 'pull-closed',
+      });
+    }
+    // A GitHub App sign-in can't push without the installation's Contents:
+    // write on the head repo's owner (a fork's, for fork pulls), whatever the
+    // user's own access. The message tells the viewer why editing and
+    // conflict resolution are unavailable.
+    const appBlock = describeMissingAppPermission(
+      { installations: await installations },
+      refs.headRepo.owner,
+      'commit'
+    );
+    if (appBlock != null) {
+      return createJSONResponse({
+        canCommit: false,
+        headSha: refs.headSha,
+        reason: 'app-permission',
+        message: appBlock,
       });
     }
     let canPush = await fetchViewerCanPush(refs.headRepo, token);

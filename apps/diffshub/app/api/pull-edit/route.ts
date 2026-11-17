@@ -1,6 +1,5 @@
 import { type NextRequest } from 'next/server';
 
-import { isGitHubAppRefusal } from '@/lib/githubAppAccess';
 import {
   commitErrorResponse,
   fetchPullData,
@@ -95,14 +94,10 @@ async function handlePOST(request: NextRequest) {
 // the draft mutations; GitHub's bare "Resource not accessible by integration"
 // does not say so.
 function explainDraftRefusal(error: unknown): never {
-  if (
-    error instanceof GitHubCommitError &&
-    error.code === 'forbidden' &&
-    isGitHubAppRefusal(error.message)
-  ) {
+  if (error instanceof GitHubCommitError && error.code === 'app-refusal') {
     throw new GitHubCommitError(
       'Changing draft state requires the DiffsHub GitHub App to have Contents: Read and write.',
-      'forbidden',
+      'app-refusal',
       error.status
     );
   }

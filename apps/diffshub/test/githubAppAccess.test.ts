@@ -38,7 +38,7 @@ describe('GitHub errors explain integration refusals', () => {
         Promise.resolve(Response.json({ message: REFUSAL }, { status: 403 }))
     ).catch((thrown: unknown) => thrown);
     expect(error).toBeInstanceOf(GitHubCommitError);
-    expect((error as GitHubCommitError).code).toBe('forbidden');
+    expect((error as GitHubCommitError).code).toBe('app-refusal');
     expect((error as GitHubCommitError).message).toContain(
       "The DiffsHub GitHub App can't access acme/widgets"
     );

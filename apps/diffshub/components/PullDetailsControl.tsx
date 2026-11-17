@@ -21,6 +21,10 @@ import {
 } from 'react';
 import { toast } from 'sonner';
 
+import {
+  useAppPermissionBlock,
+  useRememberAppRefusal,
+} from './AppPermissionsContext';
 import { Button } from './Button';
 import { ButtonGroup, ButtonGroupItem } from './ButtonGroup';
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
@@ -123,6 +127,14 @@ export function PullDetailsControl({
   const dropdownThemeStyle = useDropdownChromeStyle();
   const [open, setOpen] = useState(false);
   const [checksExpanded, setChecksExpanded] = useState(false);
+  // Without Checks: Read, GitHub withholds check runs and only commit
+  // statuses come back, so the list is partial; say so under it.
+  const checkRunsBlocked = useAppPermissionBlock('checkRuns');
+  const checkRunsNote = checkRunsBlocked != null && (
+    <p className="text-muted-foreground mt-1 text-xs">
+      Check runs aren&apos;t shown. {checkRunsBlocked}
+    </p>
+  );
   // Held here so an edit survives the dropdown closing, which unmounts the
   // form.
   const [editDraft, setEditDraft] = useState<PullEditDraft | null>(null);
@@ -389,39 +401,45 @@ export function PullDetailsControl({
             checks={checksCell}
             checksDetail={
               checks != null && checks.length > 0 ? (
-                <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto">
-                  {checks.map((check, index) => (
-                    <CheckRow key={`${check.name}-${index}`} check={check} />
-                  ))}
-                </ul>
+                <>
+                  <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto">
+                    {checks.map((check, index) => (
+                      <CheckRow key={`${check.name}-${index}`} check={check} />
+                    ))}
+                  </ul>
+                  {checkRunsNote}
+                </>
               ) : (
-                <div className="flex items-center justify-between gap-2">
-                  <p
-                    className={cn(
-                      'text-xs',
-                      supplement.kind === 'error'
-                        ? 'text-destructive'
-                        : 'text-muted-foreground',
-                      checksCell.kind === 'loading' && 'animate-pulse'
-                    )}
-                  >
-                    {checksCell.kind === 'unavailable'
-                      ? checksCell.reason
-                      : checksCell.kind === 'loading'
-                        ? 'Loading checks…'
-                        : 'No checks reported on the head commit.'}
-                  </p>
-                  {supplement.kind === 'error' && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => loadSupplement(true)}
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <p
+                      className={cn(
+                        'text-xs',
+                        supplement.kind === 'error'
+                          ? 'text-destructive'
+                          : 'text-muted-foreground',
+                        checksCell.kind === 'loading' && 'animate-pulse'
+                      )}
                     >
-                      Retry
-                    </Button>
-                  )}
-                </div>
+                      {checksCell.kind === 'unavailable'
+                        ? checksCell.reason
+                        : checksCell.kind === 'loading'
+                          ? 'Loading checks…'
+                          : 'No checks reported on the head commit.'}
+                    </p>
+                    {supplement.kind === 'error' && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => loadSupplement(true)}
+                      >
+                        Retry
+                      </Button>
+                    )}
+                  </div>
+                  {checkRunsNote}
+                </>
               )
             }
             checksExpanded={checksExpanded}
@@ -685,6 +703,8 @@ function PullStateActions({
 }) {
   const [pending, setPending] = useState<'draft' | 'state' | null>(null);
   const [confirmingClose, setConfirmingClose] = useState(false);
+  const draftBlocked = useAppPermissionBlock('draft');
+  const rememberRefusal = useRememberAppRefusal();
 
   async function apply(
     kind: 'draft' | 'state',
@@ -701,6 +721,9 @@ function PullStateActions({
       toast.success(success);
     } catch (error) {
       toastError(error, 'Updating the pull request failed.');
+      if (kind === 'draft') {
+        rememberRefusal('draft', error);
+      }
     } finally {
       setPending(null);
     }
@@ -738,6 +761,7 @@ function PullStateActions({
           type="button"
           variant="outline"
           size="xs"
+          blockedReason={draftBlocked}
           disabled={pending != null}
           onClick={() =>
             void apply(

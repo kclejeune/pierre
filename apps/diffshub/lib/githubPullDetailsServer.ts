@@ -5,7 +5,6 @@
 // helpers are pure so they stay unit-testable without network.
 
 import {
-  fetchGitHubJSON,
   type GitRepoRef,
   readStringPath,
   repoPath,
@@ -364,33 +363,25 @@ function fetchAllCommitStatuses(
   );
 }
 
+const MERGE_PERMISSIONS = new Set(['ADMIN', 'MAINTAIN', 'WRITE']);
+
+// Reads PULL_ACCESS_QUERY's `data`. GraphQL rather than the REST repo: REST
+// includes the allow_*_merge settings only for repo admins, so for everyone
+// else no merge method looked enabled; GraphQL exposes them to any reader.
 export function parsePullMergeCapabilities(
-  payload: unknown
+  data: unknown
 ): PullMergeCapabilities {
-  const record = asRecord(payload);
-  const permissions = asRecord(record?.permissions);
-  const canMerge =
-    permissions?.admin === true ||
-    permissions?.maintain === true ||
-    permissions?.push === true;
+  const repository = asRecord(asRecord(data)?.repository);
   return {
-    canMerge,
+    canMerge: MERGE_PERMISSIONS.has(
+      readStringPath(repository, ['viewerPermission']) ?? ''
+    ),
     methods: [
-      ...(record?.allow_merge_commit === true ? (['merge'] as const) : []),
-      ...(record?.allow_squash_merge === true ? (['squash'] as const) : []),
-      ...(record?.allow_rebase_merge === true ? (['rebase'] as const) : []),
+      ...(repository?.mergeCommitAllowed === true ? (['merge'] as const) : []),
+      ...(repository?.squashMergeAllowed === true ? (['squash'] as const) : []),
+      ...(repository?.rebaseMergeAllowed === true ? (['rebase'] as const) : []),
     ],
   };
-}
-
-export async function fetchPullMergeCapabilities(
-  repo: GitRepoRef,
-  token: string | undefined,
-  fetcher: PlainFetch = githubFetch
-): Promise<PullMergeCapabilities> {
-  return parsePullMergeCapabilities(
-    await fetchGitHubJSON(repoPath(repo, ''), token, fetcher)
-  );
 }
 
 const LABEL_PERMISSIONS = new Set(['ADMIN', 'MAINTAIN', 'TRIAGE', 'WRITE']);
@@ -409,27 +400,37 @@ export function parsePullViewerPermissions(
   };
 }
 
-const VIEWER_PERMISSIONS_QUERY = `query ($owner: String!, $name: String!, $number: Int!) {
+// One request for both what the viewer may change on the pull and how it may
+// be merged.
+const PULL_ACCESS_QUERY = `query ($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     viewerPermission
+    mergeCommitAllowed
+    squashMergeAllowed
+    rebaseMergeAllowed
     pullRequest(number: $number) { viewerCanUpdate }
   }
 }`;
 
-export async function fetchPullViewerPermissions(
+export async function fetchPullAccess(
   repo: GitRepoRef,
   pull: string,
   token: string,
   fetcher: PlainFetch = githubFetch
-): Promise<PullViewerPermissions> {
-  return parsePullViewerPermissions(
-    await sendGitHubGraphQL(
-      VIEWER_PERMISSIONS_QUERY,
-      { name: repo.repo, number: Number(pull), owner: repo.owner },
-      token,
-      fetcher
-    )
+): Promise<{
+  mergeCapabilities: PullMergeCapabilities;
+  viewerPermissions: PullViewerPermissions;
+}> {
+  const data = await sendGitHubGraphQL(
+    PULL_ACCESS_QUERY,
+    { name: repo.repo, number: Number(pull), owner: repo.owner },
+    token,
+    fetcher
   );
+  return {
+    mergeCapabilities: parsePullMergeCapabilities(data),
+    viewerPermissions: parsePullViewerPermissions(data),
+  };
 }
 
 export async function fetchRepoLabels(

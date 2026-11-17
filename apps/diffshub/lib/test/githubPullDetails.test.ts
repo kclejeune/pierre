@@ -156,12 +156,19 @@ describe('merge capabilities', () => {
   test('uses viewer permissions and repository-enabled methods', () => {
     expect(
       parsePullMergeCapabilities({
-        allow_merge_commit: false,
-        allow_rebase_merge: true,
-        allow_squash_merge: true,
-        permissions: { push: true },
+        repository: {
+          viewerPermission: 'WRITE',
+          mergeCommitAllowed: false,
+          rebaseMergeAllowed: true,
+          squashMergeAllowed: true,
+        },
       })
     ).toEqual({ canMerge: true, methods: ['squash', 'rebase'] });
+    expect(
+      parsePullMergeCapabilities({
+        repository: { viewerPermission: 'READ', squashMergeAllowed: true },
+      })
+    ).toEqual({ canMerge: false, methods: ['squash'] });
     expect(parsePullMergeCapabilities(null)).toEqual({
       canMerge: false,
       methods: [],

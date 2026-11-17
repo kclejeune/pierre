@@ -326,7 +326,7 @@ export function PullDetailsControl({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="max-h-[min(85vh,52rem)] w-[560px] max-w-[92vw] overflow-y-auto p-3"
+        className="max-h-[min(85vh,60rem)] w-[560px] max-w-[92vw] overflow-y-auto p-3 md:w-[720px]"
         style={dropdownThemeStyle}
       >
         <div className="flex flex-col gap-3">
@@ -482,7 +482,7 @@ export function PullDetailsControl({
                 </p>
               ) : (
                 <div
-                  className={`max-h-[min(24rem,50vh)] overflow-y-auto rounded-md border ${annotationBorderColor} px-3 py-2 text-[13px]`}
+                  className={`rounded-md border ${annotationBorderColor} px-3 py-2 text-[13px]`}
                 >
                   <MarkdownContent flavor="comment" markdown={details.body} />
                 </div>
@@ -1108,11 +1108,13 @@ function MergeControls({
   );
   const [confirming, setConfirming] = useState(false);
   const [isMerging, setIsMerging] = useState(false);
+  const appBlocked = useAppPermissionBlock('merge');
+  const rememberRefusal = useRememberAppRefusal();
   const blockedReason = details.draft
     ? 'Draft pull requests cannot be merged.'
     : details.mergeable === false
       ? 'This pull request has conflicts with its base branch.'
-      : null;
+      : appBlocked;
 
   async function submit() {
     const token = getGitHubToken();
@@ -1139,6 +1141,7 @@ function MergeControls({
           ? error.message
           : 'Merging the pull request failed.'
       );
+      rememberRefusal('merge', error);
     } finally {
       setIsMerging(false);
       setConfirming(false);

@@ -50,6 +50,19 @@ describe('describeMissingAppPermission', () => {
     ).toBeNull();
   });
 
+  // See APP_REQUIREMENTS: guessed requirements would disable working actions.
+  test('does not block features without a known requirement', () => {
+    expect(
+      describeMissingAppPermission(INSTALLATIONS, 'octolabs', 'draft')
+    ).toBeNull();
+    expect(
+      describeMissingAppPermission(INSTALLATIONS, 'octolabs', 'resolveThread')
+    ).toBeNull();
+    expect(
+      describeMissingAppPermission(INSTALLATIONS, 'octolabs', 'merge')
+    ).toContain('Contents: Read and write');
+  });
+
   // Absence proves nothing: GitHub lists only installations the user has
   // explicit access to, and non-App sign-ins aren't limited at all.
   test('restricts nothing without an installation to go on', () => {

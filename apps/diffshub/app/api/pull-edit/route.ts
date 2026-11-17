@@ -3,7 +3,6 @@ import { type NextRequest } from 'next/server';
 import {
   commitErrorResponse,
   fetchPullData,
-  GitHubCommitError,
   readStringPath,
   repoPath,
   sendGitHubGraphQL,
@@ -72,7 +71,7 @@ async function handlePOST(request: NextRequest) {
           SET_DRAFT_MUTATIONS[draft ? 'draft' : 'ready'],
           { id: readStringPath(payload, ['node_id']) },
           token
-        ).catch(explainDraftRefusal)
+        )
       );
       const result = asRecord(
         data?.convertPullRequestToDraft ?? data?.markPullRequestReadyForReview
@@ -88,20 +87,6 @@ async function handlePOST(request: NextRequest) {
   } catch (error) {
     return commitErrorResponse(error);
   }
-}
-
-// GitHub App tokens need Contents: write, not just Pull requests: write, for
-// the draft mutations; GitHub's bare "Resource not accessible by integration"
-// does not say so.
-function explainDraftRefusal(error: unknown): never {
-  if (error instanceof GitHubCommitError && error.code === 'app-refusal') {
-    throw new GitHubCommitError(
-      'Changing draft state requires the DiffsHub GitHub App to have Contents: Read and write.',
-      'app-refusal',
-      error.status
-    );
-  }
-  throw error;
 }
 
 export const POST = withRequestLog(handlePOST);

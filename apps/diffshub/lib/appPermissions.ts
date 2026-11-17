@@ -30,18 +30,26 @@ const CONTENTS_WRITE: AppRequirement = {
   label: 'Contents: Read and write',
 };
 
-// The installation permission each gated feature needs.
-const APP_REQUIREMENTS = {
-  // Commits from the editor, suggestion commits, and conflict merges.
+// The installation permission each feature needs, where GitHub documents it
+// or has said so in a refusal. Only these are blocked up front; the rest are
+// blocked once GitHub refuses them (see AppPermissionsContext), since a wrong
+// guess here disables something that works (draft toggles work without
+// Contents: write, for one).
+const APP_REQUIREMENTS: Partial<Record<AppFeature, AppRequirement>> = {
+  // Git Data writes: editor commits, suggestion commits, conflict merges.
   commit: CONTENTS_WRITE,
-  // Draft and ready-for-review use GraphQL mutations that check Contents.
-  draft: CONTENTS_WRITE,
-  // A guess (GitHub doesn't document it); session refusals cover a wrong one.
-  resolveThread: CONTENTS_WRITE,
+  // PUT /pulls/{number}/merge.
+  merge: CONTENTS_WRITE,
+  // GitHub's 403 names it (x-accepted-github-permissions: checks=read).
   checkRuns: { permission: 'checks', level: 'read', label: 'Checks: Read' },
-} satisfies Record<string, AppRequirement>;
+};
 
-export type AppFeature = keyof typeof APP_REQUIREMENTS;
+export type AppFeature =
+  | 'checkRuns'
+  | 'commit'
+  | 'draft'
+  | 'merge'
+  | 'resolveThread';
 
 const LEVEL_RANK: Record<AppPermissionLevel, number> = {
   read: 1,
@@ -63,6 +71,9 @@ export function describeMissingAppPermission(
     return null;
   }
   const requirement = APP_REQUIREMENTS[feature];
+  if (requirement == null) {
+    return null;
+  }
   const granted = permissions[requirement.permission];
   if (granted != null && LEVEL_RANK[granted] >= LEVEL_RANK[requirement.level]) {
     return null;

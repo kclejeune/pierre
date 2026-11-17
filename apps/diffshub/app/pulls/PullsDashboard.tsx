@@ -557,26 +557,28 @@ function PullList({
           <SectionError error={error} onRetry={retry} />
         </div>
       )}
-      {pulls.length > 0 && (hasMore || totalCount > pulls.length) && (
-        <div className="text-muted-foreground flex items-center justify-between gap-3 border-t px-3 py-2 text-xs">
-          <span className="tabular-nums">
-            {pulls.length.toLocaleString()} of {totalCount.toLocaleString()}
-          </span>
-          {hasMore ? (
-            <Button
-              variant="outline"
-              size="xs"
-              disabled={loadingMore}
-              onClick={loadMore}
-            >
-              {loadingMore ? 'Loading…' : 'Load more'}
-            </Button>
-          ) : (
-            // GitHub search stops paging at 1,000 results.
-            <span>Narrow the search to see the rest.</span>
-          )}
-        </div>
-      )}
+      {/* An empty page can still have more: its hits were all unreadable. */}
+      {(pulls.length > 0 || hasMore) &&
+        (hasMore || totalCount > pulls.length) && (
+          <div className="text-muted-foreground flex items-center justify-between gap-3 border-t px-3 py-2 text-xs">
+            <span className="tabular-nums">
+              {pulls.length.toLocaleString()} of {totalCount.toLocaleString()}
+            </span>
+            {hasMore ? (
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={loadingMore}
+                onClick={loadMore}
+              >
+                {loadingMore ? 'Loading…' : 'Load more'}
+              </Button>
+            ) : (
+              // GitHub search stops paging at 1,000 results.
+              <span>Narrow the search to see the rest.</span>
+            )}
+          </div>
+        )}
     </section>
   );
 }

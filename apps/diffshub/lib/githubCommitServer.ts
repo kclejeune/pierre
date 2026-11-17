@@ -1,3 +1,4 @@
+import { explainGitHubAppRefusal } from './githubAppAccess';
 import { encodePath, encodeURLSegment } from './githubDiffSource';
 import {
   createGitHubAPIURL,
@@ -135,7 +136,10 @@ async function gitDataRequest(
     throw new GitHubCommitError(
       detail === ''
         ? `GitHub request ${path} failed (${response.status}).`
-        : detail,
+        : (explainGitHubAppRefusal(
+            detail,
+            /^\/repos\/([^/]+\/[^/]+)/.exec(path)?.[1]
+          ) ?? detail),
       classifyGitHubWriteFailure(response.status, body),
       response.status
     );
@@ -449,19 +453,52 @@ export function sendGitHubJSON(
   return gitDataRequest(path, token, { method, body }, fetcher);
 }
 
+// The GraphQL error types that mean "this token can't read that": NOT_FOUND,
+// or FORBIDDEN when an org blocks the token (SSO, IP allow list, or a GitHub
+// App not installed there). GitHub answers each with a null field.
+export const ACCESS_FIELD_ERRORS: ReadonlySet<string> = new Set([
+  'NOT_FOUND',
+  'FORBIDDEN',
+]);
+
+// Which GraphQL errors are an answer rather than a failure. An error is
+// tolerated when its type is in `types` and, if `paths` is given, its path
+// lies strictly under one of those prefixes (e.g. ['pulls', 'nodes'] for one
+// search result). Errors with no path never match a `paths` rule.
+export interface GraphQLErrorTolerance {
+  types: ReadonlySet<string>;
+  paths?: readonly (readonly string[])[];
+}
+
+function isToleratedError(
+  error: unknown,
+  { types, paths }: GraphQLErrorTolerance
+): boolean {
+  if (!types.has(readStringPath(error, ['type']) ?? '')) {
+    return false;
+  }
+  if (paths == null) {
+    return true;
+  }
+  const path = asRecord(error)?.path;
+  return (
+    Array.isArray(path) &&
+    paths.some(
+      (prefix) =>
+        path.length > prefix.length &&
+        prefix.every((segment, index) => path[index] === segment)
+    )
+  );
+}
+
 // GraphQL reports most failures as HTTP 200 with errors[]; rethrow those as
-// GitHubCommitError like REST failures.
-// `allowedFieldErrors` is for queries made of independent lookups (aliased
-// `repository(...)` fields), where GitHub answers a lookup the viewer can't
-// see with a null field plus an error (NOT_FOUND, or FORBIDDEN for an org
-// that blocks the token). Errors of those types are the answer, so they're
-// tolerated; any other error still throws.
+// GitHubCommitError like REST failures, unless `tolerate` accepts every one.
 export async function sendGitHubGraphQL(
   query: string,
   variables: Record<string, unknown>,
   token: string,
   fetcher: PlainFetch = githubFetch,
-  { allowedFieldErrors }: { allowedFieldErrors?: ReadonlySet<string> } = {}
+  { tolerate }: { tolerate?: GraphQLErrorTolerance } = {}
 ): Promise<unknown> {
   const payload = asRecord(
     await gitDataRequest(
@@ -480,10 +517,8 @@ export async function sendGitHubGraphQL(
     Array.isArray(errors) &&
     errors.length > 0 &&
     !(
-      allowedFieldErrors != null &&
-      errors.every((error) =>
-        allowedFieldErrors.has(readStringPath(error, ['type']) ?? '')
-      )
+      tolerate != null &&
+      errors.every((error) => isToleratedError(error, tolerate))
     )
   ) {
     const forbidden = readStringPath(errors[0], ['type']) === 'FORBIDDEN';
@@ -493,9 +528,11 @@ export async function sendGitHubGraphQL(
       route: getCurrentRouteLabel('unknown'),
       upstreamURL: createGitHubGraphQLURL(getGitHubEnvironment()),
     });
+    const message = readStringPath(errors[0], ['message']);
     throw new GitHubCommitError(
-      readStringPath(errors[0], ['message']) ??
-        'GitHub rejected the GraphQL request.',
+      message == null
+        ? 'GitHub rejected the GraphQL request.'
+        : (explainGitHubAppRefusal(message) ?? message),
       forbidden ? 'forbidden' : 'github',
       forbidden ? 403 : 422
     );

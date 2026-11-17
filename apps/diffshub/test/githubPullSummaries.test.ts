@@ -1,7 +1,12 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { NextRequest } from 'next/server';
 
 import { GET } from '../app/api/github-pulls/route';
+import {
+  ACCESS_FIELD_ERRORS,
+  GitHubCommitError,
+  sendGitHubGraphQL,
+} from '@/lib/githubCommitServer';
 import {
   buildActivePullsVariables,
   buildActiveSearchQuery,
@@ -421,13 +426,21 @@ describe('parseActivePullsPayload page details', () => {
     };
     const page = parseActivePullsPayload(payload, previous);
     expect(decodePullsCursor(page.nextCursor ?? '')?.boundaryRows).toBe(27);
-    // A page ending on a new timestamp starts counting again.
+    // A newer row on the page starts the count again.
     expect(
       decodePullsCursor(
-        parseActivePullsPayload(payload, {
-          ...previous,
-          lastUpdatedAt: '2026-08-02T00:00:00Z',
-        }).nextCursor ?? ''
+        parseActivePullsPayload(
+          {
+            pulls: {
+              ...payload.pulls,
+              nodes: [
+                activeNode({ id: 'N', updatedAt: '2026-08-02T00:00:00Z' }),
+                ...payload.pulls.nodes,
+              ],
+            },
+          },
+          previous
+        ).nextCursor ?? ''
       )?.boundaryRows
     ).toBe(2);
     // The subset widens by the whole overlap, up to GraphQL's page limit.
@@ -468,5 +481,185 @@ describe('GET /api/github-pulls', () => {
       401
     );
     expect((await list('involves=anyone&q=org%3Aacme')).status).toBe(401);
+  });
+
+  // A page whose every hit the GitHub App can't read is read past, so the
+  // dashboard never receives an empty page while readable rows follow.
+  test('reads past pages with only unreadable hits', async () => {
+    const afters: unknown[] = [];
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(((
+      _input: RequestInfo | URL,
+      init?: RequestInit
+    ) => {
+      const body = JSON.parse(init?.body as string) as {
+        variables: { after?: string };
+      };
+      afters.push(body.variables.after);
+      const unreadable = body.variables.after == null;
+      return Promise.resolve(
+        Response.json({
+          data: {
+            pulls: {
+              issueCount: 26,
+              pageInfo: {
+                endCursor: unreadable ? 'cDI' : null,
+                hasNextPage: unreadable,
+              },
+              nodes: unreadable ? Array(25).fill(null) : [activeNode()],
+            },
+          },
+          errors: unreadable
+            ? Array.from({ length: 25 }, (_, index) => ({
+                type: 'FORBIDDEN',
+                path: ['pulls', 'nodes', index],
+                message: 'Resource not accessible by integration',
+              }))
+            : undefined,
+        })
+      );
+    }) as typeof fetch);
+    try {
+      const response = await GET(
+        new NextRequest('https://diffshub.test/api/github-pulls?q=is%3Aopen', {
+          headers: { Authorization: 'Bearer ghu_token' },
+        })
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        nextCursor?: string;
+        pulls: { number: number }[];
+      };
+      expect(body.pulls.map((pull) => pull.number)).toEqual([7]);
+      expect(body.nextCursor).toBeUndefined();
+      expect(afters).toEqual([undefined, 'cDI']);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+// Mirrors the pulls route: hits in repos the GitHub App can't read come back
+// as null nodes with path-scoped access errors.
+describe('search hits the GitHub App cannot read', () => {
+  const tolerate = {
+    types: ACCESS_FIELD_ERRORS,
+    paths: [
+      ['pulls', 'nodes'],
+      ['commented', 'nodes'],
+    ],
+  };
+  const respond = (errors: unknown[]) => () =>
+    Promise.resolve(
+      Response.json({
+        data: {
+          pulls: {
+            issueCount: 2,
+            pageInfo: { endCursor: null, hasNextPage: false },
+            nodes: [activeNode(), null],
+          },
+        },
+        errors,
+      })
+    );
+  const hidden = {
+    type: 'FORBIDDEN',
+    path: ['pulls', 'nodes', 1],
+    message: 'Resource not accessible by integration',
+  };
+
+  test('a page with hidden hits keeps the readable rows', async () => {
+    const data = await sendGitHubGraphQL(
+      'q',
+      {},
+      'ghu_token',
+      respond([hidden]),
+      {
+        tolerate,
+      }
+    );
+    expect(
+      parseActivePullsPayload(data).pulls.map((pull) => pull.number)
+    ).toEqual([7]);
+    // Without the tolerance the same answer fails the whole request.
+    const strict = await sendGitHubGraphQL(
+      'q',
+      {},
+      'ghu_token',
+      respond([hidden])
+    ).catch((thrown: unknown) => thrown);
+    expect(String(strict)).toContain("The DiffsHub GitHub App can't access");
+  });
+
+  test.each([
+    ['on the search itself', { type: 'FORBIDDEN', path: ['pulls'] }],
+    ['without a path', { type: 'FORBIDDEN' }],
+    ['of another type', { type: 'INTERNAL', path: ['pulls', 'nodes', 0] }],
+  ])('an error %s still fails the page', async (_name, error) => {
+    const thrown = await sendGitHubGraphQL(
+      'q',
+      {},
+      'ghu_token',
+      respond([hidden, error]),
+      { tolerate }
+    ).catch((caught: unknown) => caught);
+    expect(thrown).toBeInstanceOf(GitHubCommitError);
+  });
+
+  // Unreadable hits are null nodes: no timestamp, but still paged past.
+  const page = (nodes: unknown[], hasNextPage = true) => ({
+    pulls: {
+      issueCount: 100,
+      pageInfo: { endCursor: 'bmV4dA', hasNextPage },
+      nodes,
+    },
+  });
+  const shared = '2026-08-01T00:00:00Z';
+
+  test('a page of only unreadable hits still pages on', () => {
+    const first = parseActivePullsPayload(page(Array(25).fill(null)));
+    expect(first.pulls).toEqual([]);
+    const cursor = decodePullsCursor(first.nextCursor ?? '');
+    // No readable row yet: no bound, and every hit so far is overlap.
+    expect(cursor).toEqual({
+      after: 'bmV4dA',
+      lastUpdatedAt: undefined,
+      boundaryRows: 25,
+    });
+    const variables = buildActivePullsVariables(
+      { involves: [], text: OPEN },
+      cursor
+    );
+    expect(variables.withCommented).toBe(true);
+    expect(variables.commentedQuery).not.toContain('updated:');
+    expect(variables.commentedFirst).toBe(50);
+
+    // Later, an all-unreadable page keeps the bound and adds to the overlap.
+    const later = parseActivePullsPayload(page(Array(25).fill(null)), {
+      after: 'cHJldg',
+      lastUpdatedAt: shared,
+      boundaryRows: 3,
+    });
+    expect(decodePullsCursor(later.nextCursor ?? '')).toEqual({
+      after: 'bmV4dA',
+      lastUpdatedAt: shared,
+      boundaryRows: 28,
+    });
+  });
+
+  test('unreadable hits after the boundary row count as overlap', () => {
+    const result = parseActivePullsPayload(
+      page([
+        activeNode({ id: 'A', updatedAt: '2026-08-02T00:00:00Z' }),
+        activeNode({ id: 'B', updatedAt: shared }),
+        ...Array(23).fill(null),
+      ])
+    );
+    const cursor = decodePullsCursor(result.nextCursor ?? '');
+    expect(cursor?.lastUpdatedAt).toBe(shared);
+    expect(cursor?.boundaryRows).toBe(24);
+    expect(
+      buildActivePullsVariables({ involves: [], text: OPEN }, cursor)
+        .commentedFirst
+    ).toBe(49);
   });
 });

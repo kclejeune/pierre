@@ -324,19 +324,25 @@ export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: Stri
 }`;
 
 // Where the next page starts: GitHub's search cursor, the updatedAt of the
-// last row already shown (which bounds the commented subset on that page),
-// and how many shown rows share that timestamp across every page so far
-// (the subset's overlap with what's already on screen). Serialized opaquely
-// so the client just echoes it back.
+// last readable row so far (which bounds the commented subset on the next
+// page; absent until a readable row appears), and how many search hits
+// already paged past can still fall inside that bound (the subset's overlap
+// with what's already been shown). Hits the viewer's GitHub App can't read
+// count toward the overlap too: they still take slots in the subset's
+// results. Serialized opaquely so the client just echoes it back.
 interface PullsPageCursor {
   after: string;
-  lastUpdatedAt: string;
+  lastUpdatedAt?: string;
   boundaryRows: number;
 }
 
 export function encodePullsCursor(cursor: PullsPageCursor): string {
   return btoa(
-    JSON.stringify([cursor.after, cursor.lastUpdatedAt, cursor.boundaryRows])
+    JSON.stringify([
+      cursor.after,
+      cursor.lastUpdatedAt ?? null,
+      cursor.boundaryRows,
+    ])
   );
 }
 
@@ -347,15 +353,16 @@ export function decodePullsCursor(value: string): PullsPageCursor | undefined {
       Array.isArray(parsed) &&
       parsed.length === 3 &&
       typeof parsed[0] === 'string' &&
-      typeof parsed[1] === 'string' &&
-      /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(parsed[1]) &&
+      (parsed[1] === null ||
+        (typeof parsed[1] === 'string' &&
+          /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(parsed[1]))) &&
       Number.isInteger(parsed[2]) &&
-      parsed[2] >= 1 &&
+      parsed[2] >= 0 &&
       parsed[2] <= MAX_SEARCH_RESULTS
     ) {
       return {
         after: parsed[0],
-        lastUpdatedAt: parsed[1],
+        lastUpdatedAt: parsed[1] ?? undefined,
         boundaryRows: parsed[2] as number,
       };
     }
@@ -370,17 +377,20 @@ export function decodePullsCursor(value: string): PullsPageCursor | undefined {
 // instead. The bound is inclusive (rows on this page can share that
 // timestamp), so the subset can also return already-shown rows at the
 // boundary; buildActivePullsVariables widens it by that many so they can't
-// crowd out this page's last rows. Only the updated sorts have such a bound;
-// other sorts skip the chips' commented detail past page one.
+// crowd out this page's last rows. Before any readable row there is no
+// bound yet, so the subset starts from the top and every hit paged past is
+// overlap. Only the updated sorts can be bounded; other sorts return
+// undefined and skip the chips' commented detail past page one.
 function laterPageCommentedBound(
   sort: string,
   cursor: PullsPageCursor
-): string | undefined {
+): { bound?: string } | undefined {
+  const at = cursor.lastUpdatedAt;
   if (sort === 'updated' || sort === DEFAULT_PULL_SORT) {
-    return `updated:<=${cursor.lastUpdatedAt}`;
+    return { bound: at == null ? undefined : `updated:<=${at}` };
   }
   if (sort === 'updated-asc') {
-    return `updated:>=${cursor.lastUpdatedAt}`;
+    return { bound: at == null ? undefined : `updated:>=${at}` };
   }
   return undefined;
 }
@@ -402,10 +412,10 @@ export function buildActivePullsVariables(
     'commented',
     scope.reviewRequests ?? 'direct'
   );
-  const bound =
+  const window =
     cursor == null ? undefined : laterPageCommentedBound(sort, cursor);
   const commentedExtra =
-    bound == null ? commentedTerm : `${commentedTerm} ${bound}`;
+    window?.bound == null ? commentedTerm : `${commentedTerm} ${window.bound}`;
   // The commented term skips own pulls, so an Authored-only selection can
   // never overlap it.
   const audienceCanComment =
@@ -421,12 +431,12 @@ export function buildActivePullsVariables(
     // rows; they show without the Commented chip.
     commentedFirst: Math.min(
       MAX_CONNECTION_PAGE,
-      PULLS_PAGE_SIZE + (bound == null ? 0 : (cursor?.boundaryRows ?? 0))
+      PULLS_PAGE_SIZE + (window == null ? 0 : (cursor?.boundaryRows ?? 0))
     ),
     commentedQuery: sorted(buildActiveSearchQuery(scope, commentedExtra)),
     first: PULLS_PAGE_SIZE,
     query: sorted(buildActiveSearchQuery(scope)),
-    withCommented: audienceCanComment && (cursor == null || bound != null),
+    withCommented: audienceCanComment && (cursor == null || window != null),
   };
 }
 
@@ -548,9 +558,9 @@ export interface PullsPage {
 }
 
 // Reads ACTIVE_PULLS_QUERY's `data` into the page shape the dashboard
-// renders. `previous` is the cursor this page was fetched with: when this
-// page ends on the same timestamp the previous one did, every row on it
-// shares that timestamp, so its boundary rows add to the earlier pages'.
+// renders. `previous` is the cursor this page was fetched with. Null nodes
+// (hits the viewer's GitHub App can't read) are dropped from `pulls` but
+// still paged past, so a page of only such hits keeps a cursor.
 export function parseActivePullsPayload(
   data: unknown,
   previous?: PullsPageCursor
@@ -565,35 +575,58 @@ export function parseActivePullsPayload(
     }
   }
   const nodes = Array.isArray(pullsSearch?.nodes) ? pullsSearch.nodes : [];
-  const pulls = nodes
-    .map((node) => parseGraphQLPullNode(node, commentedIds))
-    .filter((pull): pull is PullSummary => pull != null);
+  const hits = nodes.map((node) => parseGraphQLPullNode(node, commentedIds));
+  const pulls = hits.filter((pull): pull is PullSummary => pull != null);
   const totalCount =
     typeof pullsSearch?.issueCount === 'number'
       ? pullsSearch.issueCount
       : pulls.length;
   const pageInfo = asRecord(pullsSearch?.pageInfo);
-  const last = pulls.at(-1);
   if (
     pageInfo?.hasNextPage === true &&
-    typeof pageInfo.endCursor === 'string' &&
-    last != null
+    typeof pageInfo.endCursor === 'string'
   ) {
     return {
       pulls,
       totalCount,
       nextCursor: encodePullsCursor({
         after: pageInfo.endCursor,
-        lastUpdatedAt: last.updatedAt,
-        boundaryRows: Math.min(
-          MAX_SEARCH_RESULTS,
-          pulls.filter((pull) => pull.updatedAt === last.updatedAt).length +
-            (previous?.lastUpdatedAt === last.updatedAt
-              ? previous.boundaryRows
-              : 0)
-        ),
+        ...nextCommentedBoundary(hits, previous),
       }),
     };
   }
   return { pulls, totalCount };
+}
+
+// The next page's commented bound (the last readable updatedAt) and its
+// overlap: every hit after the last readable row that is strictly beyond
+// that timestamp. Rows at the timestamp and unreadable hits after it can all
+// fall inside the inclusive bound; unreadable hits have no timestamp, so they
+// are counted whenever they might. Overcounting only widens the subset
+// fetch; undercounting would crowd out this page's Commented chips. When no
+// row on this page is beyond the timestamp, earlier pages' overlap carries.
+function nextCommentedBoundary(
+  hits: readonly (PullSummary | undefined)[],
+  previous: PullsPageCursor | undefined
+): Pick<PullsPageCursor, 'boundaryRows' | 'lastUpdatedAt'> {
+  const lastUpdatedAt =
+    hits.findLast((hit) => hit != null)?.updatedAt ?? previous?.lastUpdatedAt;
+  let boundaryRows = 0;
+  for (let index = hits.length - 1; index >= 0; index--) {
+    const hit = hits[index];
+    if (hit != null && hit.updatedAt !== lastUpdatedAt) {
+      return {
+        boundaryRows: Math.min(MAX_SEARCH_RESULTS, boundaryRows),
+        lastUpdatedAt,
+      };
+    }
+    boundaryRows++;
+  }
+  return {
+    boundaryRows: Math.min(
+      MAX_SEARCH_RESULTS,
+      boundaryRows + (previous?.boundaryRows ?? 0)
+    ),
+    lastUpdatedAt,
+  };
 }

@@ -1,7 +1,9 @@
 import { type NextRequest } from 'next/server';
 
 import {
+  ACCESS_FIELD_ERRORS,
   commitErrorResponse,
+  type GraphQLErrorTolerance,
   sendGitHubGraphQL,
 } from '@/lib/githubCommitServer';
 import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
@@ -114,29 +116,55 @@ async function handleGET(request: NextRequest) {
       { status: 401 }
     );
   }
+  const scope = { involves, repos, reviewRequests, text };
   // GraphQL rather than REST search: one request returns the page along
   // with the viewer's involvement per pull.
-  try {
-    return createPrivateJSONResponse(
-      parseActivePullsPayload(
-        await sendGitHubGraphQL(
-          ACTIVE_PULLS_QUERY,
-          buildActivePullsVariables(
-            { involves, repos, reviewRequests, text },
-            cursor
-          ),
-          token,
-          // A superseded search (the client aborts on each change) stops
-          // the GitHub call too.
-          (url, init) => githubFetch(url, { ...init, signal: request.signal })
-        ),
-        cursor
+  const fetchPage = async (pageCursor: typeof cursor) =>
+    parseActivePullsPayload(
+      await sendGitHubGraphQL(
+        ACTIVE_PULLS_QUERY,
+        buildActivePullsVariables(scope, pageCursor),
+        token,
+        // A superseded search (the client aborts on each change) stops the
+        // GitHub call too.
+        (url, init) => githubFetch(url, { ...init, signal: request.signal }),
+        { tolerate: ACTIVE_PULLS_TOLERANCE }
       ),
-      30
+      pageCursor
     );
+  try {
+    let page = await fetchPage(cursor);
+    // A page whose every hit the GitHub App can't read would render as an
+    // empty result; read on (bounded) so the viewer lands on readable rows.
+    for (
+      let skipped = 0;
+      page.pulls.length === 0 &&
+      page.nextCursor != null &&
+      skipped < MAX_UNREADABLE_PAGES_SKIPPED;
+      skipped++
+    ) {
+      page = await fetchPage(decodePullsCursor(page.nextCursor));
+    }
+    return createPrivateJSONResponse(page, 30);
   } catch (error) {
     return commitErrorResponse(error);
   }
 }
+
+// Extra search pages one request may read past when every hit on them is
+// unreadable; beyond this the client gets an empty page with a cursor.
+const MAX_UNREADABLE_PAGES_SKIPPED = 4;
+
+// A GitHub App token searches every repo the user can see but reads only
+// those where the app is installed; each other hit is a null node with an
+// access error. Those rows are dropped rather than failing the page. The
+// paths are ACTIVE_PULLS_QUERY's search aliases.
+const ACTIVE_PULLS_TOLERANCE: GraphQLErrorTolerance = {
+  types: ACCESS_FIELD_ERRORS,
+  paths: [
+    ['pulls', 'nodes'],
+    ['commented', 'nodes'],
+  ],
+};
 
 export const GET = withRequestLog(handleGET);

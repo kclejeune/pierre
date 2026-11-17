@@ -1,5 +1,6 @@
 import { type NextRequest } from 'next/server';
 
+import { explainGitHubAppRefusal } from '@/lib/githubAppAccess';
 import {
   encodeURLSegment,
   type GitHubDiffSource,
@@ -17,7 +18,10 @@ import {
   LOGIN_REQUIRED_MESSAGE,
 } from '@/lib/githubEnvironment';
 import { githubFetch } from '@/lib/githubFetch';
-import { parseGitHubJSONBody } from '@/lib/githubProxyResponse';
+import {
+  parseGitHubJSONBody,
+  readGitHubFailureDetail,
+} from '@/lib/githubProxyResponse';
 import { parseBearerToken } from '@/lib/parseBearerToken';
 import { toAPICompareRange } from '@/lib/repoBrowser';
 import { withRequestLog } from '@/lib/requestLog';
@@ -765,6 +769,19 @@ async function getGitHubAuthFailureHint(
     return '';
   }
 
+  // A GitHub App refusal says so in the body, which beats any probe below.
+  // Nothing else reads this terminal response's body.
+  const source = readGitHubSourceFromURL(target.sourceURL);
+  if (response.status === 403) {
+    const refusal = explainGitHubAppRefusal(
+      await readGitHubFailureDetail(response),
+      source == null ? undefined : `${source.repo.owner}/${source.repo.repo}`
+    );
+    if (refusal != null) {
+      return ` ${refusal}`;
+    }
+  }
+
   const tokenStatus = await fetchGitHubDiagnosticStatus('/user', token);
   if (tokenStatus === 401) {
     return ' GitHub rejected the token as invalid or expired.';
@@ -776,7 +793,6 @@ async function getGitHubAuthFailureHint(
     return ' GitHub token validation failed; check that the token is still valid.';
   }
 
-  const source = readGitHubSourceFromURL(target.sourceURL);
   if (source == null) {
     return ' GitHub accepted the token, but the patch endpoint was not accessible.';
   }

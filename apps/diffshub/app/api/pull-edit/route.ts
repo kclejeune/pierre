@@ -1,5 +1,6 @@
 import { type NextRequest } from 'next/server';
 
+import { isGitHubAppRefusal } from '@/lib/githubAppAccess';
 import {
   commitErrorResponse,
   fetchPullData,
@@ -97,7 +98,7 @@ function explainDraftRefusal(error: unknown): never {
   if (
     error instanceof GitHubCommitError &&
     error.code === 'forbidden' &&
-    /not accessible by integration/i.test(error.message)
+    isGitHubAppRefusal(error.message)
   ) {
     throw new GitHubCommitError(
       'Changing draft state requires the DiffsHub GitHub App to have Contents: Read and write.',

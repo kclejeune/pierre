@@ -1,3 +1,4 @@
+import { explainGitHubAppRefusal } from './githubAppAccess';
 import type { GitHubEnvironment } from './githubEnvironment';
 import { createJSONResponse } from './jsonResponse';
 import { getCurrentRouteLabel } from './requestLog';
@@ -21,12 +22,7 @@ const UNKNOWN_ROUTE = 'unknown';
 export async function createGitHubFailureResponse(
   response: Response
 ): Promise<Response> {
-  let detail = '';
-  try {
-    detail = describeGitHubFailureBody(await response.json());
-  } catch {
-    // Non-JSON failure body; the status alone still tells the story.
-  }
+  const detail = await readGitHubFailureDetail(response);
   logUpstreamFailure({
     error: detail === '' ? undefined : detail,
     response,
@@ -38,10 +34,23 @@ export async function createGitHubFailureResponse(
       error:
         detail === ''
           ? `GitHub responded with ${response.status}.`
-          : `GitHub responded with ${response.status}: ${detail}`,
+          : (explainGitHubAppRefusal(detail) ??
+            `GitHub responded with ${response.status}: ${detail}`),
     },
     { status: response.status >= 500 ? 502 : response.status }
   );
+}
+
+// GitHub's explanation from a failed response body, or '' when the body is
+// not JSON (the status alone then tells the story).
+export async function readGitHubFailureDetail(
+  response: Response
+): Promise<string> {
+  try {
+    return describeGitHubFailureBody(await response.json());
+  } catch {
+    return '';
+  }
 }
 
 // Flattens a GitHub error body into one line: the top-level `message` plus

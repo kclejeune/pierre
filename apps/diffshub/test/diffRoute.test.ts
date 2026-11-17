@@ -12,6 +12,24 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
+// Runs `body` against public github.com (DIFFSHUB_GITHUB_URL unset), then
+// restores the caller's setting.
+async function withDefaultGitHubURL(body: () => Promise<void>): Promise<void> {
+  const saved = process.env.DIFFSHUB_GITHUB_URL;
+  delete process.env.DIFFSHUB_GITHUB_URL;
+  resetGitHubEnvironmentCache();
+  try {
+    await body();
+  } finally {
+    if (saved == null) {
+      delete process.env.DIFFSHUB_GITHUB_URL;
+    } else {
+      process.env.DIFFSHUB_GITHUB_URL = saved;
+    }
+    resetGitHubEnvironmentCache();
+  }
+}
+
 function createCompareRequest(): NextRequest {
   const params = new URLSearchParams({
     path: '/nikelborm/qcode-effect-v4/compare/main%40%7B1022minutes%7D...main',
@@ -100,10 +118,7 @@ describe('diff route', () => {
   );
 
   test('sends a bare compare to the API against HEAD, the default branch', async () => {
-    const savedGitHubURL = process.env.DIFFSHUB_GITHUB_URL;
-    delete process.env.DIFFSHUB_GITHUB_URL;
-    resetGitHubEnvironmentCache();
-    try {
+    await withDefaultGitHubURL(async () => {
       const requestedURLs: string[] = [];
       spyOn(globalThis, 'fetch').mockImplementation(((
         input: RequestInfo | URL
@@ -134,13 +149,40 @@ describe('diff route', () => {
       expect(requestedURLs).toContain(
         'https://api.github.com/repos/acme/widgets/compare/HEAD...klejeune%2Ftopic'
       );
-    } finally {
-      if (savedGitHubURL == null) {
-        delete process.env.DIFFSHUB_GITHUB_URL;
-      } else {
-        process.env.DIFFSHUB_GITHUB_URL = savedGitHubURL;
-      }
-      resetGitHubEnvironmentCache();
-    }
+    });
+  });
+
+  // A GitHub App sign-in refused outside its installation gets told who can
+  // fix it, naming the repository, instead of the generic SSO hint.
+  test('explains a GitHub App refusal on a pull', async () => {
+    await withDefaultGitHubURL(async () => {
+      spyOn(globalThis, 'fetch').mockImplementation(((
+        input: RequestInfo | URL
+      ) => {
+        const url = input instanceof Request ? input.url : String(input);
+        return Promise.resolve(
+          url === 'https://api.github.com/user'
+            ? Response.json({ login: 'octocat' })
+            : Response.json(
+                { message: 'Resource not accessible by integration' },
+                { status: 403 }
+              )
+        );
+      }) as typeof fetch);
+
+      const params = new URLSearchParams({ path: '/acme/widgets/pull/7' });
+      const response = await GET(
+        new NextRequest(`https://diffshub.com/api/diff?${params}`, {
+          headers: { Authorization: 'Bearer ghu_token' },
+        })
+      );
+
+      expect(response.status).toBe(403);
+      const text = await response.text();
+      expect(text).toContain(
+        "The DiffsHub GitHub App can't access acme/widgets"
+      );
+      expect(text).not.toContain('SSO');
+    });
   });
 });

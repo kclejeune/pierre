@@ -27,7 +27,7 @@ import { createLimitedFetch } from './concurrencyLimit';
 import { compareRankedPaths, rankPathMatches } from './fileSearchFilter';
 import { cacheEntry } from './githubCacheCodec';
 import { getGitHubCacheLimits, getGitHubCacheStore } from './githubCacheStore';
-import { sendGitHubGraphQL } from './githubCommitServer';
+import { ACCESS_FIELD_ERRORS, sendGitHubGraphQL } from './githubCommitServer';
 import { encodeURLSegment } from './githubDiffSource';
 import {
   createGitHubAPIURL,
@@ -352,16 +352,8 @@ export function loadViewerOrgs(token: string): Promise<string[]> {
   });
 }
 
-// One aliased `repository` lookup per name; a null field means the token
-// can't read it. GitHub explains a null field with a NOT_FOUND error, or a
-// FORBIDDEN one when the repo's org blocks this token (SAML SSO it hasn't
-// been authorized for, an IP allow list). Either is that one repo's answer,
-// so neither fails the rest of the batch.
-const ACCESS_FIELD_ERRORS: ReadonlySet<string> = new Set([
-  'NOT_FOUND',
-  'FORBIDDEN',
-]);
-
+// One aliased `repository` lookup per name; a null field (with a NOT_FOUND
+// or FORBIDDEN error) is that one repo's answer, so it doesn't fail the batch.
 async function checkAccess(
   fullNames: readonly string[],
   token: string,
@@ -385,7 +377,7 @@ async function checkAccess(
       variables,
       token,
       (url, init) => githubFetch(url, { ...init, signal }),
-      { allowedFieldErrors: ACCESS_FIELD_ERRORS }
+      { tolerate: { types: ACCESS_FIELD_ERRORS } }
     )
   );
   return fullNames.map((_, index) => asRecord(data?.[`r${index}`]) != null);

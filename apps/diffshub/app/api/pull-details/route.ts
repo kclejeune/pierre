@@ -3,10 +3,9 @@ import { type NextRequest } from 'next/server';
 import { commitErrorResponse } from '@/lib/githubCommitServer';
 import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
 import {
+  fetchPullAccess,
   fetchPullChecks,
-  fetchPullMergeCapabilities,
   fetchPullReviewStates,
-  fetchPullViewerPermissions,
   readPullRouteParams,
 } from '@/lib/githubPullDetailsServer';
 import { createJSONResponse } from '@/lib/jsonResponse';
@@ -39,22 +38,16 @@ async function handleGET(request: NextRequest) {
   const repo = { owner: params.owner, repo: params.repo };
   const token = await resolveBearerToken(request);
   try {
-    const [reviewStates, checks, mergeCapabilities, viewerPermissions] =
-      await Promise.all([
-        fetchPullReviewStates(repo, params.pull, token).catch(() => null),
-        fetchPullChecks(repo, headSha, token).catch(() => null),
-        token == null
-          ? Promise.resolve(null)
-          : fetchPullMergeCapabilities(repo, token).catch(() => null),
-        token == null
-          ? Promise.resolve(null)
-          : fetchPullViewerPermissions(repo, params.pull, token).catch(
-              () => null
-            ),
-      ]);
+    const [reviewStates, checks, access] = await Promise.all([
+      fetchPullReviewStates(repo, params.pull, token).catch(() => null),
+      fetchPullChecks(repo, headSha, token).catch(() => null),
+      token == null
+        ? Promise.resolve(null)
+        : fetchPullAccess(repo, params.pull, token).catch(() => null),
+    ]);
     const payload: PullDetailsSupplement = {
       checks,
-      mergeCapabilities,
+      mergeCapabilities: access?.mergeCapabilities ?? null,
       reviewers:
         reviewStates == null
           ? null
@@ -63,7 +56,7 @@ async function handleGET(request: NextRequest) {
               login,
               state: reviewer.state,
             })),
-      viewerPermissions,
+      viewerPermissions: access?.viewerPermissions ?? null,
     };
     return createJSONResponse(payload);
   } catch (error) {

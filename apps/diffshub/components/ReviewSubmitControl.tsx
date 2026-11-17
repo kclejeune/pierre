@@ -123,7 +123,7 @@ export function ReviewSubmitControl({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="w-80 p-3"
+        className="max-h-(--radix-dropdown-menu-content-available-height) w-80 max-w-[92vw] overflow-y-auto p-3 sm:w-[30rem]"
         style={dropdownThemeStyle}
       >
         <form
@@ -138,8 +138,8 @@ export function ReviewSubmitControl({
             aria-label="Review summary"
             disabled={isSubmitting}
             placeholder="Leave a summary… (optional)"
-            rows={3}
-            textareaClassName="max-h-60"
+            rows={5}
+            textareaClassName="max-h-[50vh]"
             value={body}
             onChange={setBody}
             // Block Radix typeahead and item activation.

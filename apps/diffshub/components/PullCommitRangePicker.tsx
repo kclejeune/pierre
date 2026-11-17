@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from './DropdownMenu';
 import { useDropdownChromeStyle } from './useDropdownChromeStyle';
+import { annotationBorderColor } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import type { PullRequestRef } from '@/lib/pullCommentsClient';
 import {
@@ -205,7 +206,9 @@ export function PullCommitRangePicker({
                   />
                 ))}
               </ul>
-              <div className="flex items-center justify-between gap-2 border-t border-[var(--diffshub-annotation-border,var(--color-border))] pt-2">
+              <div
+                className={`flex items-center justify-between gap-2 border-t ${annotationBorderColor} pt-2`}
+              >
                 <span className="text-muted-foreground text-xs">
                   {selection.length === 0
                     ? `${commits.length === 1 ? '1 commit' : `${commits.length} commits`} in this pull request`

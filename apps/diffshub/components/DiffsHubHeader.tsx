@@ -54,6 +54,7 @@ import {
 import { GitHubTokenControl } from '@/components/GitHubTokenControl';
 import { Switch } from '@/components/Switch';
 import { docsThemeCatalog } from '@/components/themeCatalog';
+import { annotationBorderColor } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import type { DiffRefs } from '@/lib/diffRefs';
 import { isRepoPinned } from '@/lib/pinnedRepos';
@@ -496,7 +497,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
                       rows={2}
                       spellCheck={false}
                       placeholder={'vendor/**\n*.pb.go'}
-                      className="field-sizing-content max-h-40 w-full resize-none rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))] bg-transparent px-2 py-1.5 font-mono text-xs text-inherit placeholder:text-[var(--diffshub-popover-muted-fg,var(--color-muted-foreground))] focus:outline-none"
+                      className={`field-sizing-content max-h-40 w-full resize-none rounded-md border ${annotationBorderColor} bg-transparent px-2 py-1.5 font-mono text-xs text-inherit placeholder:text-[var(--diffshub-popover-muted-fg,var(--color-muted-foreground))] focus:outline-none`}
                       onChange={({ currentTarget }) =>
                         onCollapsePatternsChange(currentTarget.value)
                       }

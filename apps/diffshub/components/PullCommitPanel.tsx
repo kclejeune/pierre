@@ -12,6 +12,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '@/components/DropdownMenu';
+import { annotationBorderColor } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 
 interface PullCommitPanelProps {
@@ -123,7 +124,7 @@ export function PullCommitPanel({
             rows={2}
             disabled={isCommitting}
             placeholder={defaultMessage}
-            className="field-sizing-content max-h-40 w-full resize-none rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))] bg-transparent px-3 py-1.5 font-mono text-[13px] text-inherit placeholder:text-[var(--diffshub-popover-muted-fg,var(--color-muted-foreground))] focus:outline-none"
+            className={`field-sizing-content max-h-40 w-full resize-none rounded-md border ${annotationBorderColor} bg-transparent px-3 py-1.5 font-mono text-[13px] text-inherit placeholder:text-[var(--diffshub-popover-muted-fg,var(--color-muted-foreground))] focus:outline-none`}
             onChange={({ currentTarget }) => setMessage(currentTarget.value)}
             onKeyDown={(keyEvent) => {
               keyEvent.stopPropagation();

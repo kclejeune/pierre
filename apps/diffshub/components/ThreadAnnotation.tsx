@@ -33,6 +33,7 @@ import {
 import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
 import {
+  annotationBorderColor,
   annotationCardBase,
   composerSecondaryButtonClass,
 } from '@/lib/annotation';
@@ -183,7 +184,9 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
                 />
               ))}
             </ol>
-            <div className="flex flex-col gap-2.5 border-t border-[var(--diffshub-annotation-border,var(--color-border))] bg-black/[0.025] px-3 py-2.5 dark:bg-white/[0.025]">
+            <div
+              className={`flex flex-col gap-2.5 border-t ${annotationBorderColor} bg-black/[0.025] px-3 py-2.5 dark:bg-white/[0.025]`}
+            >
               <div className="flex items-start gap-2.5">
                 {canWrite ? (
                   <>
@@ -251,8 +254,7 @@ function ResolvedBar({
       aria-expanded={expanded}
       className={cn(
         'text-muted-foreground hover:text-foreground focus-visible:ring-ring flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-inset',
-        expanded &&
-          'border-b border-[var(--diffshub-annotation-border,var(--color-border))]'
+        expanded && `border-b ${annotationBorderColor}`
       )}
       onClick={onToggle}
     >
@@ -443,7 +445,7 @@ function ReplyComposer({ state, onReply }: ReplyComposerProps) {
   if (!state.isOpen) {
     return (
       <ComposerTrigger
-        className="border-[var(--diffshub-annotation-border,var(--color-border))] bg-[var(--diffshub-annotation-bg,var(--color-card))]"
+        className={`${annotationBorderColor} bg-[var(--diffshub-annotation-bg,var(--color-card))]`}
         label="Reply…"
         onOpen={state.open}
       />

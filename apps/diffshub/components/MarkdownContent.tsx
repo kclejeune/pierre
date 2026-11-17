@@ -25,6 +25,7 @@ import {
 } from './githubSession';
 import { MermaidDiagram } from './MermaidDiagram';
 import { Button } from '@/components/Button';
+import { annotationBorderColor } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import { createGitHubWebAssetProxyURL } from '@/lib/githubWebAssets';
 import { remarkMentions } from '@/lib/remarkMentions';
@@ -212,8 +213,12 @@ function SuggestedChange({ code }: { code: string }) {
   const [isApplying, setIsApplying] = useState(false);
   const onApply = target?.onApply;
   return (
-    <div className="my-2 overflow-hidden rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))]">
-      <div className="text-muted-foreground flex items-center gap-2 border-b border-[var(--diffshub-annotation-border,var(--color-border))] px-3 py-1 text-[12px] font-medium">
+    <div
+      className={`my-2 overflow-hidden rounded-md border ${annotationBorderColor}`}
+    >
+      <div
+        className={`text-muted-foreground flex items-center gap-2 border-b ${annotationBorderColor} px-3 py-1 text-[12px] font-medium`}
+      >
         <span className="flex-1">
           {lines.length === 0
             ? 'Suggested change: remove these lines'

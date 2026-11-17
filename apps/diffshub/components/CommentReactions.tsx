@@ -11,6 +11,7 @@ import {
 import { saveViewerReaction } from './reactionsClient';
 import { useDropdownChromeStyle } from './useDropdownChromeStyle';
 import { Button } from '@/components/Button';
+import { annotationBorderColor } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import {
   type CommentReaction,
@@ -117,7 +118,7 @@ export function ReactionChipList({
               'flex h-6 items-center gap-1 rounded-full border px-2 text-[12px] tabular-nums transition-colors',
               reaction.viewerHasReacted
                 ? 'border-blue-500/60 bg-blue-500/10 text-blue-600 dark:text-blue-300'
-                : 'text-muted-foreground border-[var(--diffshub-annotation-border,var(--color-border))]',
+                : `text-muted-foreground ${annotationBorderColor}`,
               state.interactive && 'hover:border-foreground/30 cursor-pointer'
             )}
             onClick={() => state.toggle(reaction.content)}

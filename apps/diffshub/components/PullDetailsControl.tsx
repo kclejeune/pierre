@@ -43,6 +43,7 @@ import {
 import { PULL_STATE_DISPLAY } from './pullStateDisplay';
 import { useDropdownChromeStyle } from './useDropdownChromeStyle';
 import { useRepoLabels } from './useRepoLabels';
+import { annotationBorderColor } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import { displayPullState } from '@/lib/githubPullSummaries';
 import type { PullRequestRef } from '@/lib/pullCommentsClient';
@@ -463,7 +464,9 @@ export function PullDetailsControl({
                   No description provided.
                 </p>
               ) : (
-                <div className="max-h-[min(24rem,50vh)] overflow-y-auto rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))] px-3 py-2 text-[13px]">
+                <div
+                  className={`max-h-[min(24rem,50vh)] overflow-y-auto rounded-md border ${annotationBorderColor} px-3 py-2 text-[13px]`}
+                >
                   <MarkdownContent flavor="comment" markdown={details.body} />
                 </div>
               )}
@@ -713,7 +716,7 @@ function PullStateActions({
     );
   if (confirmingClose) {
     return (
-      <div className="border-t border-[var(--diffshub-annotation-border,var(--color-border))] pt-3">
+      <div className={`border-t ${annotationBorderColor} pt-3`}>
         <InlineConfirm
           confirmLabel="Close pull request"
           disabled={pending != null}
@@ -728,7 +731,9 @@ function PullStateActions({
     );
   }
   return (
-    <div className="flex flex-wrap items-center justify-end gap-1.5 border-t border-[var(--diffshub-annotation-border,var(--color-border))] pt-3">
+    <div
+      className={`flex flex-wrap items-center justify-end gap-1.5 border-t ${annotationBorderColor} pt-3`}
+    >
       {isOpen && (
         <Button
           type="button"
@@ -850,7 +855,9 @@ function PullLabels({
         )}
       </div>
       {pickerOpen && (
-        <div className="flex flex-col gap-1 rounded-md border border-[var(--diffshub-annotation-border,var(--color-border))] p-1.5">
+        <div
+          className={`flex flex-col gap-1 rounded-md border ${annotationBorderColor} p-1.5`}
+        >
           <Input
             inputSize="sm"
             value={filter}

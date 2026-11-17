@@ -23,6 +23,7 @@ import {
   MarkdownContent,
   MarkdownImage,
 } from './MarkdownContent';
+import { annotationBorderColor } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import { isPlainLeftClick } from '@/lib/isPlainLeftClick';
 import {
@@ -320,14 +321,16 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
       data-diffshub-doc-item={itemId}
       data-diffshub-doc-state={contentsState.kind}
       className={cn(
-        '@container m-2 rounded-xl border border-[var(--diffshub-annotation-border,var(--color-border))] bg-[var(--diffshub-annotation-bg,var(--color-card))] font-sans text-[var(--diffshub-annotation-fg,var(--color-card-foreground))] shadow-[var(--diffshub-annotation-shadow,0_2px_4px_rgb(0_0_0_/_0.025),0_4px_8px_rgb(0_0_0_/_0.025))]',
+        `@container m-2 rounded-xl border ${annotationBorderColor} bg-[var(--diffshub-annotation-bg,var(--color-card))] font-sans text-[var(--diffshub-annotation-fg,var(--color-card-foreground))] shadow-[var(--diffshub-annotation-shadow,0_2px_4px_rgb(0_0_0_/_0.025),0_4px_8px_rgb(0_0_0_/_0.025))]`,
         // With a comment rail the card spans the viewer column — the prose
         // track caps itself at a readable measure and the rail absorbs the
         // remaining width, so wide screens have no dead gutter to the right.
         rail != null ? 'max-w-none' : 'max-w-[860px]'
       )}
     >
-      <div className="text-muted-foreground flex items-center gap-2 border-b border-[var(--diffshub-annotation-border,var(--color-border))] px-4 py-2 text-[12px] tracking-wide uppercase">
+      <div
+        className={`text-muted-foreground flex items-center gap-2 border-b ${annotationBorderColor} px-4 py-2 text-[12px] tracking-wide uppercase`}
+      >
         {isDeletedDoc ? 'Rendered document (removed)' : 'Rendered document'}
         {changeMap != null && (
           <span className="normal-case">
@@ -340,7 +343,7 @@ export const MarkdownDocAnnotation = memo(function MarkdownDocAnnotation({
         rail.fileAnnotations.length > 0 && (
           // Comments on the whole file, GitHub's file-level threads and new
           // drafts from the header's comment button, lead the document.
-          <div className="border-b border-[var(--diffshub-annotation-border,var(--color-border))] px-4 py-2">
+          <div className={`border-b ${annotationBorderColor} px-4 py-2`}>
             <div className="flex max-w-[620px] flex-col">
               <CommentCards
                 annotations={rail.fileAnnotations}

@@ -124,7 +124,9 @@ describe('git data writes', () => {
         }),
         'protected-branch',
       ],
-      [403, 'Resource not accessible by integration', 'forbidden'],
+      // A GitHub App installation refusal gets its own code (see githubAppAccess).
+      [403, 'Resource not accessible by integration', 'app-refusal'],
+      [403, 'Must have admin rights to Repository.', 'forbidden'],
       // 409 is not a moved head on git-data endpoints (empty repository,
       // ref-lock contention) — only the merge route recodes it.
       [409, 'Git Repository is empty.', 'github'],

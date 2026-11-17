@@ -153,6 +153,9 @@ interface ActiveDraftComment {
 export interface ViewerEditSession {
   // True once the preflight confirmed a commit can land.
   canCommit: boolean;
+  // Why file edits can't be committed (a missing GitHub App permission);
+  // the pencil then shows disabled with this as its tooltip.
+  commitBlockedReason: string | null;
   commitSuggestion(input: SuggestionCommitInput): Promise<void>;
   canEdit(item: CodeViewItem<CommentMetadata>): boolean;
   isEditing(itemId: string): boolean;
@@ -1278,6 +1281,12 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
       const reviewed = isFileReviewed(item);
       const editable = editSession.canEdit(item);
       const editing = editable && editSession.isEditing(item.id);
+      // Not editable only because the app can't commit: show why, rather
+      // than hiding the pencil as if editing didn't exist.
+      const editBlocked =
+        !editable && item.fileDiff.type !== 'deleted'
+          ? editSession.commitBlockedReason
+          : null;
       return (
         // The data attribute lets the header-click listener above map a
         // shadow-DOM header back to its item id.
@@ -1302,6 +1311,21 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
                 event.preventDefault();
                 event.stopPropagation();
                 editSession.toggleEdit(item.id);
+              }}
+            >
+              <IconPencil aria-hidden="true" className="size-4" />
+            </button>
+          )}
+          {editBlocked != null && (
+            <button
+              type="button"
+              aria-disabled
+              aria-label="Edit this file (unavailable)"
+              title={editBlocked}
+              className="text-muted-foreground inline-flex size-6 cursor-not-allowed items-center justify-center rounded-md opacity-50"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
               }}
             >
               <IconPencil aria-hidden="true" className="size-4" />

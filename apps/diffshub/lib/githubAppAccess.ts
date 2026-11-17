@@ -6,7 +6,7 @@ const INTEGRATION_REFUSAL = /not accessible by integration/i;
 export const GITHUB_APP_OWNER_FIX =
   'Ask an organization owner to install the app or approve its requested permissions.';
 
-export function isGitHubAppRefusal(message: string): boolean {
+function isGitHubAppRefusal(message: string): boolean {
   return INTEGRATION_REFUSAL.test(message);
 }
 

@@ -54,6 +54,11 @@ const buttonVariants = cva(
 export type ButtonProps = React.ComponentProps<'button'> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean;
+    // Why the action is unavailable (e.g. a missing GitHub App permission).
+    // Set, the button looks disabled, shows the reason as its tooltip, and
+    // ignores clicks, but stays hoverable and focusable via aria-disabled;
+    // a real `disabled` would swallow the hover that shows the reason.
+    blockedReason?: string | null;
   };
 
 function Button({
@@ -61,15 +66,28 @@ function Button({
   variant,
   size,
   asChild = false,
+  blockedReason,
   ...props
 }: ButtonProps) {
   const Comp = asChild ? Slot : 'button';
+  const blocked =
+    blockedReason == null
+      ? {}
+      : {
+          'aria-disabled': true,
+          onClick: undefined,
+          title: blockedReason,
+        };
 
   return (
     <Comp
       data-slot="button"
-      className={cn(buttonVariants({ variant, size, className }))}
+      className={cn(
+        buttonVariants({ variant, size, className }),
+        blockedReason != null && 'cursor-not-allowed opacity-50'
+      )}
       {...props}
+      {...blocked}
     />
   );
 }

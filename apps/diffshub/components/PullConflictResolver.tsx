@@ -33,6 +33,9 @@ interface PullConflictControlProps {
   conflictedFileCount?: number;
   // The merge is being computed; the button ignores clicks meanwhile.
   loading?: boolean;
+  // Why the merge commit can't land (the commit preflight's verdict for the
+  // head repo, a fork's for fork pulls); blocks the button with this tooltip.
+  blockedReason?: string | null;
   onOpen(): void;
 }
 
@@ -41,6 +44,7 @@ interface PullConflictControlProps {
 export function PullConflictControl({
   conflictedFileCount,
   loading = false,
+  blockedReason,
   onOpen,
 }: PullConflictControlProps) {
   return (
@@ -51,6 +55,7 @@ export function PullConflictControl({
       title="This branch has conflicts with the base branch — resolve and merge"
       className={cn(CHROME_ICON_BUTTON_CLASS, 'w-auto gap-1.5 px-2')}
       aria-busy={loading}
+      blockedReason={blockedReason}
       disabled={loading}
       onClick={onOpen}
     >

@@ -12,6 +12,10 @@ import {
 } from 'react';
 import { toast } from 'sonner';
 
+import {
+  useAppPermissionBlock,
+  useRememberAppRefusal,
+} from './AppPermissionsContext';
 import { CommentHeaderActions, CommentTimestamp } from './CommentActions';
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import {
@@ -120,6 +124,8 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
     onResolve != null &&
     state != null &&
     (isResolved ? state.viewerCanUnresolve : state.viewerCanResolve);
+  const resolveBlocked = useAppPermissionBlock('resolveThread');
+  const rememberRefusal = useRememberAppRefusal();
   const [resolveLabel, resolvingLabel] = isResolved
     ? ['Unresolve conversation', 'Unresolving…']
     : ['Resolve conversation', 'Resolving…'];
@@ -134,8 +140,10 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
             setExpanded(false);
           }
         },
-        () => {
-          // Already surfaced; the button re-enables below.
+        (error: unknown) => {
+          // Already surfaced; the button re-enables below, or disables with
+          // the reason if the app's installation refused it.
+          rememberRefusal('resolveThread', error);
         }
       )
       .finally(() => setIsResolving(false));
@@ -213,6 +221,7 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
                     variant="annotationOutline"
                     size="sm"
                     className="h-7 px-2.5 text-[12px] font-medium"
+                    blockedReason={resolveBlocked}
                     disabled={isResolving}
                     onClick={() => toggleResolved(!isResolved)}
                   >

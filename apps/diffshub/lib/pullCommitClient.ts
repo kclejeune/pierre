@@ -18,7 +18,10 @@ export interface PullCommitCapability {
   // The head sha the preflight observed — the compare-and-swap value for the
   // commit that follows.
   headSha: string;
-  reason?: 'no-push-access' | 'pull-closed';
+  reason?: 'app-permission' | 'no-push-access' | 'pull-closed';
+  // For 'app-permission': which installation permission is missing, and
+  // who can grant it.
+  message?: string;
 }
 
 export interface PullCommitResult {

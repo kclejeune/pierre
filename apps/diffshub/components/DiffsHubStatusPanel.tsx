@@ -1,5 +1,6 @@
-import { IconCiWarningFill, IconRefresh } from '@pierre/icons';
+import { IconCiWarningFill } from '@pierre/icons';
 
+import { Spinner } from './Spinner';
 import { useChromeThemeProps } from './useChromeThemeProps';
 import { Button } from '@/components/Button';
 import { cn } from '@/lib/cn';
@@ -63,10 +64,7 @@ export function DiffsHubStatusPanel({
         className="my-auto w-full max-w-md min-w-0 p-5 text-center"
       >
         {isLoading ? (
-          <IconRefresh
-            aria-hidden="true"
-            className="text-muted-foreground mx-auto mb-3 size-5 -scale-x-100 animate-spin [animation-direction:reverse]"
-          />
+          <Spinner className="text-muted-foreground mx-auto mb-3 size-5" />
         ) : isError ? (
           <IconCiWarningFill className="text-muted-foreground mx-auto mb-3 size-5" />
         ) : null}

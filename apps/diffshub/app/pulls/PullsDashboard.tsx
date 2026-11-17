@@ -31,6 +31,7 @@ import { PullQueryBar } from '@/components/PullQueryBar';
 import { PullRequestRow } from '@/components/PullRequestRow';
 import { RepoPinStrip, ScopeChip } from '@/components/RepoPinStrip';
 import { formatShortcut, useModifierKey } from '@/components/ShortcutHint';
+import { Spinner } from '@/components/Spinner';
 import { Switch } from '@/components/Switch';
 import {
   pullKey,
@@ -41,6 +42,7 @@ import { useGitHubToken } from '@/components/useGitHubToken';
 import { useLatestValueRef } from '@/components/useLatestValueRef';
 import { usePinnedRepos } from '@/components/usePinnedRepos';
 import { cn } from '@/lib/cn';
+import { GITHUB_APP_OWNER_FIX } from '@/lib/githubAppAccess';
 import {
   involvementsUseReviewRequests,
   normalizePullInvolvements,
@@ -418,6 +420,23 @@ const STATE_TOGGLES: readonly { value: PullStateFilter; label: string }[] = [
   { value: 'all', label: 'All' },
 ];
 
+// An empty list whose search did match pulls, so the matches seen are in
+// repos the viewer's GitHub App sign-in can't read. With pages left, only
+// the ones checked so far are; readable pulls may still follow.
+export function getUnreadableCopy(
+  totalCount: number,
+  hasMore: boolean
+): string {
+  if (hasMore) {
+    return `The pull requests checked so far are in repositories the DiffsHub GitHub App can't read. Load more to keep looking.`;
+  }
+  const matches =
+    totalCount === 1
+      ? '1 pull request matches'
+      : `${totalCount.toLocaleString()} pull requests match`;
+  return `${matches}, but the DiffsHub GitHub App can't read the repositories they're in. ${GITHUB_APP_OWNER_FIX}`;
+}
+
 function getEmptyCopy(request: PullSearchRequest, scope: PullScope): string {
   const where =
     scope.kind === 'repo'
@@ -500,11 +519,16 @@ function PullList({
               }
             >
               {option.label}
-              {state === option.value && !loading && (
-                <span className="text-muted-foreground ml-1.5 font-normal tabular-nums">
-                  {totalCount.toLocaleString()}
-                </span>
-              )}
+              {state === option.value &&
+                (loading ? (
+                  // Refetching: the count and any rows below are the
+                  // previous answer until the search returns.
+                  <Spinner className="text-muted-foreground ml-1.5 inline size-3 align-[-1px]" />
+                ) : (
+                  <span className="text-muted-foreground ml-1.5 font-normal tabular-nums">
+                    {totalCount.toLocaleString()}
+                  </span>
+                ))}
             </button>
           ))}
         </div>
@@ -540,7 +564,11 @@ function PullList({
         </DropdownMenu>
       </div>
       <DashboardSectionState
-        emptyLabel={getEmptyCopy(request, scope)}
+        emptyLabel={
+          totalCount > 0
+            ? getUnreadableCopy(totalCount, hasMore)
+            : getEmptyCopy(request, scope)
+        }
         error={pulls.length === 0 ? error : null}
         isEmpty={pulls.length === 0}
         loading={loading}

@@ -116,7 +116,7 @@ interface DashboardSectionStateProps {
   emptyLabel?: ReactNode;
   error: Error | null;
   isEmpty: boolean;
-  // Skeleton on first load only; reloads keep existing rows.
+  // Skeleton on first load only; reloads keep existing rows, dimmed.
   loading: boolean;
   // Screen-reader text for the skeleton.
   loadingLabel: string;
@@ -151,7 +151,14 @@ export function DashboardSectionState({
   }
   return (
     <>
-      {children}
+      <div
+        className={cn(
+          'transition-opacity duration-200',
+          loading && 'opacity-60'
+        )}
+      >
+        {children}
+      </div>
       {errorMessage}
     </>
   );

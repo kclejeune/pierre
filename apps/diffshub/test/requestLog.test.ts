@@ -5,8 +5,12 @@ import { getCurrentRouteLabel, withRequestLog } from '../lib/requestLog';
 import { captureConsole, captureLogRecords } from './helpers/captureConsole';
 
 // Only the surface withRequestLog reads.
-function createRequest(method: string, pathname: string): NextRequest {
-  return { method, nextUrl: { pathname } } as NextRequest;
+function createRequest(
+  method: string,
+  pathname: string,
+  signal: AbortSignal = new AbortController().signal
+): NextRequest {
+  return { method, nextUrl: { pathname }, signal } as NextRequest;
 }
 
 describe('withRequestLog', () => {
@@ -48,6 +52,21 @@ describe('withRequestLog', () => {
     expect(serverError?.stream).toBe('stderr');
     expect(JSON.parse(serverError?.line ?? '')).toMatchObject({
       level: 'error',
+      status: 502,
+    });
+  });
+
+  // A superseded search's client has hung up, so its failure status is
+  // routine rather than a server error.
+  test('logs a request the client aborted as info', async () => {
+    const [record] = await captureLogRecords(() =>
+      withRequestLog(() => new Response('', { status: 502 }))(
+        createRequest('GET', '/api/github-pulls', AbortSignal.abort())
+      )
+    );
+    expect(record).toMatchObject({
+      aborted: true,
+      level: 'info',
       status: 502,
     });
   });

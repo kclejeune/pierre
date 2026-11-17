@@ -199,9 +199,10 @@ describe('parseActivePullsPayload', () => {
       parseActivePullsPayload({
         pulls: { nodes: [{}, activeNode({ repository: null })] },
       })
-    ).toEqual({ pulls: [], totalCount: 0 });
+    ).toEqual({ pulls: [], hiddenCount: 0, totalCount: 0 });
     expect(parseActivePullsPayload(null)).toEqual({
       pulls: [],
+      hiddenCount: 0,
       totalCount: 0,
     });
   });
@@ -526,10 +527,13 @@ describe('GET /api/github-pulls', () => {
       );
       expect(response.status).toBe(200);
       const body = (await response.json()) as {
+        hiddenCount: number;
         nextCursor?: string;
         pulls: { number: number }[];
       };
       expect(body.pulls.map((pull) => pull.number)).toEqual([7]);
+      // The skipped page's hits are reported for the dashboard's empty state.
+      expect(body.hiddenCount).toBe(25);
       expect(body.nextCursor).toBeUndefined();
       expect(afters).toEqual([undefined, 'cDI']);
     } finally {
@@ -618,6 +622,7 @@ describe('search hits the GitHub App cannot read', () => {
   test('a page of only unreadable hits still pages on', () => {
     const first = parseActivePullsPayload(page(Array(25).fill(null)));
     expect(first.pulls).toEqual([]);
+    expect(first.hiddenCount).toBe(25);
     const cursor = decodePullsCursor(first.nextCursor ?? '');
     // No readable row yet: no bound, and every hit so far is overlap.
     expect(cursor).toEqual({

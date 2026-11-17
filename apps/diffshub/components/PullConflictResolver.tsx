@@ -12,6 +12,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from './Dialog';
+import { Spinner } from './Spinner';
 import { ThemedFile } from './ThemedFile';
 import { ThemedUnresolvedFile } from './ThemedUnresolvedFile';
 import { Button } from '@/components/Button';
@@ -54,7 +55,7 @@ export function PullConflictControl({
       onClick={onOpen}
     >
       {loading ? (
-        <IconRefresh className="size-3.5 animate-spin text-amber-500" />
+        <Spinner className="size-3.5 text-amber-500" />
       ) : (
         <IconCiWarningFill className="size-3.5 text-amber-500" />
       )}

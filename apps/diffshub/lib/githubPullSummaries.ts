@@ -552,6 +552,9 @@ function readLabels(record: Record<string, unknown>): PullLabel[] {
 
 export interface PullsPage {
   pulls: PullSummary[];
+  // Search hits paged past that the viewer's GitHub App can't read; they
+  // count toward totalCount but never appear in `pulls`.
+  hiddenCount: number;
   totalCount: number;
   // Present while GitHub reports another page.
   nextCursor?: string;
@@ -577,6 +580,8 @@ export function parseActivePullsPayload(
   const nodes = Array.isArray(pullsSearch?.nodes) ? pullsSearch.nodes : [];
   const hits = nodes.map((node) => parseGraphQLPullNode(node, commentedIds));
   const pulls = hits.filter((pull): pull is PullSummary => pull != null);
+  // Null nodes are hits the token can't read; malformed ones aren't.
+  const hiddenCount = nodes.filter((node) => node == null).length;
   const totalCount =
     typeof pullsSearch?.issueCount === 'number'
       ? pullsSearch.issueCount
@@ -588,6 +593,7 @@ export function parseActivePullsPayload(
   ) {
     return {
       pulls,
+      hiddenCount,
       totalCount,
       nextCursor: encodePullsCursor({
         after: pageInfo.endCursor,
@@ -595,7 +601,7 @@ export function parseActivePullsPayload(
       }),
     };
   }
-  return { pulls, totalCount };
+  return { pulls, hiddenCount, totalCount };
 }
 
 // The next page's commented bound (the last readable updatedAt) and its

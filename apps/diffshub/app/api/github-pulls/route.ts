@@ -26,6 +26,7 @@ import { DEFAULT_QUERY_TEXT } from '@/lib/pullScopes';
 import { hasNarrowingQualifier } from '@/lib/pullSearchQuery';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
+import { emitLogLine } from '@/lib/serverLog';
 
 // Pull request lists for the /pulls dashboard: one GraphQL search per page,
 // built from the viewer's involvement terms (?involves=, or "anyone"), an
@@ -119,41 +120,53 @@ async function handleGET(request: NextRequest) {
   const scope = { involves, repos, reviewRequests, text };
   // GraphQL rather than REST search: one request returns the page along
   // with the viewer's involvement per pull.
-  const fetchPage = async (pageCursor: typeof cursor) =>
-    parseActivePullsPayload(
-      await sendGitHubGraphQL(
-        ACTIVE_PULLS_QUERY,
-        buildActivePullsVariables(scope, pageCursor),
-        token,
-        // A superseded search (the client aborts on each change) stops the
-        // GitHub call too.
-        (url, init) => githubFetch(url, { ...init, signal: request.signal }),
-        { tolerate: ACTIVE_PULLS_TOLERANCE }
-      ),
-      pageCursor
+  const searchMs: number[] = [];
+  const fetchPage = async (pageCursor: typeof cursor) => {
+    const startedAt = Date.now();
+    const data = await sendGitHubGraphQL(
+      ACTIVE_PULLS_QUERY,
+      buildActivePullsVariables(scope, pageCursor),
+      token,
+      // A superseded search (the client aborts on each change) stops the
+      // GitHub call too.
+      (url, init) => githubFetch(url, { ...init, signal: request.signal }),
+      { tolerate: ACTIVE_PULLS_TOLERANCE }
     );
+    searchMs.push(Date.now() - startedAt);
+    return parseActivePullsPayload(data, pageCursor);
+  };
   try {
     let page = await fetchPage(cursor);
-    // A page whose every hit the GitHub App can't read would render as an
-    // empty result; read on (bounded) so the viewer lands on readable rows.
-    for (
-      let skipped = 0;
+    let hiddenCount = page.hiddenCount;
+    // Read past pages whose every hit the GitHub App can't read, so the
+    // viewer lands on readable rows; time-bounded since GHE searches are slow.
+    const skipDeadline = Date.now() + UNREADABLE_SKIP_BUDGET_MS;
+    while (
       page.pulls.length === 0 &&
       page.nextCursor != null &&
-      skipped < MAX_UNREADABLE_PAGES_SKIPPED;
-      skipped++
+      Date.now() < skipDeadline
     ) {
       page = await fetchPage(decodePullsCursor(page.nextCursor));
+      hiddenCount += page.hiddenCount;
     }
-    return createPrivateJSONResponse(page, 30);
+    // Profiles requests that ran several searches or hid unreadable hits.
+    if (searchMs.length > 1 || hiddenCount > 0) {
+      emitLogLine({
+        event: 'github_pulls_search',
+        hiddenCount,
+        level: 'info',
+        searchMs,
+      });
+    }
+    return createPrivateJSONResponse({ ...page, hiddenCount }, 30);
   } catch (error) {
     return commitErrorResponse(error);
   }
 }
 
-// Extra search pages one request may read past when every hit on them is
-// unreadable; beyond this the client gets an empty page with a cursor.
-const MAX_UNREADABLE_PAGES_SKIPPED = 4;
+// How long after the first page a request may keep reading past unreadable
+// pages before returning an empty page with a cursor.
+const UNREADABLE_SKIP_BUDGET_MS = 3000;
 
 // A GitHub App token searches every repo the user can see but reads only
 // those where the app is installed; each other hit is a null node with an

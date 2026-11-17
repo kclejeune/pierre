@@ -53,10 +53,14 @@ export function withRequestLog(handler: RouteHandler): LoggedRouteHandler {
         routeLabelFromPath(path),
         async () => await handler(request)
       );
+      // A client that hung up (a superseded search) never sees this status,
+      // so its failure isn't the server's; log it as routine.
+      const aborted = request.signal.aborted;
       emitLogLine({
         ...common,
+        ...(aborted ? { aborted: true } : {}),
         handlerDurationMs: Date.now() - startedAt,
-        level: levelForStatus(response.status),
+        level: aborted ? 'info' : levelForStatus(response.status),
         status: response.status,
       });
       return response;

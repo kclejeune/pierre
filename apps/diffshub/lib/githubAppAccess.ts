@@ -2,6 +2,10 @@
 // installed the app, or hasn't approved a permission) with this bare message.
 const INTEGRATION_REFUSAL = /not accessible by integration/i;
 
+// Who can fix a refusal, shared by every message that reports one.
+export const GITHUB_APP_OWNER_FIX =
+  'Ask an organization owner to install the app or approve its requested permissions.';
+
 export function isGitHubAppRefusal(message: string): boolean {
   return INTEGRATION_REFUSAL.test(message);
 }
@@ -15,5 +19,5 @@ export function explainGitHubAppRefusal(
   if (!isGitHubAppRefusal(detail)) {
     return undefined;
   }
-  return `The DiffsHub GitHub App can't access ${repo ?? 'this repository'}: its organization hasn't installed the app, or the installation is missing a permission this action needs. Ask an organization owner to install the app or approve its requested permissions. (GitHub: ${detail})`;
+  return `The DiffsHub GitHub App can't access ${repo ?? 'this repository'}: its organization hasn't installed the app, or the installation is missing a permission this action needs. ${GITHUB_APP_OWNER_FIX} (GitHub: ${detail})`;
 }

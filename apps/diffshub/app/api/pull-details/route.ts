@@ -48,6 +48,7 @@ async function handleGET(request: NextRequest) {
     const payload: PullDetailsSupplement = {
       checks,
       mergeCapabilities: access?.mergeCapabilities ?? null,
+      mergeQueue: access?.mergeQueue ?? null,
       reviewers:
         reviewStates == null
           ? null

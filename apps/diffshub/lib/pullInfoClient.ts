@@ -37,6 +37,18 @@ export interface PullCheck {
   state: PullCheckState;
 }
 
+// Where a pull stands in its base branch's merge queue. The queue sets the
+// merge method, so a queued branch gets "Merge when ready" instead of the
+// method picker.
+export interface PullMergeQueueStatus {
+  // While queued: the 1-based position and GitHub's MergeQueueEntryState
+  // (QUEUED, AWAITING_CHECKS, MERGEABLE, UNMERGEABLE, LOCKED).
+  entry: { position: number; state: string } | null;
+  // Auto-merge is on but the pull isn't queued yet: GitHub adds it once its
+  // required checks pass.
+  pendingAutoMerge: boolean;
+}
+
 export interface PullMergeCapabilities {
   canMerge: boolean;
   methods: PullMergeMethod[];
@@ -52,6 +64,8 @@ export interface PullViewerPermissions {
 export interface PullDetailsSupplement {
   checks: PullCheck[] | null;
   mergeCapabilities: PullMergeCapabilities | null;
+  // Null when the base branch has no merge queue (or it couldn't be read).
+  mergeQueue: PullMergeQueueStatus | null;
   reviewers: PullReviewer[] | null;
   viewerPermissions: PullViewerPermissions | null;
 }

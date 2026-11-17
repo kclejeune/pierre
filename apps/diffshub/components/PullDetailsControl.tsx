@@ -4,6 +4,7 @@ import {
   IconCheck,
   IconCircleFill,
   IconClockArrow,
+  IconComment,
   IconMerged,
   IconMinus,
   IconPencil,
@@ -34,6 +35,11 @@ import { Input } from './Input';
 import { LabelColorDot } from './LabelColorDot';
 import { MarkdownContent } from './MarkdownContent';
 import { MarkdownEditor } from './MarkdownEditor';
+import {
+  MergeStatusCard,
+  PullOverviewMeta,
+  TONE_TEXT_CLASS,
+} from './PullOverview';
 import { PULL_STATE_DISPLAY } from './pullStateDisplay';
 import { useDropdownChromeStyle } from './useDropdownChromeStyle';
 import { useRepoLabels } from './useRepoLabels';
@@ -57,11 +63,26 @@ import {
   type PullReviewer,
 } from '@/lib/pullInfoClient';
 import { mergePullRequest, type PullMergeMethod } from '@/lib/pullMergeClient';
+import {
+  type ConversationCounts,
+  describeMergeHeadline,
+  isOverviewMetric,
+  type OverviewCell,
+  summarizeApprovals,
+  summarizeChecks,
+  summarizeConversations,
+} from '@/lib/pullOverview';
 import { toastError } from '@/lib/toastRequestError';
+import type { DiffsHubDiffStats } from '@/lib/types';
 
 interface PullDetailsControlProps {
   // Whether the viewer has a token; merging always needs one.
   canWrite: boolean;
+  // Review conversations on the loaded diff, resolved vs total; null until
+  // the diff (and so its threads) has loaded.
+  conversations: ConversationCounts | null;
+  // Line counts of the loaded diff, for the +/− diffstat.
+  diffStats: DiffsHubDiffStats | null;
   getGitHubToken(): string | undefined;
   // Bumped on credential changes; permissions are per-viewer, so the
   // supplement reloads.
@@ -82,12 +103,15 @@ const MERGE_METHOD_LABELS: Record<PullMergeMethod, string> = {
 };
 
 // The header's pull-details control: a compact state chip (draft/open/merged
-// plus an aggregate CI dot) opening a panel with the pull's title,
-// description, labels, reviewers with their review verdicts, per-check CI
-// status, and — for writable open pulls — the merge button. Also hosts the
-// edit, close/reopen, draft, and label controls.
+// plus an aggregate CI dot) opening the pull's overview, laid out after
+// GitHub's PR overview: title, author/branches/diffstat line, a merge-status
+// card (headline, Checks / Comments / Approvals bars, merge button), labels,
+// reviewers with their verdicts, and the description. Also hosts the edit,
+// close/reopen, draft, and label controls.
 export function PullDetailsControl({
   canWrite,
+  conversations,
+  diffStats,
   getGitHubToken,
   githubTokenVersion,
   onDetailsEdited,
@@ -97,7 +121,7 @@ export function PullDetailsControl({
 }: PullDetailsControlProps) {
   const dropdownThemeStyle = useDropdownChromeStyle();
   const [open, setOpen] = useState(false);
-  const [merged, setMerged] = useState(false);
+  const [checksExpanded, setChecksExpanded] = useState(false);
   // Held here so an edit survives the dropdown closing, which unmounts the
   // form.
   const [editDraft, setEditDraft] = useState<PullEditDraft | null>(null);
@@ -114,8 +138,8 @@ export function PullDetailsControl({
   const headSha = pullInfo?.headSha;
 
   useEffect(() => {
-    setMerged(false);
     setEditDraft(null);
+    setChecksExpanded(false);
   }, [pullRequest.number, pullRequest.owner, pullRequest.repo]);
 
   useEffect(() => {
@@ -189,18 +213,56 @@ export function PullDetailsControl({
   const supplementalValue =
     supplement.kind === 'ready' ? supplement.value : null;
   const checks = supplementalValue?.checks ?? null;
-  // The supplement reports reviewers: null when the reviews listing itself
-  // failed — the verdicts are unknown, not absent, so the panel says so
-  // instead of presenting everyone as merely pending.
+  // Verdicts are unknown, not absent, when the whole supplement request
+  // failed or it reported reviewers: null (the reviews listing itself
+  // failed), so the panel says so instead of presenting everyone as merely
+  // pending.
   const reviewerVerdictsUnavailable =
-    supplementalValue != null && supplementalValue.reviewers == null;
+    supplement.kind === 'error' ||
+    (supplementalValue != null && supplementalValue.reviewers == null);
   const reviewers = mergePullReviewers(
     details.reviewers,
     supplementalValue?.reviewers ?? null
   );
-  const ciState = aggregateCheckState(checks);
   const permissions = canWrite ? supplementalValue?.viewerPermissions : null;
   const canEdit = permissions?.canUpdate === true;
+  const supplementLoading =
+    supplement.kind === 'idle' || supplement.kind === 'loading';
+  const checksMetric = checks == null ? null : summarizeChecks(checks);
+  // The trigger's CI dot: the checks tone, hidden when every check was
+  // skipped or none ran.
+  const ciState =
+    checksMetric?.tone === 'neutral' ? null : (checksMetric?.tone ?? null);
+  const checksCell: OverviewCell = supplementLoading
+    ? { kind: 'loading' }
+    : supplement.kind === 'error'
+      ? { kind: 'unavailable', reason: supplement.message }
+      : (checksMetric ?? {
+          kind: 'unavailable',
+          reason: 'CI status could not be loaded.',
+        });
+  const approvalsCell: OverviewCell = supplementLoading
+    ? { kind: 'loading' }
+    : reviewerVerdictsUnavailable
+      ? { kind: 'unavailable', reason: 'Review verdicts could not be loaded.' }
+      : summarizeApprovals(reviewers);
+  const commentsCell: OverviewCell =
+    conversations == null
+      ? { kind: 'loading' }
+      : summarizeConversations(conversations);
+  const headline = describeMergeHeadline({
+    checks: checksCell,
+    details,
+    reviewers: approvalsCell,
+  });
+  const showMergeControls = details.state === 'open' && canWrite;
+  // Unresolved review conversations, the one overview number worth showing
+  // on the closed chip: it is what a reviewer acts on next. Only shown when
+  // resolution loaded and something is still open.
+  const unresolvedCount =
+    conversations?.kind === 'counted'
+      ? Math.max(0, conversations.total - conversations.resolved)
+      : 0;
   return (
     <DropdownMenu modal={false} open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
@@ -216,10 +278,12 @@ export function PullDetailsControl({
           )}
         >
           <PullStateBadge details={details} iconOnly />
-          <span className="hidden min-w-0 truncate xl:inline">
+          {/* The title truncates harder as the header narrows and drops out
+              below lg, where the URL beside the chip already names the pull
+              and the state icon carries it. */}
+          <span className="min-w-0 truncate max-lg:hidden lg:max-w-[18ch] xl:max-w-none">
             {details.title}
           </span>
-          <span className="xl:hidden">Details</span>
           {editing && (
             <IconPencil
               aria-label="Unsaved edits"
@@ -229,14 +293,27 @@ export function PullDetailsControl({
           {ciState != null && (
             <IconCircleFill
               aria-label={`Checks ${ciState}`}
-              className={cn('size-2', CI_STATE_TEXT_CLASS[ciState])}
+              className={cn('size-2', TONE_TEXT_CLASS[ciState])}
             />
+          )}
+          {unresolvedCount > 0 && (
+            <span
+              aria-label={
+                unresolvedCount === 1
+                  ? '1 unresolved conversation'
+                  : `${unresolvedCount} unresolved conversations`
+              }
+              className="text-muted-foreground flex shrink-0 items-center gap-0.5 text-[11px] tabular-nums"
+            >
+              <IconComment aria-hidden className="size-3" />
+              {unresolvedCount}
+            </span>
           )}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="w-[480px] max-w-[90vw] p-3"
+        className="max-h-[min(85vh,52rem)] w-[560px] max-w-[92vw] overflow-y-auto p-3"
         style={dropdownThemeStyle}
       >
         <div className="flex flex-col gap-3">
@@ -281,6 +358,77 @@ export function PullDetailsControl({
               </span>
             </div>
           )}
+          <PullOverviewMeta
+            details={details}
+            diffStats={diffStats}
+            pullInfo={pullInfo}
+          />
+          <MergeStatusCard
+            actions={
+              showMergeControls ? (
+                <MergeCapabilitySection
+                  baseRef={pullInfo?.baseRef}
+                  capabilities={supplementalValue?.mergeCapabilities ?? null}
+                  details={details}
+                  getGitHubToken={getGitHubToken}
+                  headSha={headSha}
+                  loading={supplementLoading}
+                  onMerged={() => {
+                    // Marks the pull merged right away; the reloads that
+                    // follow confirm it.
+                    onDetailsEdited(pullRequest, { state: 'merged' });
+                    setOpen(false);
+                    onMerged();
+                  }}
+                  pullRequest={pullRequest}
+                />
+              ) : undefined
+            }
+            approvals={approvalsCell}
+            checks={checksCell}
+            checksDetail={
+              checks != null && checks.length > 0 ? (
+                <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto">
+                  {checks.map((check, index) => (
+                    <CheckRow key={`${check.name}-${index}`} check={check} />
+                  ))}
+                </ul>
+              ) : (
+                <div className="flex items-center justify-between gap-2">
+                  <p
+                    className={cn(
+                      'text-xs',
+                      supplement.kind === 'error'
+                        ? 'text-destructive'
+                        : 'text-muted-foreground',
+                      supplementLoading && 'animate-pulse'
+                    )}
+                  >
+                    {!isOverviewMetric(checksCell) &&
+                    checksCell.kind === 'unavailable'
+                      ? checksCell.reason
+                      : supplementLoading
+                        ? 'Loading checks…'
+                        : 'No checks reported on the head commit.'}
+                  </p>
+                  {supplement.kind === 'error' && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => loadSupplement(true)}
+                    >
+                      Retry
+                    </Button>
+                  )}
+                </div>
+              )
+            }
+            checksExpanded={checksExpanded}
+            comments={commentsCell}
+            headline={headline}
+            onToggleChecks={() => setChecksExpanded((current) => !current)}
+          />
           <PullLabels
             key={`${pullRequest.owner}/${pullRequest.repo}#${pullRequest.number}`}
             canEdit={permissions?.canLabel === true}
@@ -308,39 +456,6 @@ export function PullDetailsControl({
               )}
             </PanelSection>
           )}
-          <PanelSection heading="Checks">
-            {supplement.kind === 'idle' || supplement.kind === 'loading' ? (
-              <p className="text-muted-foreground animate-pulse text-xs">
-                Loading checks…
-              </p>
-            ) : supplement.kind === 'error' ? (
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-destructive text-xs">{supplement.message}</p>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => loadSupplement(true)}
-                >
-                  Retry
-                </Button>
-              </div>
-            ) : checks == null ? (
-              <p className="text-muted-foreground text-xs">
-                CI status could not be loaded.
-              </p>
-            ) : checks.length === 0 ? (
-              <p className="text-muted-foreground text-xs">
-                No checks reported on the head commit.
-              </p>
-            ) : (
-              <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto">
-                {checks.map((check, index) => (
-                  <CheckRow key={`${check.name}-${index}`} check={check} />
-                ))}
-              </ul>
-            )}
-          </PanelSection>
           {!editing && (
             <PanelSection heading="Description">
               {details.body.trim() === '' ? (
@@ -354,31 +469,13 @@ export function PullDetailsControl({
               )}
             </PanelSection>
           )}
-          {canEdit && details.state !== 'merged' && !merged && (
+          {canEdit && details.state !== 'merged' && (
             <PullStateActions
               details={details}
               getGitHubToken={getGitHubToken}
               onUpdated={(updated) =>
                 onDetailsEdited(pullRequest, withoutLabels(updated))
               }
-              pullRequest={pullRequest}
-            />
-          )}
-          {details.state === 'open' && canWrite && !merged && (
-            <MergeCapabilitySection
-              baseRef={pullInfo?.baseRef}
-              capabilities={supplementalValue?.mergeCapabilities ?? null}
-              details={details}
-              getGitHubToken={getGitHubToken}
-              headSha={headSha}
-              loading={
-                supplement.kind === 'idle' || supplement.kind === 'loading'
-              }
-              onMerged={() => {
-                setMerged(true);
-                setOpen(false);
-                onMerged();
-              }}
               pullRequest={pullRequest}
             />
           )}
@@ -398,14 +495,14 @@ function MergeCapabilitySection({
 } & Omit<ComponentProps<typeof MergeControls>, 'capabilities'>) {
   if (loading) {
     return (
-      <p className="text-muted-foreground border-t pt-3 text-xs">
+      <p className="text-muted-foreground text-xs">
         Checking merge permissions…
       </p>
     );
   }
   if (capabilities == null) {
     return (
-      <p className="text-muted-foreground border-t pt-3 text-xs">
+      <p className="text-muted-foreground text-xs">
         Merge permissions could not be loaded. Open this pull request on GitHub
         to merge it.
       </p>
@@ -413,14 +510,14 @@ function MergeCapabilitySection({
   }
   if (!capabilities.canMerge) {
     return (
-      <p className="text-muted-foreground border-t pt-3 text-xs">
+      <p className="text-muted-foreground text-xs">
         Your GitHub token does not have permission to merge this pull request.
       </p>
     );
   }
   if (capabilities.methods.length === 0) {
     return (
-      <p className="text-muted-foreground border-t pt-3 text-xs">
+      <p className="text-muted-foreground text-xs">
         This repository does not expose a direct merge method. Use GitHub for
         merge queues or repository-specific merge rules.
       </p>
@@ -874,30 +971,6 @@ function PullStateBadge({
   );
 }
 
-const CI_STATE_TEXT_CLASS = {
-  failure: 'text-red-500',
-  neutral: 'text-muted-foreground',
-  pending: 'text-amber-500',
-  success: 'text-[#18a46c]',
-} as const;
-
-// The single dot the trigger shows: failure wins over pending wins over
-// success; all-neutral (or no checks) shows nothing.
-function aggregateCheckState(
-  checks: PullCheck[] | null
-): 'failure' | 'pending' | 'success' | null {
-  if (checks == null || checks.length === 0) {
-    return null;
-  }
-  if (checks.some((check) => check.state === 'failure')) {
-    return 'failure';
-  }
-  if (checks.some((check) => check.state === 'pending')) {
-    return 'pending';
-  }
-  return checks.some((check) => check.state === 'success') ? 'success' : null;
-}
-
 function CheckStateIcon({ state }: { state: PullCheck['state'] }) {
   const Icon =
     state === 'success'
@@ -910,7 +983,7 @@ function CheckStateIcon({ state }: { state: PullCheck['state'] }) {
   return (
     <Icon
       aria-label={state}
-      className={cn('size-3.5 shrink-0', CI_STATE_TEXT_CLASS[state])}
+      className={cn('size-3.5 shrink-0', TONE_TEXT_CLASS[state])}
     />
   );
 }
@@ -1035,7 +1108,7 @@ function MergeControls({
   }
 
   return (
-    <div className="flex flex-col gap-2 border-t border-[var(--diffshub-annotation-border,var(--color-border))] pt-3">
+    <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
         <ButtonGroup
           size="sm"

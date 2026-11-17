@@ -27,6 +27,7 @@ export function upsertSavedCommentSidebarEntry(
     range: entry.range,
     replyCount: entry.replyCount,
     ...(entry.resolved === true ? { resolved: true as const } : {}),
+    ...(entry.reviewThread === true ? { reviewThread: true as const } : {}),
     side: entry.side,
   };
 

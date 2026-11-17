@@ -51,6 +51,17 @@ interface UsePullReviewThreadsOptions {
   viewerRef: RefObject<CodeViewHandle<CommentMetadata, undefined> | null>;
 }
 
+// How far the review threads have loaded, for consumers (the pull overview's
+// Comments cell) that must not mistake "not fetched yet" or "fetch failed"
+// for "this pull has no conversations". `ready` means the fetched threads are
+// already in the diff, so counts derived from the sidebar entries are
+// complete; `resolvedKnown` is false when thread resolution could not be read
+// (no token, or the GraphQL request failed), so resolved counts are unknown.
+export type PullReviewThreadsLoad =
+  | { kind: 'loading' }
+  | { kind: 'unavailable' }
+  | { kind: 'ready'; resolvedKnown: boolean };
+
 // Loads the pull request's review comments, groups them into threads, and
 // injects each thread as an annotation on the matching file item once the
 // viewer has finished loading. Threads' resolution status loads separately
@@ -70,12 +81,17 @@ export function usePullReviewThreads({
   viewerKey,
   viewerReadyTick,
   viewerRef,
-}: UsePullReviewThreadsOptions): void {
+}: UsePullReviewThreadsOptions): PullReviewThreadsLoad {
   const [threads, setThreads] = useState<PullReviewThread[] | null>(null);
   const [threadStates, setThreadStates] = useState<ReadonlyMap<
     number,
     PullReviewThreadState
   > | null>(null);
+  const [threadsFailed, setThreadsFailed] = useState(false);
+  const [statesFailed, setStatesFailed] = useState(false);
+  // Set once a fetched, non-empty thread list has been injected into the
+  // viewer (and so reported to the sidebar).
+  const [threadsApplied, setThreadsApplied] = useState(false);
   // The thread list last injected, so the apply effect runs once per change
   // to it rather than on every viewer tick.
   const appliedThreadsRef = useRef<PullReviewThread[] | null>(null);
@@ -87,6 +103,9 @@ export function usePullReviewThreads({
   useEffect(() => {
     setThreads(null);
     setThreadStates(null);
+    setThreadsFailed(false);
+    setStatesFailed(false);
+    setThreadsApplied(false);
     appliedThreadsRef.current = null;
     if (pullRequest == null || !tokenHydrated) {
       return;
@@ -103,6 +122,9 @@ export function usePullReviewThreads({
       () => {
         // Thread loading is best-effort: the diff is fully usable without
         // review comments (e.g. anonymous rate-limited requests).
+        if (!controller.signal.aborted) {
+          setThreadsFailed(true);
+        }
       }
     );
     if (token !== '') {
@@ -115,6 +137,9 @@ export function usePullReviewThreads({
         () => {
           // Best-effort too: without states threads render open and
           // unresolvable.
+          if (!controller.signal.aborted) {
+            setStatesFailed(true);
+          }
         }
       );
     }
@@ -181,6 +206,7 @@ export function usePullReviewThreads({
           )
         ),
     });
+    setThreadsApplied(true);
   }, [
     loadState,
     pathToItemId,
@@ -189,4 +215,18 @@ export function usePullReviewThreads({
     viewerReadyTick,
     viewerRef,
   ]);
+
+  if (threadsFailed) {
+    return { kind: 'unavailable' };
+  }
+  const threadsSettled =
+    threads != null && (threads.length === 0 || threadsApplied);
+  const statesSettled = token === '' || threadStates != null || statesFailed;
+  if (!threadsSettled || !statesSettled) {
+    return { kind: 'loading' };
+  }
+  return {
+    kind: 'ready',
+    resolvedKnown: token !== '' && threadStates != null,
+  };
 }

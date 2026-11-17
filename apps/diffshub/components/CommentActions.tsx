@@ -2,7 +2,6 @@
 
 import { IconEllipsis } from '@pierre/icons';
 import { useState } from 'react';
-import { toast } from 'sonner';
 
 import type { CommentModeration } from './CommentModeration';
 import {
@@ -21,6 +20,7 @@ import { RelativeTime } from './RelativeTime';
 import { useDropdownChromeStyle } from './useDropdownChromeStyle';
 import { Button } from '@/components/Button';
 import { cn } from '@/lib/cn';
+import { copyToClipboard } from '@/lib/copyToClipboard';
 
 // Comment-header pieces shared by the inline review threads and the
 // sidebar's Conversation rows, so a comment's badge, timestamp, and actions
@@ -162,14 +162,7 @@ function CommentMenuContent({
     >
       {htmlUrl != null && (
         <>
-          <DropdownMenuItem
-            onSelect={() => {
-              navigator.clipboard.writeText(htmlUrl).then(
-                () => toast('Link copied'),
-                () => toast.error('The link could not be copied.')
-              );
-            }}
-          >
+          <DropdownMenuItem onSelect={() => copyToClipboard(htmlUrl, 'Link')}>
             Copy link
           </DropdownMenuItem>
           <DropdownMenuItem asChild>

@@ -60,8 +60,12 @@ export interface PullDetailsSupplement {
 // review verdicts, and merge capabilities are not here — they arrive via the
 // separate PullDetailsSupplement request.
 export interface PullDetails {
+  authorAvatarUrl?: string;
   authorLogin?: string;
   body: string;
+  // ISO timestamp the pull was opened. Optional so cached responses from
+  // before the field existed stay parseable.
+  createdAt?: string;
   draft: boolean;
   labels: PullLabel[];
   // GitHub computes mergeability lazily; null means still unknown.

@@ -13,6 +13,7 @@ import {
   IconEllipsis,
   IconExpandAll,
   IconEyeSlash,
+  IconFile,
   IconFileTreeFill,
   IconFolder,
   IconGearFill,
@@ -38,6 +39,7 @@ import { DiffRefsBadge } from './DiffRefsBadge';
 import { DiffsHubLogo } from './DiffsHubLogo';
 import { DiffUrlForm } from './DiffUrlForm';
 import { FileSearchPaletteTrigger } from './FileSearchPaletteTrigger';
+import { openPalette } from './PaletteDialog';
 import { RepoPaletteButton } from './RepoPaletteButton';
 import { useChromeThemeProps } from './useChromeThemeProps';
 import { usePinnedRepos } from './usePinnedRepos';
@@ -73,7 +75,8 @@ interface HeaderProps {
   diffIndicators: DiffIndicators;
   // The base/head refs the diff compares, shown beside the URL so the
   // direction of the comparison is explicit. Absent for single commits,
-  // arbitrary-domain patches, and pulls whose metadata has not loaded.
+  // arbitrary-domain patches, and pull requests, whose overview panel shows
+  // the branches instead.
   diffRefs?: DiffRefs | null;
   diffStyle: 'split' | 'unified';
   // The full upstream URL of the loaded diff. Its hostname is shown as a chip
@@ -193,7 +196,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
   return (
     <div
       className={cn(
-        'diffshub-theme-bootstrap z-10 contain-layout contain-paint flex flex-wrap md:flex-nowrap items-center gap-2.5 pt-3 pb-2 px-4 md:px-3 md:py-1.5 border-b border-[var(--color-border-opaque)]',
+        'diffshub-theme-bootstrap z-10 contain-layout contain-paint flex flex-wrap md:flex-nowrap items-center gap-2 md:gap-2.5 pt-3 pb-2 px-3 md:py-1.5 border-b border-[var(--color-border-opaque)]',
         themeChromeStyle == null &&
           'bg-background md:bg-[var(--diffshub-sidebar-bg)]',
         className
@@ -202,7 +205,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
     >
       <Link
         href="/"
-        className="absolute top-4 left-[50%] inline-flex -translate-x-1/2 transition-transform duration-200 hover:scale-110 md:static md:translate-x-0"
+        className="inline-flex shrink-0 transition-transform duration-200 hover:scale-110"
       >
         <DiffsHubLogo />
       </Link>
@@ -234,7 +237,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
           />
           {/* cmd+K lives beside the address it searches from, apart from the
               right-hand "Go to file". */}
-          <RepoPaletteButton />
+          <RepoPaletteButton hintClassName="max-xl:hidden" />
         </div>
         {diffRefs != null && (
           <DiffRefsBadge
@@ -243,7 +246,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
           />
         )}
       </div>
-      <div className="flex w-full items-center justify-between gap-2 md:w-auto md:justify-end">
+      <div className="flex min-w-0 flex-1 items-center justify-between gap-1 md:flex-none md:justify-end md:gap-2">
         <Button
           type="button"
           variant="ghost"
@@ -256,9 +259,15 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
         >
           <IconFileTreeFill className="size-4 md:size-3" />
         </Button>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 md:gap-2">
           {fileSearchAvailable && (
-            <FileSearchPaletteTrigger className="hidden w-36 2xl:inline-flex" />
+            // Icon-only until xl adds the ⌘P badge and 2xl the label; on
+            // phones it lives in the overflow menu beside the tree toggle.
+            <FileSearchPaletteTrigger
+              className="max-md:hidden 2xl:w-36"
+              hintClassName="max-xl:hidden"
+              labelClassName="max-2xl:hidden"
+            />
           )}
           {togglePin != null && (
             <Button
@@ -311,11 +320,18 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
           )}
           <HeaderOverflowMenu
             browseFilesPath={browseFilesPath}
+            collapseMode={collapseMode}
             diffStyleLabel={diffStyleLabel}
             dropdownThemeStyle={dropdownThemeStyle}
             isPinned={isPinned}
+            markdownView={markdownView}
             nextDiffStyle={nextDiffStyle}
+            onOpenFileSearch={
+              fileSearchAvailable ? () => openPalette('file') : undefined
+            }
+            onToggleCollapseMode={onToggleCollapseMode}
             onToggleDiffStyle={toggleDiffStyle}
+            onToggleMarkdownView={onToggleMarkdownView}
             onTogglePin={togglePin}
             upstreamUrl={showExternalLink ? upstreamUrl : undefined}
           />
@@ -348,6 +364,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
               }
               className={cn(
                 CHROME_ICON_BUTTON_CLASS,
+                'max-md:hidden',
                 markdownView === 'rendered' && 'text-foreground bg-muted'
               )}
               onClick={onToggleMarkdownView}
@@ -364,7 +381,7 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
                   ? 'Collapse all files'
                   : 'Expand all files'
               }
-              className={CHROME_ICON_BUTTON_CLASS}
+              className={cn(CHROME_ICON_BUTTON_CLASS, 'max-md:hidden')}
               onClick={onToggleCollapseMode}
             >
               {collapseMode === 'expanded' ? (
@@ -796,11 +813,17 @@ function UpstreamHostChip({ url }: { url: string }) {
 
 interface HeaderOverflowMenuProps {
   browseFilesPath?: string;
+  collapseMode: 'expanded' | 'collapsed';
   diffStyleLabel: string;
   dropdownThemeStyle?: CSSProperties;
   isPinned: boolean;
+  markdownView: 'rendered' | 'raw';
   nextDiffStyle: 'split' | 'unified';
+  // Unset when the diff has no file list to search yet.
+  onOpenFileSearch?(): void;
+  onToggleCollapseMode(): void;
   onToggleDiffStyle(): void;
+  onToggleMarkdownView(): void;
   // Unset when the diff has no pinnable repo (or pins are still loading).
   onTogglePin?(): void;
   // Unset when the URL input holds an uncommitted draft.
@@ -810,17 +833,23 @@ interface HeaderOverflowMenuProps {
 const MENU_ITEM_CLASS = 'flex cursor-pointer items-center gap-2';
 
 // Below the 2xl breakpoint the header has no room for every secondary action
-// beside long branch names and the review controls (whose PR title widens at
-// xl), so pinning, browsing the ref, opening the upstream page, and the
-// split/unified toggle collapse into this menu; from 2xl up they show as
-// individual icon buttons instead.
+// beside the URL and the review controls (whose PR title widens at xl), so
+// pinning, browsing the ref, opening the upstream page, and the split/unified
+// toggle collapse into this menu; from 2xl up they show as individual icon
+// buttons instead. On phones it also takes Go to file and the markdown and
+// collapse toggles, which have no room in the single row of actions.
 function HeaderOverflowMenu({
   browseFilesPath,
+  collapseMode,
   diffStyleLabel,
   dropdownThemeStyle,
   isPinned,
+  markdownView,
   nextDiffStyle,
+  onOpenFileSearch,
+  onToggleCollapseMode,
   onToggleDiffStyle,
+  onToggleMarkdownView,
   onTogglePin,
   upstreamUrl,
 }: HeaderOverflowMenuProps) {
@@ -832,7 +861,7 @@ function HeaderOverflowMenu({
           size="icon-md"
           aria-label="More actions"
           title="More actions"
-          className={cn(CHROME_ICON_BUTTON_CLASS, 'hidden md:flex 2xl:hidden')}
+          className={cn(CHROME_ICON_BUTTON_CLASS, '2xl:hidden')}
         >
           <IconEllipsis className="size-4 md:size-3" />
         </Button>
@@ -842,6 +871,37 @@ function HeaderOverflowMenu({
         className="w-56"
         style={dropdownThemeStyle}
       >
+        {onOpenFileSearch != null && (
+          <DropdownMenuItem
+            className={cn(MENU_ITEM_CLASS, 'md:hidden')}
+            onSelect={onOpenFileSearch}
+          >
+            <IconFile className="size-3.5" />
+            Go to file
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem
+          className={cn(MENU_ITEM_CLASS, 'md:hidden')}
+          onSelect={onToggleMarkdownView}
+        >
+          <IconBook className="size-3.5" />
+          {markdownView === 'rendered'
+            ? 'Show raw markdown'
+            : 'Render markdown files'}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className={cn(MENU_ITEM_CLASS, 'md:hidden')}
+          onSelect={onToggleCollapseMode}
+        >
+          {collapseMode === 'expanded' ? (
+            <IconExpandAll className="size-3.5" />
+          ) : (
+            <IconCollapsedRow className="size-3.5" />
+          )}
+          {collapseMode === 'expanded'
+            ? 'Collapse all files'
+            : 'Expand all files'}
+        </DropdownMenuItem>
         {onTogglePin != null && (
           <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={onTogglePin}>
             <IconPin className="size-3.5" />

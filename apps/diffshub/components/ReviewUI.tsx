@@ -82,6 +82,7 @@ import {
   fetchPullConflicts,
   type PullConflictsResult,
 } from '@/lib/pullConflictsClient';
+import type { ConversationCounts } from '@/lib/pullOverview';
 import { recordRecentDiff } from '@/lib/recentDiffs';
 import { removeSavedCommentSidebarEntry } from '@/lib/removeSavedCommentSidebarEntry';
 import { docCommentTarget } from '@/lib/renderedDocDom';
@@ -663,7 +664,7 @@ function ReviewUIInner({
   // Bumped after a review submission so the thread hook refetches and injects
   // the newly created GitHub threads (and the review summary in discussion).
   const [threadsRefreshTick, setThreadsRefreshTick] = useState(0);
-  usePullReviewThreads({
+  const reviewThreadsLoad = usePullReviewThreads({
     loadState,
     onDiscussionLoaded: setDiscussion,
     onThreadApplied: handleCommentSaved,
@@ -676,6 +677,37 @@ function ReviewUIInner({
     viewerReadyTick,
     viewerRef,
   });
+  // Resolved vs total GitHub review conversations on the loaded diff, for the
+  // pull overview's Comments bar. Derived from the sidebar's comment entries,
+  // which thread resolves and replies already keep current, but only once the
+  // thread fetch has settled and its threads are in the diff: before that an
+  // empty sidebar means "not loaded", not "no conversations".
+  const threadsLoadKind = reviewThreadsLoad.kind;
+  const threadsResolvedKnown =
+    reviewThreadsLoad.kind === 'ready' && reviewThreadsLoad.resolvedKnown;
+  const conversationCounts = useMemo((): ConversationCounts | null => {
+    if (threadsLoadKind === 'loading') {
+      return null;
+    }
+    if (threadsLoadKind === 'unavailable') {
+      return { kind: 'unavailable' };
+    }
+    let resolved = 0;
+    let total = 0;
+    for (const section of commentSections) {
+      for (const comment of section.comments) {
+        if (comment.reviewThread === true) {
+          total += 1;
+          if (comment.resolved === true) {
+            resolved += 1;
+          }
+        }
+      }
+    }
+    return threadsResolvedKnown
+      ? { kind: 'counted', resolved, total }
+      : { kind: 'totalOnly', total };
+  }, [commentSections, threadsLoadKind, threadsResolvedKnown]);
   // PR-level conversation writes (issue comments on the pull request). Each
   // handler posts through the API proxy, surfaces failures as a toast, and
   // rethrows so the composer keeps the draft; on success the discussion state
@@ -981,7 +1013,9 @@ function ReviewUIInner({
           colorMode={colorMode}
           darkThemeName={darkThemeName}
           diffIndicators={diffIndicators}
-          diffRefs={diffRefs}
+          // A pull's branches live in its overview panel; the bar keeps the
+          // base/head pills for compares, where the refs are the subject.
+          diffRefs={pullRequest != null ? null : diffRefs}
           diffStyle={diffStyle}
           initialUrl={
             githubSource == null
@@ -1006,6 +1040,8 @@ function ReviewUIInner({
                 />
                 <PullDetailsControl
                   canWrite={hasGitHubToken}
+                  conversations={conversationCounts}
+                  diffStats={diffStats}
                   getGitHubToken={getGitHubToken}
                   githubTokenVersion={githubTokenVersion}
                   onDetailsEdited={mergePullDetails}

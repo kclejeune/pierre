@@ -77,8 +77,10 @@ export function parsePullDetails(data: unknown): PullDetails {
     }
   }
   return {
+    authorAvatarUrl: readStringPath(record.user, ['avatar_url']),
     authorLogin: readStringPath(record.user, ['login']),
     body: typeof record.body === 'string' ? record.body : '',
+    createdAt: readStringPath(record, ['created_at']),
     draft: record.draft === true,
     labels,
     mergeable: typeof record.mergeable === 'boolean' ? record.mergeable : null,

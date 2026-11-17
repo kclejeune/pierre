@@ -11,7 +11,15 @@ import { formatShortcut, ShortcutHint, useModifierKey } from './ShortcutHint';
 // cmd+K does there, opening the palette inside this repository (its
 // branches and tags, or its pull requests on a pull's diff), with Backspace
 // leading out to every repository.
-export function RepoPaletteButton({ repo }: { repo?: string }) {
+export function RepoPaletteButton({
+  hintClassName,
+  repo,
+}: {
+  // Extra classes for the shortcut badge, e.g. to drop it where the header
+  // is too narrow to spare the space.
+  hintClassName?: string;
+  repo?: string;
+}) {
   const modifier = useModifierKey();
   return (
     <button
@@ -31,7 +39,7 @@ export function RepoPaletteButton({ repo }: { repo?: string }) {
       ) : (
         <span className="text-foreground truncate">{repo}</span>
       )}
-      <ShortcutHint shortcutKey="k" />
+      <ShortcutHint className={hintClassName} shortcutKey="k" />
     </button>
   );
 }

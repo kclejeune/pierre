@@ -151,10 +151,12 @@ export function PullCommitRangePicker({
           variant="ghost"
           size="sm"
           title="View changes from a commit range"
+          aria-label="Commits"
           className={cn(CHROME_ICON_BUTTON_CLASS, 'w-auto gap-1.5 px-2')}
         >
           <IconBranch className="size-3.5" />
-          Commits
+          {/* Icon-only below xl, where the PR title needs the room. */}
+          <span className="max-xl:hidden">Commits</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent

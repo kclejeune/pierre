@@ -1,14 +1,20 @@
 import type { DiffLineAnnotation } from '@pierre/diffs';
 import { useStableCallback } from '@pierre/diffs/react';
-import { IconArrowRight } from '@pierre/icons';
 import { useEffect, useRef, useState } from 'react';
 
-import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { InlineConfirm } from './InlineConfirm';
-import { applyEdit, MarkdownEditor } from './MarkdownEditor';
+import {
+  applyEdit,
+  isComposerOverlayEvent,
+  MarkdownEditor,
+} from './MarkdownEditor';
 import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
-import { annotationCardBase, getRandomPersonaAuthor } from '@/lib/annotation';
+import {
+  annotationCardBase,
+  composerSecondaryButtonClass,
+  getRandomPersonaAuthor,
+} from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import { buildSuggestionBlock } from '@/lib/suggestedChange';
 import type { CommentAuthor, DraftCommentMetadata } from '@/lib/types';
@@ -67,6 +73,7 @@ export function DraftAnnotation({
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const trimmedMessage = message.trim();
+  const canSubmit = trimmedMessage.length > 0 && !isSaving;
   const reviewAvailable = reviewEnabled && onSaveToReview != null;
   const reviewActive = reviewAvailable && pendingReviewCount > 0;
 
@@ -94,7 +101,8 @@ export function DraftAnnotation({
   }
 
   // Form submit / Cmd+Enter: once a review is in progress, batching is the
-  // primary action (GitHub muscle memory); otherwise single comment.
+  // default (GitHub muscle memory); otherwise a single comment. The buttons
+  // pick their target explicitly.
   async function handleSave() {
     await submitWith(reviewActive ? 'review' : 'single');
   }
@@ -167,7 +175,13 @@ export function DraftAnnotation({
   // to decide whether an event originated inside it.
   const handleDocumentPointerDown = useStableCallback((event: PointerEvent) => {
     const form = formRef.current;
-    if (form == null || event.composedPath().includes(form)) {
+    // Clicks in the editor's own overlays (the heading menu, portaled outside
+    // the form) are still inside the composer.
+    if (
+      form == null ||
+      event.composedPath().includes(form) ||
+      isComposerOverlayEvent(event)
+    ) {
       return;
     }
     if (trimmedMessage.length === 0 && !isSaving) {
@@ -194,97 +208,72 @@ export function DraftAnnotation({
   return (
     <form
       ref={formRef}
-      className={cn(annotationCardBase, 'flex-col md:flex-row md:flex-wrap')}
+      className={cn(annotationCardBase, 'flex-col')}
       onSubmit={(event) => {
         event.preventDefault();
         void handleSave();
       }}
     >
-      <div className="flex w-full gap-2.5">
-        <CommentAuthorAvatar author={author} />
-        <MarkdownEditor
-          appearance="bare"
-          disabled={isSaving}
-          placeholder="Add a comment…"
-          textareaRef={textareaRef}
-          value={message}
-          onCancel={tryCancel}
-          onChange={updateMessage}
-          onSubmit={() => void handleSave()}
-        />
-      </div>
-      <div className="flex w-full flex-wrap items-center justify-between gap-3 pl-10.5 md:w-auto md:justify-end md:pl-0">
-        <Button
-          type="button"
-          variant="muted"
-          onClick={tryCancel}
-          className="text-muted-foreground hover:text-foreground gap-1 font-normal hover:no-underline md:hidden"
-        >
-          Cancel
-        </Button>
-        {suggestionLines != null && (
+      <MarkdownEditor
+        disabled={isSaving}
+        placeholder="Leave a comment"
+        textareaRef={textareaRef}
+        value={message}
+        onCancel={tryCancel}
+        onChange={updateMessage}
+        onSubmit={() => void handleSave()}
+        onSuggestChange={suggestionLines != null ? insertSuggestion : undefined}
+      />
+      {!isConfirmingDiscard && (
+        <div className="flex w-full flex-wrap items-center justify-end gap-2">
           <Button
             type="button"
-            variant="muted"
+            variant="outline"
             size="sm"
+            className={composerSecondaryButtonClass}
             disabled={isSaving}
-            className="text-muted-foreground hover:text-foreground mr-auto font-normal hover:no-underline"
-            title="Suggest a replacement for the selected lines"
-            onClick={insertSuggestion}
+            onClick={tryCancel}
           >
-            Suggest change
+            Cancel
           </Button>
-        )}
-        {reviewAvailable ? (
-          <span className="flex items-center gap-2">
+          {reviewAvailable ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className={composerSecondaryButtonClass}
+                disabled={!canSubmit}
+                onClick={() => void submitWith('single')}
+              >
+                Add single comment
+              </Button>
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                disabled={!canSubmit}
+                className="bg-blue-500 hover:bg-blue-600"
+                onClick={() => void submitWith('review')}
+              >
+                {reviewActive ? 'Add review comment' : 'Start a review'}
+              </Button>
+            </>
+          ) : (
             <Button
-              type="button"
-              variant="muted"
+              type="submit"
+              variant="default"
               size="sm"
-              disabled={trimmedMessage.length === 0 || isSaving}
-              className="text-muted-foreground hover:text-foreground font-normal hover:no-underline"
-              onClick={() =>
-                void submitWith(reviewActive ? 'single' : 'review')
-              }
+              disabled={!canSubmit}
+              className="bg-blue-500 hover:bg-blue-600"
             >
-              {reviewActive ? 'Add single comment' : 'Start review'}
+              Comment
             </Button>
-            <Button
-              type="submit"
-              variant="default"
-              size="sm"
-              disabled={trimmedMessage.length === 0 || isSaving}
-              className="gap-1.5 bg-blue-500 hover:bg-blue-600"
-            >
-              {reviewActive ? 'Add to review' : 'Comment'}
-              <IconArrowRight className="-mr-0.5 size-3" />
-            </Button>
-          </span>
-        ) : (
-          <>
-            <Button
-              type="submit"
-              variant="default"
-              size="icon-md"
-              disabled={trimmedMessage.length === 0 || isSaving}
-              className="hidden rounded-full bg-blue-500 hover:bg-blue-600 md:flex"
-            >
-              <IconArrowRight className="size-4 rotate-[-90deg]" />
-            </Button>
-            <Button
-              type="submit"
-              variant="default"
-              disabled={trimmedMessage.length === 0 || isSaving}
-              className="gap-1.5 bg-blue-500 hover:bg-blue-600 md:hidden"
-            >
-              Submit
-              <IconArrowRight className="-mr-0.5 size-3" />
-            </Button>
-          </>
-        )}
-      </div>
+          )}
+        </div>
+      )}
       {isConfirmingDiscard && (
-        <div className="w-full md:basis-full">
+        <div className="w-full">
           <InlineConfirm
             confirmLabel="Discard"
             message="Discard this comment?"

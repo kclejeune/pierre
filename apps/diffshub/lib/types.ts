@@ -201,6 +201,9 @@ export interface DiffsHubSavedCommentEvent {
   replyCount: number;
   // Set on GitHub threads marked resolved, so the sidebar can say so.
   resolved?: true;
+  // Set on GitHub review threads (not local or pending-review comments), so
+  // the pull overview can count conversations.
+  reviewThread?: true;
   side: AnnotationSide;
 }
 
@@ -220,6 +223,7 @@ export interface DiffsHubSavedCommentEntry {
   range: SelectedLineRange;
   replyCount: number;
   resolved?: true;
+  reviewThread?: true;
   side: AnnotationSide;
 }
 

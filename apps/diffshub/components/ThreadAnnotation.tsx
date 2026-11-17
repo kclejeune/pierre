@@ -32,7 +32,10 @@ import {
 } from './MarkdownContent';
 import { useGitHubUser } from './useGitHubUser';
 import { Button } from '@/components/Button';
-import { annotationCardBase } from '@/lib/annotation';
+import {
+  annotationCardBase,
+  composerSecondaryButtonClass,
+} from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import { readCommentDraft, writeCommentDraft } from '@/lib/commentDrafts';
 import type { CommentReaction } from '@/lib/reactions';
@@ -184,7 +187,8 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
               <div className="flex items-start gap-2.5">
                 {canWrite ? (
                   <>
-                    {githubUser != null && (
+                    {/* The open editor takes the full width, as on GitHub. */}
+                    {githubUser != null && !reply.isOpen && (
                       <CommentAuthorAvatar
                         author={githubUser}
                         className="mt-[3px] size-6"
@@ -209,7 +213,10 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="h-7 px-2.5 text-[12px] font-medium"
+                    className={cn(
+                      composerSecondaryButtonClass,
+                      'h-7 px-2.5 text-[12px] font-medium'
+                    )}
                     disabled={isResolving}
                     onClick={() => toggleResolved(!isResolved)}
                   >

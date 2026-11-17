@@ -26,7 +26,8 @@ export function formatShortcut(
 
 // The "⌘K" / "Ctrl K" badge on a palette's trigger. The modifier is
 // resolved after mount: SSR can't know the platform, so the badge holds its
-// space invisibly until then.
+// space invisibly until then. Hidden on touch-first devices (coarse
+// pointer), where there is usually no keyboard to press it with.
 export function ShortcutHint({
   className,
   shortcutKey,
@@ -39,7 +40,7 @@ export function ShortcutHint({
     <kbd
       aria-hidden="true"
       className={cn(
-        'bg-muted/80 pointer-events-none inline-flex h-5 shrink-0 items-center gap-0.5 rounded border px-1.5 font-mono text-[10px] font-medium',
+        'bg-muted/80 pointer-events-none inline-flex pointer-coarse:hidden h-5 shrink-0 items-center gap-0.5 rounded border px-1.5 font-mono text-[10px] font-medium',
         modifier == null && 'opacity-0',
         className
       )}

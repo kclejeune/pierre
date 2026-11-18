@@ -195,8 +195,6 @@ function DiffstatSquares({
 }
 
 interface MergeStatusCardProps {
-  // Merge, update, or other controls shown beside the headline.
-  actions?: ReactNode;
   approvals: OverviewCell;
   checks: OverviewCell;
   // The per-check list, shown under the cells while the Checks cell is
@@ -212,7 +210,6 @@ interface MergeStatusCardProps {
 // merge, then Checks / Comments / Approvals cells with segmented progress
 // bars. The Checks cell expands to the per-check list.
 export function MergeStatusCard({
-  actions,
   approvals,
   checks,
   checksDetail,
@@ -241,7 +238,6 @@ export function MergeStatusCard({
           <p className="text-muted-foreground m-0 text-xs">{headline.detail}</p>
         </div>
       </div>
-      {actions != null && <div className="px-3 pb-3">{actions}</div>}
       <div className={cn('grid grid-cols-3 border-t', annotationBorderColor)}>
         <MetricCell
           cell={checks}

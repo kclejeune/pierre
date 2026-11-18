@@ -1,7 +1,11 @@
 'use client';
 
-import { IconShare, IconX } from '@pierre/icons';
-import Link from 'next/link';
+import {
+  IconArrowUpRight,
+  IconEyeSlash,
+  IconShare,
+  IconX,
+} from '@pierre/icons';
 import { useEffect, useMemo, useState } from 'react';
 
 import { AppPermissionsProvider } from './AppPermissionsContext';
@@ -13,10 +17,14 @@ import { PullDetailsPanel, usePullDetailsModel } from './PullDetailsControl';
 import { fetchReviewThreadStates } from './reviewThreadsClient';
 import { usePullInfo } from './usePullInfo';
 import { cn } from '@/lib/cn';
-import type { PullSummary } from '@/lib/githubPullSummaries';
+import { pullKey, type PullSummary } from '@/lib/githubPullSummaries';
+import {
+  authorSearchName,
+  isAuthorMuted,
+  mutedAuthorLabel,
+} from '@/lib/mutedAuthors';
 import type { PullRequestRef } from '@/lib/pullCommentsClient';
 import type { ConversationCounts } from '@/lib/pullOverview';
-import { recordRecentDiff } from '@/lib/recentDiffs';
 
 // The pane's outer frame: the full height of its grid row beside the list
 // (the /pulls page fills the viewport on desktop), scrolling on its own.
@@ -30,14 +38,24 @@ function getStoredToken(): string | undefined {
 
 // The /pulls preview pane for wide screens: the selected pull's overview
 // (the same panel the diff view's details popover shows, actions included)
-// with a header to open its diff or GitHub page. With nothing selected it
-// explains how to pick a pull.
+// with a header to open its diff (in a new tab, so the list stays put as a
+// queue to work through) or GitHub page, or mute its author. With nothing
+// selected it explains how to pick a pull.
 export function PullPreviewPane({
+  muted,
   onClose,
+  onMute,
+  onOpenDiff,
   onPullChanged,
   pull,
   tokenVersion,
 }: {
+  // The dashboard's muted authors and its mute action, for the header's
+  // mute button.
+  muted: readonly string[];
+  onMute(authors: readonly string[]): void;
+  // Records the opened diff (recents, the diff view's queue).
+  onOpenDiff(pull: PullSummary): void;
   onClose(): void;
   // Called after an action here changed the pull (merge, close, draft), so
   // the list can refetch its rows.
@@ -74,11 +92,14 @@ export function PullPreviewPane({
   return (
     // Keyed so switching pulls starts from a clean panel (edit drafts,
     // expanded checks, loaded supplement).
-    <AppPermissionsProvider key={pullKeyOf(pull)} owner={pull.owner}>
+    <AppPermissionsProvider key={pullKey(pull)} owner={pull.owner}>
       <LoadedPreview
+        muted={muted}
         pull={pull}
         tokenVersion={tokenVersion}
         onClose={onClose}
+        onMute={onMute}
+        onOpenDiff={onOpenDiff}
         onPullChanged={onPullChanged}
       />
     </AppPermissionsProvider>
@@ -89,13 +110,9 @@ export function PullPreviewPane({
 // usePreviewKeyboard in PullsDashboard), listed in the empty pane.
 const PREVIEW_SHORTCUTS: readonly { keys: string[]; label: string }[] = [
   { keys: ['J', 'K'], label: 'Move between pull requests' },
-  { keys: ['Enter'], label: 'Open the diff' },
+  { keys: ['Enter'], label: 'Open the diff in a new tab' },
   { keys: ['Esc'], label: 'Close the preview' },
 ];
-
-function pullKeyOf(pull: PullSummary): string {
-  return `${pull.owner}/${pull.repo}#${pull.number}`;
-}
 
 function Kbd({ children }: { children: string }) {
   return (
@@ -106,11 +123,17 @@ function Kbd({ children }: { children: string }) {
 }
 
 function LoadedPreview({
+  muted,
   onClose,
+  onMute,
+  onOpenDiff,
   onPullChanged,
   pull,
   tokenVersion,
 }: {
+  muted: readonly string[];
+  onMute(authors: readonly string[]): void;
+  onOpenDiff(pull: PullSummary): void;
   onClose(): void;
   onPullChanged(): void;
   pull: PullSummary;
@@ -155,15 +178,18 @@ function LoadedPreview({
         <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
           {pull.owner}/{pull.repo}
         </span>
+        <MuteAuthorButton muted={muted} pull={pull} onMute={onMute} />
         <Button asChild className="h-7 px-2.5" size="xs" variant="outline">
-          <Link
+          <a
             href={pull.viewerPath}
-            onClick={() =>
-              recordRecentDiff({ path: pull.viewerPath, title: pull.title })
-            }
+            rel="noopener"
+            target="_blank"
+            title="Open the diff in a new tab (Enter)"
+            onClick={() => onOpenDiff(pull)}
           >
             Open diff
-          </Link>
+            <IconArrowUpRight className="size-3" />
+          </a>
         </Button>
         <Button
           asChild
@@ -236,6 +262,37 @@ function LoadedPreview({
         </div>
       </div>
     </aside>
+  );
+}
+
+// Mutes the pull's author on the dashboard (lib/mutedAuthors), dropping
+// their pulls from the list. Hidden once they're muted; the list header's
+// Muted menu unmutes.
+function MuteAuthorButton({
+  muted,
+  onMute,
+  pull,
+}: {
+  muted: readonly string[];
+  onMute(authors: readonly string[]): void;
+  pull: PullSummary;
+}) {
+  const author = authorSearchName(pull);
+  if (author == null || isAuthorMuted(muted, author)) {
+    return null;
+  }
+  const label = `Mute ${mutedAuthorLabel(author)}`;
+  return (
+    <Button
+      className="size-7 rounded-md"
+      size="icon-sm"
+      variant="ghost"
+      title={`${label}: hide their pull requests from this list`}
+      aria-label={label}
+      onClick={() => onMute([author])}
+    >
+      <IconEyeSlash className="size-3.5" />
+    </Button>
   );
 }
 

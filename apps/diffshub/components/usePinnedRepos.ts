@@ -1,46 +1,29 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
 
+import { useSyncedList } from './useSyncedList';
 import {
   loadPinnedRepos,
   PINNED_REPOS_EVENT,
   savePinnedRepos,
   togglePinnedRepo,
 } from '@/lib/pinnedRepos';
-import { onPreferencesRestored } from '@/lib/preferenceSync';
 
-// Shared view of the pinned-repo list. Loads after mount (SSR renders no
-// pins), and re-loads whenever any other consumer saves — savePinnedRepos
-// broadcasts a window event — so the dashboard, viewer header, and palette
-// stay in sync without threading state between them. Pins restored from the
-// server after sign-in (lib/preferenceSync) re-load the same way.
+// Shared view of the pinned-repo list, kept in sync across the dashboard,
+// viewer header, and palette (see useSyncedList).
 export function usePinnedRepos(): {
   hydrated: boolean;
   pinned: string[];
   toggle: (repo: string) => void;
 } {
-  const [pinned, setPinned] = useState<string[]>([]);
-  const [hydrated, setHydrated] = useState(false);
-
-  useEffect(() => {
-    setPinned(loadPinnedRepos());
-    setHydrated(true);
-    const onChange = () => setPinned(loadPinnedRepos());
-    window.addEventListener(PINNED_REPOS_EVENT, onChange);
-    const stopRestoreListener = onPreferencesRestored(
-      ['pinnedRepos'],
-      onChange
-    );
-    return () => {
-      window.removeEventListener(PINNED_REPOS_EVENT, onChange);
-      stopRestoreListener();
-    };
-  }, []);
-
+  const { hydrated, list } = useSyncedList(
+    loadPinnedRepos,
+    PINNED_REPOS_EVENT,
+    'pinnedRepos'
+  );
   const toggle = useCallback((repo: string) => {
     savePinnedRepos(togglePinnedRepo(loadPinnedRepos(), repo));
   }, []);
-
-  return { hydrated, pinned, toggle };
+  return { hydrated, pinned: list, toggle };
 }

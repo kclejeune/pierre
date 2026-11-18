@@ -12,6 +12,7 @@ import {
   readPullStateFilter,
   splitPullSort,
   tokenizePullQuery,
+  writePullAuthorFilter,
   writePullSort,
   writePullStateFilter,
 } from '@/lib/pullSearchQuery';
@@ -130,6 +131,7 @@ describe('pulls page URL state', () => {
     const url = writePullsPageState(new URL('https://x.test/pulls'), {
       involves: [],
       reviewRequests: 'direct',
+      showMuted: false,
       scope: { kind: 'all' },
       text: 'is:open',
     });
@@ -137,6 +139,7 @@ describe('pulls page URL state', () => {
     const repoUrl = writePullsPageState(new URL('https://x.test/pulls'), {
       involves: 'anyone',
       reviewRequests: 'direct',
+      showMuted: false,
       scope: { kind: 'repo', repo: 'oven-sh/bun' },
       text: 'is:open',
     });
@@ -148,11 +151,13 @@ describe('pulls page URL state', () => {
       involves: [] as const,
       reviewRequests: 'teams' as const,
       scope: { kind: 'repo', repo: 'oven-sh/bun' } as const,
+      showMuted: true,
       text: 'is:merged label:bug',
     };
     const url = writePullsPageState(new URL('https://x.test/pulls'), state);
     expect(url.searchParams.get('involves')).toBe('me');
     expect(url.searchParams.get('requests')).toBe('teams');
+    expect(url.searchParams.get('muted')).toBe('show');
     expect(readPullsPageState(url.search)).toEqual(state);
   });
 
@@ -160,6 +165,7 @@ describe('pulls page URL state', () => {
     expect(readPullsPageState('?bucket=created')).toEqual({
       involves: ['authored'],
       reviewRequests: 'direct',
+      showMuted: false,
       scope: { kind: 'all' },
       text: 'is:open',
     });
@@ -203,6 +209,7 @@ describe('pulls page URL state', () => {
     const base = {
       involves: 'anyone' as const,
       reviewRequests: 'direct' as const,
+      showMuted: false,
       text: 'is:open',
     };
     expect(resolveAudience({ ...base, scope: { kind: 'all' } })).toEqual([]);
@@ -234,6 +241,20 @@ describe('search builder reads the typed text with the tokenizer', () => {
       })
     ).toBe(
       '(label:a OR label:b) is:open is:pr archived:false repo:oven-sh/bun'
+    );
+  });
+});
+
+describe('writePullAuthorFilter', () => {
+  test('replaces an existing author term and scopes OR searches', () => {
+    expect(writePullAuthorFilter('is:open', 'app/renovate')).toBe(
+      'is:open author:app/renovate'
+    );
+    expect(
+      writePullAuthorFilter('is:open author:svc-bump', 'app/renovate')
+    ).toBe('is:open author:app/renovate');
+    expect(writePullAuthorFilter('label:a OR label:b', 'octocat')).toBe(
+      '(label:a OR label:b) author:octocat'
     );
   });
 });

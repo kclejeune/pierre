@@ -52,7 +52,10 @@ describe('buildActivePullsVariables', () => {
       first: 25,
       query:
         'is:open is:pr archived:false assignee:@me repo:ziglang/zig sort:updated-desc',
+      unmutedQuery:
+        'is:open is:pr archived:false assignee:@me repo:ziglang/zig',
       withCommented: true,
+      withUnmuted: false,
     });
   });
 
@@ -666,5 +669,143 @@ describe('search hits the GitHub App cannot read', () => {
       buildActivePullsVariables({ involves: [], text: OPEN }, cursor)
         .commentedFirst
     ).toBe(49);
+  });
+});
+
+describe('muted authors', () => {
+  const muted = ['app/renovate', 'svc-bump'];
+
+  test('excludes muted authors from both searches', () => {
+    const variables = buildActivePullsVariables({
+      involves: ['review-requested'],
+      mutedAuthors: muted,
+      text: OPEN,
+    });
+    expect(variables.query).toBe(
+      'is:open is:pr archived:false user-review-requested:@me -author:app/renovate -author:svc-bump sort:updated-desc'
+    );
+    expect(variables.commentedQuery).toContain(
+      '-author:app/renovate -author:svc-bump'
+    );
+    // The first page counts the same search without the exclusions.
+    expect(variables.unmutedQuery).toBe(
+      'is:open is:pr archived:false user-review-requested:@me'
+    );
+    expect(variables.withUnmuted).toBe(true);
+  });
+
+  test('later pages skip the muted count', () => {
+    const variables = buildActivePullsVariables(
+      { involves: [], mutedAuthors: muted, text: OPEN },
+      { after: 'cDI', lastUpdatedAt: '2026-08-02T09:00:00Z', boundaryRows: 0 }
+    );
+    expect(variables.query).toContain('-author:svc-bump');
+    expect(variables.withUnmuted).toBe(false);
+  });
+
+  // Typing author:app/renovate is how the viewer triages a muted bot's
+  // pulls; excluding it as well would match nothing.
+  test("a typed author: qualifier lifts that author's exclusion", () => {
+    const variables = buildActivePullsVariables({
+      involves: [],
+      mutedAuthors: muted,
+      text: 'is:open author:App/Renovate',
+    });
+    expect(variables.query).not.toContain('-author:app/renovate');
+    expect(variables.query).toContain('-author:svc-bump');
+    expect(
+      buildActivePullsVariables({
+        involves: [],
+        mutedAuthors: ['app/renovate'],
+        text: 'is:open author:app/renovate',
+      }).withUnmuted
+    ).toBe(false);
+    // A negated author term is the viewer's own exclusion, not a request.
+    expect(
+      buildActiveSearchQuery({
+        involves: ['authored'],
+        mutedAuthors: ['svc-bump'],
+        text: 'is:open -author:octocat',
+      })
+    ).toBe(
+      'is:open -author:octocat is:pr archived:false author:@me -author:svc-bump'
+    );
+  });
+
+  // Only an author the text asks for lifts its exclusion; one it negates,
+  // by NOT or inside a negated group, still needs the global exclusion.
+  test('a negated author term keeps the exclusion', () => {
+    const query = (text: string) =>
+      buildActiveSearchQuery({
+        involves: ['authored'],
+        mutedAuthors: ['svc-bump'],
+        text,
+      });
+    for (const text of [
+      'is:open (NOT author:svc-bump OR label:dependencies)',
+      'is:open -(author:svc-bump OR label:x)',
+      'is:open -author:svc-bump',
+      // Unbalanced parens have no reliable reading.
+      'is:open (author:svc-bump',
+    ]) {
+      expect(query(text)).toEndWith('-author:svc-bump');
+    }
+    // Two negations cancel: the inner term asks for svc-bump.
+    expect(query('is:open NOT (label:x -author:svc-bump)')).not.toEndWith(
+      '-author:svc-bump'
+    );
+    expect(query('is:open (author:svc-bump OR label:x)')).not.toEndWith(
+      '-author:svc-bump'
+    );
+  });
+
+  test('reports how many pulls muting hid', () => {
+    const page = parseActivePullsPayload({
+      pulls: { issueCount: 4, nodes: [activeNode()] },
+      unmuted: { issueCount: 30 },
+    });
+    expect(page.mutedCount).toBe(26);
+    // The searches run a moment apart; the difference never goes negative.
+    expect(
+      parseActivePullsPayload({
+        pulls: { issueCount: 4, nodes: [activeNode()] },
+        unmuted: { issueCount: 3 },
+      }).mutedCount
+    ).toBe(0);
+    expect(
+      parseActivePullsPayload({
+        pulls: { issueCount: 4, nodes: [activeNode()] },
+      }).mutedCount
+    ).toBeUndefined();
+  });
+
+  test('marks GitHub App authors as bots', () => {
+    const { pulls } = parseActivePullsPayload({
+      pulls: {
+        issueCount: 2,
+        nodes: [
+          activeNode({
+            id: 'A',
+            author: { __typename: 'Bot', login: 'renovate', avatarUrl: '' },
+          }),
+          activeNode({
+            id: 'B',
+            number: 8,
+            author: { __typename: 'User', login: 'octocat', avatarUrl: '' },
+          }),
+        ],
+      },
+    });
+    expect(pulls.map((pull) => pull.authorIsBot)).toEqual([true, undefined]);
+  });
+
+  test('the route validates ?mute=', async () => {
+    const list = (query: string) =>
+      GET(new NextRequest(`https://diffshub.test/api/github-pulls?${query}`));
+    expect((await list('mute=app%2Frenovate,svc-bump')).status).toBe(401);
+    expect((await list('mute=renovate%20OR%20x')).status).toBe(400);
+    expect((await list('mute=app%2F')).status).toBe(400);
+    const tooMany = Array.from({ length: 21 }, (_, index) => `u${index}`);
+    expect((await list(`mute=${tooMany.join(',')}`)).status).toBe(400);
   });
 });

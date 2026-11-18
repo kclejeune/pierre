@@ -413,13 +413,26 @@ function replaceQualifier(
   matches: (value: string) => boolean,
   replacement: string | null
 ): string {
+  return replaceTerms(
+    text,
+    (token) =>
+      isPositiveQualifier(token, keys) &&
+      matches((token.value ?? '').toLowerCase()),
+    replacement
+  );
+}
+
+// replaceQualifier's engine: drops every token `remove` accepts (and a NOT
+// negating it), prunes dangling structure, and appends `replacement`.
+function replaceTerms(
+  text: string,
+  remove: (token: PullQueryToken) => boolean,
+  replacement: string | null
+): string {
   const tokens = tokenizePullQuery(text);
   const removed = new Set<number>();
   tokens.forEach((token, index) => {
-    if (
-      isPositiveQualifier(token, keys) &&
-      matches((token.value ?? '').toLowerCase())
-    ) {
+    if (remove(token)) {
       removed.add(index);
       const before = neighbor(tokens, index, -1);
       if (tokens[before]?.raw === 'NOT') {
@@ -448,9 +461,169 @@ function replaceQualifier(
 const AUTHOR_KEYS: ReadonlySet<string> = new Set(['author']);
 
 // Narrows the search to one author (the dashboard's "show only their pull
-// requests"), replacing any author: term already there.
-export function writePullAuthorFilter(text: string, author: string): string {
-  return replaceQualifier(text, AUTHOR_KEYS, () => true, `author:${author}`);
+// requests" and the Author filter), replacing any author: term already
+// there. Null drops the author filter.
+export function writePullAuthorFilter(
+  text: string,
+  author: string | null
+): string {
+  return replaceQualifier(
+    text,
+    AUTHOR_KEYS,
+    () => true,
+    author == null ? null : `author:${author}`
+  );
+}
+
+// The author the Author filter shows as chosen: the last author: term the
+// text asks for, if any.
+export function readPullAuthorFilter(text: string): string | undefined {
+  return readPositiveQualifierValues(text, 'author').at(-1);
+}
+
+// The list's Review and Checks filters: one value of GitHub's review: or
+// status: qualifier at a time, the empty value meaning "any" (no term).
+export const PULL_REVIEW_FILTER_OPTIONS: readonly {
+  value: string;
+  label: string;
+}[] = [
+  { value: '', label: 'Any review state' },
+  { value: 'required', label: 'Review required' },
+  { value: 'approved', label: 'Approved' },
+  { value: 'changes_requested', label: 'Changes requested' },
+  { value: 'none', label: 'No reviews' },
+];
+
+export const PULL_CHECKS_FILTER_OPTIONS: readonly {
+  value: string;
+  label: string;
+}[] = [
+  { value: '', label: 'Any checks state' },
+  { value: 'success', label: 'Passing' },
+  { value: 'failure', label: 'Failing' },
+  { value: 'pending', label: 'Pending' },
+];
+
+export type PullPresetKey = 'review' | 'status';
+
+// The value of the last `key:` term the text asks for, lowercased, or '' when
+// there is none (the "any" option).
+export function readPullPresetFilter(text: string, key: PullPresetKey): string {
+  return (
+    qualifierValues(tokenizePullQuery(text), new Set([key]))
+      .at(-1)
+      ?.toLowerCase() ?? ''
+  );
+}
+
+export function writePullPresetFilter(
+  text: string,
+  key: PullPresetKey,
+  value: string
+): string {
+  return replaceQualifier(
+    text,
+    new Set([key]),
+    () => true,
+    value === '' ? null : `${key}:${value}`
+  );
+}
+
+// A label: value as the search needs it: quoted when the name has spaces,
+// parens, or a colon (renovate's "renovate-manager: pep621"), bare otherwise.
+function formatLabelValue(name: string): string {
+  const clean = name.replaceAll('"', '');
+  return /[\s():]/.test(clean) ? `"${clean}"` : clean;
+}
+
+function unquote(value: string): string {
+  return value.length >= 2 && value.startsWith('"') && value.endsWith('"')
+    ? value.slice(1, -1)
+    : value;
+}
+
+// The labels the Label filter shows as chosen: names the text includes
+// (label:x), excludes (-label:x), and whether it asks for unlabeled pulls
+// (no:label). Names are unquoted; comparisons are case-insensitive, as on
+// GitHub.
+export interface PullLabelFilters {
+  exclude: string[];
+  include: string[];
+  unlabeled: boolean;
+}
+
+export function readPullLabelFilters(text: string): PullLabelFilters {
+  const filters: PullLabelFilters = {
+    exclude: [],
+    include: [],
+    unlabeled: false,
+  };
+  for (const token of tokenizePullQuery(text)) {
+    if (token.kind !== 'qualifier') {
+      continue;
+    }
+    const value = unquote(token.value ?? '');
+    if (token.key === 'label' && value !== '') {
+      (token.negated === true ? filters.exclude : filters.include).push(value);
+    } else if (
+      token.key === 'no' &&
+      token.negated !== true &&
+      value.toLowerCase() === 'label'
+    ) {
+      filters.unlabeled = true;
+    }
+  }
+  return filters;
+}
+
+// The Label filter's click: includes `name` (or, with `exclude`, excludes
+// it), or clears it when it's already in that mode. Any other term for the
+// same label goes first, so a label is never both included and excluded.
+export function togglePullLabelFilter(
+  text: string,
+  name: string,
+  mode: 'exclude' | 'include'
+): string {
+  const lower = name.toLowerCase();
+  const current = readPullLabelFilters(text);
+  const inMode = (mode === 'exclude' ? current.exclude : current.include).some(
+    (label) => label.toLowerCase() === lower
+  );
+  const term = `${mode === 'exclude' ? '-' : ''}label:${formatLabelValue(name)}`;
+  return replaceTerms(
+    text,
+    (token) =>
+      token.kind === 'qualifier' &&
+      token.key === 'label' &&
+      unquote(token.value ?? '').toLowerCase() === lower,
+    inMode ? null : term
+  );
+}
+
+const NO_KEYS: ReadonlySet<string> = new Set(['no']);
+
+export function togglePullUnlabeledFilter(text: string): string {
+  return replaceQualifier(
+    text,
+    NO_KEYS,
+    (value) => value === 'label',
+    readPullLabelFilters(text).unlabeled ? null : 'no:label'
+  );
+}
+
+// How many of the Filters menu's filters the text sets (for its trigger's
+// count): an author, each included or excluded label, unlabeled, a review
+// state, and a checks state.
+export function countPullFilters(text: string): number {
+  const labels = readPullLabelFilters(text);
+  return (
+    (readPullAuthorFilter(text) == null ? 0 : 1) +
+    labels.include.length +
+    labels.exclude.length +
+    (labels.unlabeled ? 1 : 0) +
+    (readPullPresetFilter(text, 'review') === '' ? 0 : 1) +
+    (readPullPresetFilter(text, 'status') === '' ? 0 : 1)
+  );
 }
 
 // The list's state toggle. 'all' drops the state qualifier entirely, which is
@@ -524,4 +697,23 @@ export function splitPullSort(text: string): { rest: string; sort?: string } {
   const sort = tokens.filter(isSort).at(-1)?.value?.toLowerCase() ?? '';
   const rest = joinTokens(tokens.filter((token) => !isSort(token)));
   return sort === '' ? { rest } : { rest, sort };
+}
+
+// The Filters menu's "Clear filters": drops every term the presets set (an
+// author, label and -label terms, no:label, review:, status:), leaving the
+// rest of the typed search alone.
+export function clearPullFilters(text: string): string {
+  return replaceTerms(
+    text,
+    (token) =>
+      token.kind === 'qualifier' &&
+      (token.key === 'label' ||
+        (token.negated !== true &&
+          (token.key === 'author' ||
+            token.key === 'review' ||
+            token.key === 'status' ||
+            (token.key === 'no' &&
+              (token.value ?? '').toLowerCase() === 'label')))),
+    null
+  );
 }

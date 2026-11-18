@@ -8,12 +8,20 @@ import {
   writePullsPageState,
 } from '@/lib/pullScopes';
 import {
+  clearPullFilters,
+  countPullFilters,
   normalizeQualifierNegation,
+  readPullAuthorFilter,
+  readPullLabelFilters,
+  readPullPresetFilter,
   readPullSort,
   readPullStateFilter,
   splitPullSort,
+  togglePullLabelFilter,
+  togglePullUnlabeledFilter,
   tokenizePullQuery,
   writePullAuthorFilter,
+  writePullPresetFilter,
   writePullSort,
   writePullStateFilter,
 } from '@/lib/pullSearchQuery';
@@ -291,5 +299,78 @@ describe('writePullAuthorFilter', () => {
     expect(writePullAuthorFilter('label:a OR label:b', 'octocat')).toBe(
       '(label:a OR label:b) author:octocat'
     );
+  });
+});
+
+describe('filter presets', () => {
+  test('review and status presets replace their own qualifier', () => {
+    expect(readPullPresetFilter('is:open review:approved', 'review')).toBe(
+      'approved'
+    );
+    expect(readPullPresetFilter('is:open', 'status')).toBe('');
+    expect(
+      writePullPresetFilter('is:open review:approved', 'review', 'required')
+    ).toBe('is:open review:required');
+    expect(writePullPresetFilter('is:open status:failure', 'status', '')).toBe(
+      'is:open'
+    );
+    // An OR search keeps its meaning: the preset applies to every branch.
+    expect(
+      writePullPresetFilter('label:a OR label:b', 'status', 'success')
+    ).toBe('(label:a OR label:b) status:success');
+  });
+
+  test('the author filter reads, replaces, and clears its term', () => {
+    expect(readPullAuthorFilter('is:open author:renovate-bot')).toBe(
+      'renovate-bot'
+    );
+    expect(readPullAuthorFilter('is:open -author:renovate-bot')).toBe(
+      undefined
+    );
+    expect(writePullAuthorFilter('is:open author:a', null)).toBe('is:open');
+  });
+
+  test('label toggles include, exclude, and clear one label at a time', () => {
+    const pep = 'renovate-manager: pep621';
+    const included = togglePullLabelFilter('is:open', pep, 'include');
+    expect(included).toBe('is:open label:"renovate-manager: pep621"');
+    expect(readPullLabelFilters(included)).toEqual({
+      exclude: [],
+      include: [pep],
+      unlabeled: false,
+    });
+    // Excluding an included label swaps its term rather than adding one.
+    const excluded = togglePullLabelFilter(included, pep, 'exclude');
+    expect(excluded).toBe('is:open -label:"renovate-manager: pep621"');
+    // Clicking the same mode again clears it, case-insensitively.
+    expect(togglePullLabelFilter(excluded, pep.toUpperCase(), 'exclude')).toBe(
+      'is:open'
+    );
+    expect(togglePullLabelFilter('is:open', 'bug', 'include')).toBe(
+      'is:open label:bug'
+    );
+  });
+
+  test('unlabeled toggles no:label, and the count covers every preset', () => {
+    expect(togglePullUnlabeledFilter('is:open')).toBe('is:open no:label');
+    expect(togglePullUnlabeledFilter('is:open no:label')).toBe('is:open');
+    expect(
+      countPullFilters(
+        'is:open author:x label:a -label:b no:label review:none status:success'
+      )
+    ).toBe(6);
+    expect(countPullFilters('is:open sort:created-desc')).toBe(0);
+  });
+});
+
+describe('clearPullFilters', () => {
+  test('drops preset terms and keeps the rest of the search', () => {
+    expect(
+      clearPullFilters(
+        'is:open author:x label:a -label:"b c" no:label review:none status:failure fix sort:created-desc'
+      )
+    ).toBe('is:open fix sort:created-desc');
+    // A negated author is the user's own exclusion, not a preset.
+    expect(clearPullFilters('is:open -author:x')).toBe('is:open -author:x');
   });
 });

@@ -17,6 +17,9 @@ import type { CommentAuthor } from '@/lib/types';
 interface CommentAuthorAvatarProps {
   author: CommentAuthor;
   className?: string;
+  // False skips the profile fallback (a team slug has no user profile, so
+  // the lookup could only 404); the initials render straight away.
+  lookupProfile?: boolean;
 }
 
 // Avatar URLs that recently failed to load, kept module-level so a dead URL
@@ -80,6 +83,7 @@ function initialsFor(name: string | null, login: string): string {
 export function CommentAuthorAvatar({
   author,
   className,
+  lookupProfile = true,
 }: CommentAuthorAvatarProps) {
   const { webURL } = useGitHubEnvironment();
   const { version } = useSyncExternalStore(
@@ -97,7 +101,7 @@ export function CommentAuthorAvatar({
   // The profile also supplies the display name behind initials, so one
   // request serves both fallback stages.
   const profile = useGitHubUserProfile(
-    payloadUsable ? null : author.login,
+    payloadUsable || !lookupProfile ? null : author.login,
     version
   );
   const profileSrc =

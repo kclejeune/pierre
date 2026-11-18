@@ -72,7 +72,7 @@ export function parsePullDetails(data: unknown): PullDetails {
       const slug =
         readStringPath(team, ['slug']) ?? readStringPath(team, ['name']);
       if (slug != null) {
-        reviewers.push({ login: slug, state: 'PENDING' });
+        reviewers.push({ login: slug, state: 'PENDING', team: true });
       }
     }
   }

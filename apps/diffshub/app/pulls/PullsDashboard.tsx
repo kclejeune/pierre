@@ -96,6 +96,7 @@ import {
 import {
   PULL_SORT_OPTIONS,
   type PullStateFilter,
+  readPositiveQualifierValues,
   readPullSort,
   readPullStateFilter,
   writePullAuthorFilter,
@@ -743,11 +744,22 @@ function PullList({
     PULL_SORT_OPTIONS.find((option) => option.value === sort)?.label ??
     `sort:${sort}`;
   const showRepo = scope.kind !== 'repo';
-  // Lowercased once, so each row's muted check is a set lookup.
-  const mutedNames = useMemo(
-    () => new Set(muting.muted.map((author) => author.toLowerCase())),
-    [muting.muted]
-  );
+  // The muted authors whose rows dim while muted pulls are shown, lowercased
+  // once so each row's check is a set lookup. An author the query asks for
+  // (author:x, e.g. from "Show only their pull requests") isn't excluded by
+  // the search, so their rows show at full strength.
+  const mutedNames = useMemo(() => {
+    const requested = new Set(
+      readPositiveQualifierValues(text, 'author').map((name) =>
+        name.toLowerCase()
+      )
+    );
+    return new Set(
+      muting.muted
+        .map((author) => author.toLowerCase())
+        .filter((author) => !requested.has(author))
+    );
+  }, [muting.muted, text]);
   // Near-duplicate pulls (same title and author) fold into one row until
   // expanded; `rows` is what's on screen, which J/K walk and the diff
   // view's queue follows.
@@ -1175,7 +1187,8 @@ function MutedAuthorsMenu({
       : showMuted
         ? 'Showing muted'
         : mutedCount != null && mutedCount > 0
-          ? `${mutedCount.toLocaleString()} muted`
+          ? // Counts pulls, not authors: "63 muted pulls" from one bot.
+            `${mutedCount.toLocaleString()} muted ${mutedCount === 1 ? 'pull' : 'pulls'}`
           : 'Muted';
   return (
     <DropdownMenu>

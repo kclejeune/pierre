@@ -23,10 +23,15 @@ export function PullQueueStepper() {
   const router = useRouter();
   // Read after mount: the queue lives in localStorage.
   const [items, setItems] = useState<PullQueueItem[]>([]);
+  // Commit and compare views opened from a pull name it in ?fromPull=; read
+  // with the queue after mount rather than through useSearchParams, which
+  // would need a Suspense boundary around the whole header.
+  const [fromPull, setFromPull] = useState<string | null>(null);
   useEffect(() => {
     setItems(loadPullQueue());
+    setFromPull(new URLSearchParams(window.location.search).get('fromPull'));
   }, [pathname]);
-  const position = findQueuePosition(items, pathname);
+  const position = findQueuePosition(items, pathname, fromPull);
   const previous = position > 0 ? items[position - 1] : undefined;
   const next =
     position !== -1 && position < items.length - 1

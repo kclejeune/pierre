@@ -11,6 +11,7 @@ import {
   DEFAULT_PULL_SORT,
   hasOrOperator,
   hasQualifier,
+  normalizeQualifierNegation,
   readPositiveQualifierValues,
   splitPullSort,
 } from './pullSearchQuery';
@@ -75,7 +76,26 @@ export interface PullSummary {
   labels?: PullLabel[];
   // How the viewer is involved, as reported by the GraphQL search.
   activity?: PullActivity[];
+  // The head commit's combined CI result. Absent when the commit has no
+  // checks or the token can't read them.
+  checks?: PullChecksSummary;
+  // The pull's overall review state under branch protection. Absent when
+  // the base branch doesn't require reviews.
+  reviewDecision?: PullReviewDecision;
 }
+
+export type PullChecksSummary = 'failure' | 'pending' | 'success';
+
+export type PullReviewDecision =
+  | 'approved'
+  | 'changes-requested'
+  | 'review-required';
+
+export const PULL_REVIEW_DECISION_LABELS: Record<PullReviewDecision, string> = {
+  approved: 'Approved',
+  'changes-requested': 'Changes requested',
+  'review-required': 'Review required',
+};
 
 // A pull's identity across lists, caches, and selections: "owner/repo#12".
 export function pullKey(
@@ -268,7 +288,8 @@ function buildUnmutedSearchQuery(
   scope: PullSearchScope,
   extra?: string
 ): string {
-  const { rest } = splitPullSort(scope.text ?? '');
+  // GitHub reads NOT before a qualifier as a match-nothing keyword search.
+  const rest = normalizeQualifierNegation(splitPullSort(scope.text ?? '').rest);
   const parts: string[] = [];
   if (rest !== '') {
     parts.push(hasOrOperator(rest) ? `(${rest})` : rest);
@@ -354,6 +375,8 @@ export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: Stri
         state
         updatedAt
         labels(first: 6) { nodes { name color } }
+        reviewDecision
+        commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
         author { __typename login avatarUrl }
         repository { name owner { login } }
         viewerDidAuthor
@@ -578,7 +601,41 @@ function parseGraphQLPullNode(
   if (labels.length > 0) {
     summary.labels = labels;
   }
+  const checks = readChecksSummary(record);
+  if (checks != null) {
+    summary.checks = checks;
+  }
+  const reviewDecision = REVIEW_DECISIONS[String(record.reviewDecision)];
+  if (reviewDecision != null) {
+    summary.reviewDecision = reviewDecision;
+  }
   return summary;
+}
+
+const REVIEW_DECISIONS: Partial<Record<string, PullReviewDecision>> = {
+  APPROVED: 'approved',
+  CHANGES_REQUESTED: 'changes-requested',
+  REVIEW_REQUIRED: 'review-required',
+};
+
+// The head commit's statusCheckRollup state, folded into the three results
+// a list row shows: ERROR counts as a failure and EXPECTED (a required
+// status that hasn't reported yet) as pending.
+const CHECK_ROLLUP_STATES: Partial<Record<string, PullChecksSummary>> = {
+  ERROR: 'failure',
+  EXPECTED: 'pending',
+  FAILURE: 'failure',
+  PENDING: 'pending',
+  SUCCESS: 'success',
+};
+
+function readChecksSummary(
+  record: Record<string, unknown>
+): PullChecksSummary | undefined {
+  const commits = asRecord(record.commits)?.nodes;
+  const last = Array.isArray(commits) ? commits[commits.length - 1] : null;
+  const rollup = asRecord(asRecord(asRecord(last)?.commit)?.statusCheckRollup);
+  return CHECK_ROLLUP_STATES[String(rollup?.state)];
 }
 
 // The state a pull shows as, in the /pulls list and the details panel alike.

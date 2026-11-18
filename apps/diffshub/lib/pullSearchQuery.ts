@@ -217,6 +217,32 @@ function hasTopLevelOr(tokens: readonly PullQueryToken[]): boolean {
   return false;
 }
 
+// Rewrites `NOT qualifier:value` as `-qualifier:value`. GitHub's issue search
+// (GHES included) applies NOT only to bare keywords: `NOT author:x` matches
+// nothing, while `-author:x` excludes as intended, in groups too. NOT before
+// a keyword or a group is left alone, as is a qualifier already negated.
+export function normalizeQualifierNegation(text: string): string {
+  const tokens = tokenizePullQuery(text);
+  const out: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const next = tokens[index + 1]?.kind === 'space' ? index + 2 : index + 1;
+    const target = tokens[next];
+    if (
+      token.kind === 'operator' &&
+      token.raw === 'NOT' &&
+      target?.kind === 'qualifier' &&
+      target.negated !== true
+    ) {
+      out.push(`-${target.raw}`);
+      index = next;
+      continue;
+    }
+    out.push(token.raw);
+  }
+  return out.join('');
+}
+
 // Whether the text has an OR outside any group (an "OR" inside a quoted
 // value is just text), so appending terms would only bind its last branch.
 export function hasOrOperator(text: string): boolean {

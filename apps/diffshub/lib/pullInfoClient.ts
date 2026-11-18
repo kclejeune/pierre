@@ -1,4 +1,5 @@
 import type { PullRefs } from './githubCommitServer';
+import { prefetchOnce, takeOrLoad } from './prefetchStore';
 import {
   buildHeaders,
   pullParams,
@@ -130,16 +131,43 @@ export async function fetchPullDetailsSupplement(
   signal?: AbortSignal,
   { accessOnly = false }: { accessOnly?: boolean } = {}
 ): Promise<PullDetailsSupplement> {
+  const url = pullDetailsURL(pull, headSha, accessOnly);
+  const load = async () =>
+    (await requestJSON(url, {
+      headers: buildHeaders(token),
+      signal,
+    })) as PullDetailsSupplement;
+  // The full read can use a prefetch (lib/prefetchStore); the access-only
+  // URL never has one.
+  return takeOrLoad(url, token, load);
+}
+
+// Starts fetchPullDetailsSupplement's full read for `headSha` ahead of need
+// (see lib/prefetchStore).
+export function prefetchPullDetailsSupplement(
+  pull: PullRequestRef,
+  headSha: string,
+  token: string | undefined
+): void {
+  const url = pullDetailsURL(pull, headSha, false);
+  prefetchOnce(url, token, () =>
+    requestJSON(url, { headers: buildHeaders(token) })
+  );
+}
+
+// The supplement's URL, shared by the read and its prefetch so their store
+// keys always match.
+function pullDetailsURL(
+  pull: PullRequestRef,
+  headSha: string,
+  accessOnly: boolean
+): string {
   const params = pullParams(pull);
   params.set('head', headSha);
   if (accessOnly) {
     params.set('only', 'access');
   }
-  const payload = await requestJSON(`/api/pull-details?${params}`, {
-    headers: buildHeaders(token),
-    signal,
-  });
-  return payload as PullDetailsSupplement;
+  return `/api/pull-details?${params}`;
 }
 
 export function mergePullReviewers(

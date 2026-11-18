@@ -920,13 +920,16 @@ function PullList({
           </>
         )}
       </div>
+      {/* No scrollbar on the pinned list: a styled scrollbar always takes
+          layout space in Chromium, and its reserved gutter left every row
+          short of the card's right edge. Wheel, trackpad, J/K (which scroll
+          the active row into view), and "Load more" still move through it. */}
       <div
         className={
           fill
-            ? 'cv-autohide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain'
+            ? 'min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
             : undefined
         }
-        onScroll={fill ? revealScrollbarWhileScrolling : undefined}
       >
         <DashboardSectionState
           emptyLabel={

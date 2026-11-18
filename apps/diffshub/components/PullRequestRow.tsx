@@ -115,12 +115,14 @@ export const PullRequestRow = memo(function PullRequestRow({
   return (
     <div
       className={cn(
-        'group/row flex items-start border-b transition-colors first:rounded-t-lg last:rounded-b-lg last:border-b-0',
+        // Square corners: rows sit between the list header and footer, and
+        // the section card (overflow-hidden) clips any row that does meet
+        // its rounded edge.
+        'group/row flex items-start border-b transition-colors last:border-b-0',
         selected
-          ? // Full-contrast edge: the palette is monochrome, so the
-            // selection that ties this row to the preview pane is marked
-            // by contrast rather than an accent hue.
-            'bg-accent shadow-[inset_2px_0_0_var(--color-foreground)]'
+          ? // The full accent fill alone marks the row the preview pane
+            // shows; hover and checked rows use lighter tints of it.
+            'bg-accent'
           : checked
             ? 'bg-accent/40'
             : 'hover:bg-accent/60',

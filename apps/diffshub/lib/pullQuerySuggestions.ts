@@ -1,6 +1,7 @@
 import {
   KNOWN_PULL_QUALIFIERS,
   PULL_SORT_OPTIONS,
+  quoteSearchValue,
   tokenizePullQuery,
 } from './pullSearchQuery';
 
@@ -149,10 +150,6 @@ function formatDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function quoteIfNeeded(value: string): string {
-  return /[\s()]/.test(value) ? `"${value}"` : value;
-}
-
 // The value list for a qualifier key: fixed values, @me for user keys,
 // recent date ranges for date keys, and the scoped repository's labels for
 // `label:`.
@@ -180,7 +177,7 @@ function valuesFor(
     // offered.
     return (options.labels ?? [])
       .filter((name) => !name.includes('"'))
-      .map((name) => [quoteIfNeeded(name)]);
+      .map((name) => [quoteSearchValue(name)]);
   }
   return [];
 }

@@ -9,19 +9,16 @@ import {
 } from '@/lib/pullScopes';
 import {
   clearPullFilters,
-  countPullFilters,
   normalizeQualifierNegation,
-  readPullAuthorFilter,
   readPullLabelFilters,
-  readPullPresetFilter,
+  readPullQualifierFilter,
   readPullSort,
   readPullStateFilter,
   splitPullSort,
   togglePullLabelFilter,
   togglePullUnlabeledFilter,
   tokenizePullQuery,
-  writePullAuthorFilter,
-  writePullPresetFilter,
+  writePullQualifierFilter,
   writePullSort,
   writePullStateFilter,
 } from '@/lib/pullSearchQuery';
@@ -288,46 +285,52 @@ describe('normalizeQualifierNegation', () => {
   });
 });
 
-describe('writePullAuthorFilter', () => {
+describe('writePullQualifierFilter', () => {
   test('replaces an existing author term and scopes OR searches', () => {
-    expect(writePullAuthorFilter('is:open', 'app/renovate')).toBe(
+    expect(writePullQualifierFilter('is:open', 'author', 'app/renovate')).toBe(
       'is:open author:app/renovate'
     );
     expect(
-      writePullAuthorFilter('is:open author:svc-bump', 'app/renovate')
+      writePullQualifierFilter(
+        'is:open author:svc-bump',
+        'author',
+        'app/renovate'
+      )
     ).toBe('is:open author:app/renovate');
-    expect(writePullAuthorFilter('label:a OR label:b', 'octocat')).toBe(
-      '(label:a OR label:b) author:octocat'
-    );
+    expect(
+      writePullQualifierFilter('label:a OR label:b', 'author', 'octocat')
+    ).toBe('(label:a OR label:b) author:octocat');
   });
 });
 
 describe('filter presets', () => {
   test('review and status presets replace their own qualifier', () => {
-    expect(readPullPresetFilter('is:open review:approved', 'review')).toBe(
+    expect(readPullQualifierFilter('is:open review:approved', 'review')).toBe(
       'approved'
     );
-    expect(readPullPresetFilter('is:open', 'status')).toBe('');
+    expect(readPullQualifierFilter('is:open', 'status')).toBeUndefined();
     expect(
-      writePullPresetFilter('is:open review:approved', 'review', 'required')
+      writePullQualifierFilter('is:open review:approved', 'review', 'required')
     ).toBe('is:open review:required');
-    expect(writePullPresetFilter('is:open status:failure', 'status', '')).toBe(
-      'is:open'
-    );
+    expect(
+      writePullQualifierFilter('is:open status:failure', 'status', null)
+    ).toBe('is:open');
     // An OR search keeps its meaning: the preset applies to every branch.
     expect(
-      writePullPresetFilter('label:a OR label:b', 'status', 'success')
+      writePullQualifierFilter('label:a OR label:b', 'status', 'success')
     ).toBe('(label:a OR label:b) status:success');
   });
 
   test('the author filter reads, replaces, and clears its term', () => {
-    expect(readPullAuthorFilter('is:open author:renovate-bot')).toBe(
-      'renovate-bot'
+    expect(
+      readPullQualifierFilter('is:open author:renovate-bot', 'author')
+    ).toBe('renovate-bot');
+    expect(
+      readPullQualifierFilter('is:open -author:renovate-bot', 'author')
+    ).toBe(undefined);
+    expect(writePullQualifierFilter('is:open author:a', 'author', null)).toBe(
+      'is:open'
     );
-    expect(readPullAuthorFilter('is:open -author:renovate-bot')).toBe(
-      undefined
-    );
-    expect(writePullAuthorFilter('is:open author:a', null)).toBe('is:open');
   });
 
   test('label toggles include, exclude, and clear one label at a time', () => {
@@ -351,15 +354,9 @@ describe('filter presets', () => {
     );
   });
 
-  test('unlabeled toggles no:label, and the count covers every preset', () => {
+  test('unlabeled toggles no:label', () => {
     expect(togglePullUnlabeledFilter('is:open')).toBe('is:open no:label');
     expect(togglePullUnlabeledFilter('is:open no:label')).toBe('is:open');
-    expect(
-      countPullFilters(
-        'is:open author:x label:a -label:b no:label review:none status:success'
-      )
-    ).toBe(6);
-    expect(countPullFilters('is:open sort:created-desc')).toBe(0);
   });
 });
 

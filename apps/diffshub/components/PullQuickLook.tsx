@@ -13,6 +13,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from './Dialog';
+import { TONE_TEXT_CLASS } from './PullOverview';
 import { PULL_STATE_DISPLAY } from './pullStateDisplay';
 import { themeController } from './themeController';
 import { ThemedCodeView } from './ThemedCodeView';
@@ -90,8 +91,12 @@ export function PullQuickLook({
 
   const StateIcon = PULL_STATE_DISPLAY[pull.state].Icon;
   const stateClass = PULL_STATE_DISPLAY[pull.state].className;
+  // The reader's saved review-page display settings and auto-collapse
+  // patterns, read once per open rather than on every J/K step. The quick
+  // look has no settings controls beyond split/unified, which it doesn't save.
+  const [view] = useState(loadQuickLookView);
   const [diffStyle, setDiffStyle] = useState<'split' | 'unified'>(
-    () => loadDisplaySettings().diffStyle ?? 'split'
+    view.settings.diffStyle ?? 'split'
   );
 
   return (
@@ -218,6 +223,7 @@ export function PullQuickLook({
             key={pullKey(pull)}
             diffStyle={diffStyle}
             pull={pull}
+            view={view}
           />
         </ThemeSourceProvider>
       </DialogContent>
@@ -225,16 +231,27 @@ export function PullQuickLook({
   );
 }
 
+function loadQuickLookView() {
+  return {
+    collapsePatterns: compileCollapsePatterns(
+      parseCollapsePatterns(loadCollapsePatternsText())
+    ),
+    settings: { ...DEFAULT_DISPLAY_SETTINGS, ...loadDisplaySettings() },
+  };
+}
+
+type QuickLookView = ReturnType<typeof loadQuickLookView>;
+
 // The diff itself: the review page's patch loader and code view, read-only,
 // with the viewer's place kept out of the /pulls URL (syncLocationHash).
-// Display settings and auto-collapse patterns follow the reader's saved
-// review-page preferences.
 function QuickLookDiff({
   diffStyle,
   pull,
+  view: { collapsePatterns, settings },
 }: {
   diffStyle: 'split' | 'unified';
   pull: PullSummary;
+  view: QuickLookView;
 }) {
   const { hasToken, hydrated, token, tokenVersion } = useGitHubToken();
   const path = pull.viewerPath;
@@ -244,19 +261,6 @@ function QuickLookDiff({
     token,
     tokenVersion,
   });
-  // Read once per pull: the quick look has no settings controls of its own
-  // beyond split/unified, which it doesn't save.
-  const [settings] = useState(() => ({
-    ...DEFAULT_DISPLAY_SETTINGS,
-    ...loadDisplaySettings(),
-  }));
-  const collapsePatterns = useMemo(
-    () =>
-      compileCollapsePatterns(
-        parseCollapsePatterns(loadCollapsePatternsText())
-      ),
-    []
-  );
   const viewerRef = useRef<CodeViewHandle<CommentMetadata, undefined> | null>(
     null
   );
@@ -339,10 +343,10 @@ function QuickLookDiff({
             {diffStats.fileCount.toLocaleString()}{' '}
             {diffStats.fileCount === 1 ? 'file' : 'files'}
           </span>
-          <span className="text-[#18a46c]">
+          <span className={TONE_TEXT_CLASS.success}>
             +{diffStats.addedLines.toLocaleString()}
           </span>
-          <span className="text-red-500">
+          <span className={TONE_TEXT_CLASS.failure}>
             −{diffStats.deletedLines.toLocaleString()}
           </span>
         </div>

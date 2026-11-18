@@ -121,14 +121,20 @@ export async function fetchPullInfo(
   return payload as PullInfo;
 }
 
+// `accessOnly` asks for merge capabilities and permissions alone; checks and
+// reviewers come back null.
 export async function fetchPullDetailsSupplement(
   pull: PullRequestRef,
   headSha: string,
   token: string | undefined,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  { accessOnly = false }: { accessOnly?: boolean } = {}
 ): Promise<PullDetailsSupplement> {
   const params = pullParams(pull);
   params.set('head', headSha);
+  if (accessOnly) {
+    params.set('only', 'access');
+  }
   const payload = await requestJSON(`/api/pull-details?${params}`, {
     headers: buildHeaders(token),
     signal,

@@ -3,16 +3,13 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { storedGitHubTokenHeaders } from './githubSession';
-import type {
-  PullAudience,
-  PullsPage,
-  PullSummary,
-  ReviewRequestScope,
+import {
+  type PullAudience,
+  pullKey,
+  type PullsPage,
+  type PullSummary,
+  type ReviewRequestScope,
 } from '@/lib/githubPullSummaries';
-import { pullKey } from '@/lib/githubPullSummaries';
-
-// Re-exported for the dashboard's existing imports.
-export { pullKey };
 import { requestJSON } from '@/lib/pullCommentsClient';
 
 // One /pulls list: who is involved, which repositories (none means every

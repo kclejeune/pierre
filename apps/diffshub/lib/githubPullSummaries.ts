@@ -255,16 +255,23 @@ function reposQualifier(repos: readonly string[]): string | undefined {
   return terms.length === 1 ? terms[0] : `(${terms.join(' OR ')})`;
 }
 
-// The muted authors a search actually excludes: all but those the text asks
-// for with an author: term, since excluding an author the viewer typed in
-// would empty the list.
-function effectiveMutedAuthors(scope: PullSearchScope): readonly string[] {
-  const muted = scope.mutedAuthors ?? [];
+// The muted authors a search actually excludes: all but those the search
+// text asks for with an author: term, since excluding an author the viewer
+// typed in would empty the list. The server builds its -author: exclusions
+// from this and the dashboard dims the same authors' rows, so the two agree.
+export function effectiveMutedAuthors(
+  muted: readonly string[],
+  text: string
+): readonly string[] {
   if (muted.length === 0) {
     return muted;
   }
-  const named = readPositiveQualifierValues(scope.text ?? '', 'author');
+  const named = readPositiveQualifierValues(text, 'author');
   return muted.filter((author) => !includesName(named, author));
+}
+
+function scopeMutedAuthors(scope: PullSearchScope): readonly string[] {
+  return effectiveMutedAuthors(scope.mutedAuthors ?? [], scope.text ?? '');
 }
 
 // The dashboard search, minus its sort: the typed text first (grouped when it
@@ -276,7 +283,7 @@ export function buildActiveSearchQuery(
   scope: PullSearchScope,
   extra?: string
 ): string {
-  const exclusions = effectiveMutedAuthors(scope).map(
+  const exclusions = scopeMutedAuthors(scope).map(
     (author) => `-author:${author}`
   );
   return [buildUnmutedSearchQuery(scope, extra), ...exclusions].join(' ');
@@ -512,7 +519,7 @@ export function buildActivePullsVariables(
     // Sort doesn't change a count, so the unmuted search runs unsorted.
     unmutedQuery: buildUnmutedSearchQuery(scope),
     withCommented: audienceCanComment && (cursor == null || window != null),
-    withUnmuted: cursor == null && effectiveMutedAuthors(scope).length > 0,
+    withUnmuted: cursor == null && scopeMutedAuthors(scope).length > 0,
   };
 }
 

@@ -18,6 +18,9 @@ const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
 // Optional, slower metadata for the pull-details dropdown. Each companion
 // request is independent so an unavailable Checks API does not discard legacy
 // statuses, reviewer state, merge capabilities, or edit permissions.
+// `only=access` skips the reviewer and checks lookups for callers that need
+// just merge capabilities and permissions (the /pulls batch merge), saving
+// two GitHub requests per pull.
 async function handleGET(request: NextRequest) {
   const rejection = rejectTokenlessRequestWhenLoginRequired(request);
   if (rejection != null) {
@@ -37,10 +40,15 @@ async function handleGET(request: NextRequest) {
 
   const repo = { owner: params.owner, repo: params.repo };
   const token = await resolveBearerToken(request);
+  const accessOnly = request.nextUrl.searchParams.get('only') === 'access';
   try {
     const [reviewStates, checks, access] = await Promise.all([
-      fetchPullReviewStates(repo, params.pull, token).catch(() => null),
-      fetchPullChecks(repo, headSha, token).catch(() => null),
+      accessOnly
+        ? null
+        : fetchPullReviewStates(repo, params.pull, token).catch(() => null),
+      accessOnly
+        ? null
+        : fetchPullChecks(repo, headSha, token).catch(() => null),
       token == null
         ? Promise.resolve(null)
         : fetchPullAccess(repo, params.pull, token).catch(() => null),

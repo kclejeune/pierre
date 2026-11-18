@@ -4,6 +4,8 @@
 // toggle rewrites `is:` state qualifiers, the sort menu rewrites `sort:`).
 // Everything here is string-in, string-out so it stays unit-testable.
 
+import { includesName } from './nameList';
+
 export interface PullQueryToken {
   kind: 'qualifier' | 'text' | 'operator' | 'paren' | 'space';
   // The exact source slice, so joining every token's raw text reproduces
@@ -458,27 +460,29 @@ function replaceTerms(
     : `${base} ${replacement}`;
 }
 
-const AUTHOR_KEYS: ReadonlySet<string> = new Set(['author']);
-
-// Narrows the search to one author (the dashboard's "show only their pull
-// requests" and the Author filter), replacing any author: term already
-// there. Null drops the author filter.
-export function writePullAuthorFilter(
+// A single-choice filter's term (the Author, Review, and Checks filters, and
+// the dashboard's "show only their pull requests"): sets `key:value`,
+// replacing any `key:` term already there. Null drops the filter.
+export function writePullQualifierFilter(
   text: string,
-  author: string | null
+  key: string,
+  value: string | null
 ): string {
   return replaceQualifier(
     text,
-    AUTHOR_KEYS,
+    new Set([key]),
     () => true,
-    author == null ? null : `author:${author}`
+    value == null ? null : `${key}:${value}`
   );
 }
 
-// The author the Author filter shows as chosen: the last author: term the
-// text asks for, if any.
-export function readPullAuthorFilter(text: string): string | undefined {
-  return readPositiveQualifierValues(text, 'author').at(-1);
+// The value a single-choice filter shows as chosen: the last `key:` term
+// the text asks for rather than excludes, if any.
+export function readPullQualifierFilter(
+  text: string,
+  key: string
+): string | undefined {
+  return readPositiveQualifierValues(text, key).at(-1);
 }
 
 // The list's Review and Checks filters: one value of GitHub's review: or
@@ -504,34 +508,10 @@ export const PULL_CHECKS_FILTER_OPTIONS: readonly {
   { value: 'pending', label: 'Pending' },
 ];
 
-export type PullPresetKey = 'review' | 'status';
-
-// The value of the last `key:` term the text asks for, lowercased, or '' when
-// there is none (the "any" option).
-export function readPullPresetFilter(text: string, key: PullPresetKey): string {
-  return (
-    qualifierValues(tokenizePullQuery(text), new Set([key]))
-      .at(-1)
-      ?.toLowerCase() ?? ''
-  );
-}
-
-export function writePullPresetFilter(
-  text: string,
-  key: PullPresetKey,
-  value: string
-): string {
-  return replaceQualifier(
-    text,
-    new Set([key]),
-    () => true,
-    value === '' ? null : `${key}:${value}`
-  );
-}
-
-// A label: value as the search needs it: quoted when the name has spaces,
-// parens, or a colon (renovate's "renovate-manager: pep621"), bare otherwise.
-function formatLabelValue(name: string): string {
+// A qualifier value (a label name) as the search needs it: quoted when it
+// has spaces, parens, or a colon (renovate's "renovate-manager: pep621"),
+// bare otherwise. GitHub search can't escape a quote, so quotes are dropped.
+export function quoteSearchValue(name: string): string {
   const clean = name.replaceAll('"', '');
   return /[\s():]/.test(clean) ? `"${clean}"` : clean;
 }
@@ -586,10 +566,11 @@ export function togglePullLabelFilter(
 ): string {
   const lower = name.toLowerCase();
   const current = readPullLabelFilters(text);
-  const inMode = (mode === 'exclude' ? current.exclude : current.include).some(
-    (label) => label.toLowerCase() === lower
+  const inMode = includesName(
+    mode === 'exclude' ? current.exclude : current.include,
+    name
   );
-  const term = `${mode === 'exclude' ? '-' : ''}label:${formatLabelValue(name)}`;
+  const term = `${mode === 'exclude' ? '-' : ''}label:${quoteSearchValue(name)}`;
   return replaceTerms(
     text,
     (token) =>
@@ -608,21 +589,6 @@ export function togglePullUnlabeledFilter(text: string): string {
     NO_KEYS,
     (value) => value === 'label',
     readPullLabelFilters(text).unlabeled ? null : 'no:label'
-  );
-}
-
-// How many of the Filters menu's filters the text sets (for its trigger's
-// count): an author, each included or excluded label, unlabeled, a review
-// state, and a checks state.
-export function countPullFilters(text: string): number {
-  const labels = readPullLabelFilters(text);
-  return (
-    (readPullAuthorFilter(text) == null ? 0 : 1) +
-    labels.include.length +
-    labels.exclude.length +
-    (labels.unlabeled ? 1 : 0) +
-    (readPullPresetFilter(text, 'review') === '' ? 0 : 1) +
-    (readPullPresetFilter(text, 'status') === '' ? 0 : 1)
   );
 }
 

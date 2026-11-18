@@ -90,6 +90,11 @@ interface UsePatchLoaderOptions {
   markdownView?: 'rendered' | 'raw';
   onLoadStart(): void;
   path: string;
+  // Whether the viewer's place (a selected line or file) lives in the page
+  // URL's hash: written as the reader moves, read back to restore it. True
+  // for the review page; an embedded viewer (the /pulls quick look) passes
+  // false so it never touches the host page's URL.
+  syncLocationHash?: boolean;
   // False until the stored GitHub token has been read (and refreshed if it
   // had expired) after mount. The patch fetch waits for it: on a hard load the
   // first effect pass runs before the token store has been re-read on the
@@ -137,6 +142,7 @@ export function usePatchLoader({
   markdownView = 'raw',
   onLoadStart,
   path,
+  syncLocationHash = true,
   tokenHydrated,
   viewerRef,
 }: UsePatchLoaderOptions): UsePatchLoaderResult {
@@ -471,6 +477,9 @@ export function usePatchLoader({
   const cancelLineHashSettleRef = useRef<(() => void) | null>(null);
 
   const tryApplyLineHashTarget = useStableCallback(() => {
+    if (!syncLocationHash) {
+      return;
+    }
     const { hash } = window.location;
     const target = parseDiffsHubLineHash(hash);
     if (target == null) {
@@ -594,7 +603,9 @@ export function usePatchLoader({
     cancelDocTargetScroll();
     appliedLineHashKeyRef.current =
       hash == null ? null : getLineHashApplyKey(viewerKeyRef.current, hash);
-    replaceLocationHash(hash);
+    if (syncLocationHash) {
+      replaceLocationHash(hash);
+    }
   });
 
   const handleLineLinkChange = useStableCallback(

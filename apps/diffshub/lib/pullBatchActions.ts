@@ -4,7 +4,7 @@
 // to the head commit read just before acting, so a branch that moves
 // mid-batch fails that pull instead of approving or merging unseen commits.
 
-import type { PullSummary } from './githubPullSummaries';
+import { pullRequestRef, type PullSummary } from './githubPullSummaries';
 import type { PullRequestRef } from './pullCommentsClient';
 import { submitPullReview } from './pullCommentsClient';
 import { fetchPullDetailsSupplement, fetchPullInfo } from './pullInfoClient';
@@ -26,10 +26,6 @@ export interface PullBatchResult {
 // GitHub rate-limits bursts of writes; a few at a time stays well clear and
 // still finishes a page of bot pulls in seconds.
 const BATCH_CONCURRENCY = 3;
-
-function toRef(pull: PullSummary): PullRequestRef {
-  return { number: String(pull.number), owner: pull.owner, repo: pull.repo };
-}
 
 // The pull as GitHub has it now. 'no-store': the head must be current, not
 // the browser's cached copy.
@@ -104,7 +100,7 @@ export async function runPullBatch(
     while (next < pulls.length) {
       const pull = pulls[next++];
       try {
-        await run(toRef(pull), token);
+        await run(pullRequestRef(pull), token);
         succeeded++;
       } catch (error) {
         failures.push({

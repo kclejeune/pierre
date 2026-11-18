@@ -2,7 +2,7 @@
 
 import { IconCheck, IconChevronSm, IconCircleFill, IconX } from '@pierre/icons';
 import Link from 'next/link';
-import { memo, type MouseEvent } from 'react';
+import { memo, type MouseEvent, useEffect, useRef } from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { LabelColorDot } from './LabelColorDot';
@@ -72,12 +72,19 @@ interface PullRequestRowProps {
   // Plain clicks preview the pull instead of navigating when set (the wide
   // /pulls layout); modified clicks still follow the link.
   onPreview?(pull: PullSummary): void;
+  // Warms the preview's data for the row the pointer rests on (after
+  // HOVER_PREFETCH_DELAY_MS, so sweeping across the list fetches nothing).
+  onPrefetch?(pull: PullSummary): void;
   pull: PullSummary;
   // The pull shown in the preview pane.
   selected?: boolean;
   // Hide the owner/repo label inside sections already scoped to one repo.
   showRepo?: boolean;
 }
+
+// How long the pointer rests on a row before its preview data is
+// prefetched: long enough to skip rows the pointer only passes over.
+const HOVER_PREFETCH_DELAY_MS = 150;
 
 // Whether a click asked the browser for something other than a plain
 // same-tab navigation (new tab/window, download, middle button).
@@ -101,6 +108,7 @@ export const PullRequestRow = memo(function PullRequestRow({
   muted = false,
   nested = false,
   onOpen,
+  onPrefetch,
   onPreview,
   onToggleChecked,
   onToggleGroup,
@@ -112,6 +120,25 @@ export const PullRequestRow = memo(function PullRequestRow({
 }: PullRequestRowProps) {
   const stateDisplay = PULL_STATE_DISPLAY[pull.state];
   const StateIcon = stateDisplay.Icon;
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelPrefetch = () => {
+    if (hoverTimer.current != null) {
+      clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+  };
+  useEffect(() => cancelPrefetch, []);
+  // The previewed row's data is already loaded.
+  const schedulePrefetch =
+    onPrefetch == null || selected
+      ? undefined
+      : () => {
+          cancelPrefetch();
+          hoverTimer.current = setTimeout(() => {
+            hoverTimer.current = null;
+            onPrefetch(pull);
+          }, HOVER_PREFETCH_DELAY_MS);
+        };
   return (
     <div
       className={cn(
@@ -152,7 +179,11 @@ export const PullRequestRow = memo(function PullRequestRow({
         href={pull.viewerPath}
         aria-current={selected ? 'true' : undefined}
         data-pull-row=""
+        onPointerEnter={schedulePrefetch}
+        onPointerLeave={cancelPrefetch}
         onClick={(event) => {
+          // A click within the hover delay already loads the pull.
+          cancelPrefetch();
           if (onPreview != null && !isModifiedClick(event)) {
             event.preventDefault();
             onPreview(pull);

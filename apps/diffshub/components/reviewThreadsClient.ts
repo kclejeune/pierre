@@ -1,6 +1,7 @@
 'use client';
 
 import { readStoredGitHubToken } from './githubSession';
+import { prefetchOnce, takeOrLoad } from '@/lib/prefetchStore';
 import {
   buildHeaders,
   pullParams,
@@ -55,10 +56,33 @@ export async function fetchReviewThreadStates(
   token: string,
   signal?: AbortSignal
 ): Promise<Map<number, PullReviewThreadState>> {
-  const payload = await requestJSON(`/api/review-threads?${pullParams(pull)}`, {
-    headers: buildHeaders(token),
-    signal,
-  });
+  const url = reviewThreadsURL(pull);
+  const payload = await takeOrLoad(url, token, () =>
+    requestJSON(url, { headers: buildHeaders(token), signal })
+  );
+  return parseReviewThreadStates(payload);
+}
+
+// Starts fetchReviewThreadStates's read ahead of need (see
+// lib/prefetchStore). The raw payload is held, so each read parses its own
+// Map.
+export function prefetchReviewThreadStates(
+  pull: PullRequestRef,
+  token: string
+): void {
+  const url = reviewThreadsURL(pull);
+  prefetchOnce(url, token, () =>
+    requestJSON(url, { headers: buildHeaders(token) })
+  );
+}
+
+function reviewThreadsURL(pull: PullRequestRef): string {
+  return `/api/review-threads?${pullParams(pull)}`;
+}
+
+function parseReviewThreadStates(
+  payload: unknown
+): Map<number, PullReviewThreadState> {
   const states = new Map<number, PullReviewThreadState>();
   for (const [rootId, value] of Object.entries(
     asRecord(asRecord(payload)?.threads) ?? {}

@@ -15,10 +15,17 @@ import { Button } from './Button';
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
 import { readStoredGitHubToken } from './githubSession';
 import { PullDetailsPanel, usePullDetailsModel } from './PullDetailsControl';
-import { fetchReviewThreadStates } from './reviewThreadsClient';
+import {
+  fetchReviewThreadStates,
+  prefetchReviewThreadStates,
+} from './reviewThreadsClient';
 import { usePullInfo } from './usePullInfo';
 import { cn } from '@/lib/cn';
-import { pullKey, type PullSummary } from '@/lib/githubPullSummaries';
+import {
+  pullKey,
+  pullRequestRef,
+  type PullSummary,
+} from '@/lib/githubPullSummaries';
 import {
   authorSearchName,
   isAuthorMuted,
@@ -26,6 +33,10 @@ import {
   mutedAuthorLabel,
 } from '@/lib/mutedAuthors';
 import type { PullRequestRef } from '@/lib/pullCommentsClient';
+import {
+  fetchPullInfo,
+  prefetchPullDetailsSupplement,
+} from '@/lib/pullInfoClient';
 import type { ConversationCounts } from '@/lib/pullOverview';
 
 // The pane's outer frame: the full height of its grid row beside the list
@@ -36,6 +47,26 @@ const PANE_CLASS =
 function getStoredToken(): string | undefined {
   const token = readStoredGitHubToken();
   return token === '' ? undefined : token;
+}
+
+// Starts the requests the preview pane makes for `pull` (its info, then the
+// details supplement for its head, and its review thread states), so
+// selecting it shows the details without waiting on GitHub. The pane's
+// fetchers pick the responses up from lib/prefetchStore; errors are left for
+// the pane's own fetch to retry and report.
+export function prefetchPullPreview(pull: PullSummary) {
+  const pullRequest = pullRequestRef(pull);
+  const token = getStoredToken();
+  // A plain fetchPullInfo read warms the browser cache (/api/pull-info is
+  // HTTP-cacheable), and its head names the supplement to prefetch.
+  fetchPullInfo(pullRequest, token)
+    .then((info) =>
+      prefetchPullDetailsSupplement(pullRequest, info.headSha, token)
+    )
+    .catch(() => undefined);
+  if (token != null) {
+    prefetchReviewThreadStates(pullRequest, token);
+  }
 }
 
 // The /pulls preview pane for wide screens: the selected pull's overview
@@ -149,13 +180,11 @@ function LoadedPreview({
   tokenVersion: number;
 }) {
   const { webURL } = useGitHubEnvironment();
+  // Keyed on the ref's fields, not the summary object a refetch replaces.
+  const { number, owner, repo } = pull;
   const pullRequest = useMemo(
-    (): PullRequestRef => ({
-      number: String(pull.number),
-      owner: pull.owner,
-      repo: pull.repo,
-    }),
-    [pull.number, pull.owner, pull.repo]
+    () => pullRequestRef({ number, owner, repo }),
+    [number, owner, repo]
   );
   // Module-level, so its identity is stable across renders.
   const getGitHubToken = getStoredToken;

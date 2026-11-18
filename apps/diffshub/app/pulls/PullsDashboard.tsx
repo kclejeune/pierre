@@ -44,7 +44,10 @@ import {
 import { GitHubTokenControl } from '@/components/GitHubTokenControl';
 import { PullBatchBar, usePullBatch } from '@/components/PullBatchBar';
 import { PullFilterMenus } from '@/components/PullFilterMenus';
-import { PullPreviewPane } from '@/components/PullPreviewPane';
+import {
+  prefetchPullPreview,
+  PullPreviewPane,
+} from '@/components/PullPreviewPane';
 import { PullQueryBar } from '@/components/PullQueryBar';
 import { PullQuickLook } from '@/components/PullQuickLook';
 import { PullRequestRow } from '@/components/PullRequestRow';
@@ -107,6 +110,9 @@ import {
 } from '@/lib/pullSearchQuery';
 import { recordRecentDiff } from '@/lib/recentDiffs';
 import { recordRecentRepo } from '@/lib/recentRepos';
+
+// How long the preview rests on a pull before its neighbors are prefetched.
+const NEIGHBOR_PREFETCH_DELAY_MS = 150;
 
 export function PullsDashboard() {
   const tokenState = useGitHubToken();
@@ -240,6 +246,33 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
       }))
     );
   }, []);
+
+  // J/K move the preview one row at a time, so the rows on either side of
+  // the previewed pull are the likeliest next selections: their data is
+  // prefetched once the preview settles (lib/prefetchStore). The settle
+  // delay skips rows a held J only passes through, and the pull the
+  // preview just left is skipped, since the pane already loaded it.
+  const lastPreviewKey = useRef<string | null>(null);
+  useEffect(() => {
+    const cameFrom = lastPreviewKey.current;
+    lastPreviewKey.current = preview == null ? null : pullKey(preview);
+    if (preview == null) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      const rows = queueRef.current;
+      const index = rows.findIndex((row) => pullKey(row) === pullKey(preview));
+      if (index === -1) {
+        return;
+      }
+      for (const neighbor of [rows[index + 1], rows[index - 1]]) {
+        if (neighbor != null && pullKey(neighbor) !== cameFrom) {
+          prefetchPullPreview(neighbor);
+        }
+      }
+    }, NEIGHBOR_PREFETCH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [preview]);
 
   // Opens the quick look on `pull`, which also becomes the previewed pull
   // (the list's selection follows the quick look as it steps).
@@ -1020,6 +1053,7 @@ function PullList({
               selectionLocked={batch.running != null}
               showRepo={showRepo}
               onOpen={onOpen}
+              onPrefetch={onPreview == null ? undefined : prefetchPullPreview}
               onPreview={onPreview}
               onToggleChecked={selection.toggleRow}
               onToggleGroup={toggleGroup}

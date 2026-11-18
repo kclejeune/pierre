@@ -5,6 +5,7 @@
 // page's query bar.
 
 import { includesName } from './nameList';
+import type { PullRequestRef } from './pullCommentsClient';
 import type { PullLabel } from './pullInfoClient';
 import { parseLabels } from './pullLabels';
 import {
@@ -102,6 +103,13 @@ export function pullKey(
   pull: Pick<PullSummary, 'number' | 'owner' | 'repo'>
 ): string {
   return `${pull.owner}/${pull.repo}#${pull.number}`;
+}
+
+// The pull as the pull-request API clients address it.
+export function pullRequestRef(
+  pull: Pick<PullSummary, 'number' | 'owner' | 'repo'>
+): PullRequestRef {
+  return { number: String(pull.number), owner: pull.owner, repo: pull.repo };
 }
 
 // "anyone" drops the involvement terms entirely: every pull matching the rest

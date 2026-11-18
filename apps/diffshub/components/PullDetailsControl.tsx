@@ -8,6 +8,7 @@ import {
   IconMerged,
   IconMinus,
   IconPencil,
+  IconPlus,
   IconX,
 } from '@pierre/icons';
 import {
@@ -87,6 +88,9 @@ import { toastError } from '@/lib/toastRequestError';
 import type { DiffsHubDiffStats } from '@/lib/types';
 
 interface PullDetailsControlProps {
+  // Extra classes for the trigger button (the header's PR group restyles
+  // it as a segment).
+  className?: string;
   // Whether the viewer has a token; merging always needs one.
   canWrite: boolean;
   // Review conversations on the loaded diff, resolved vs total; null until
@@ -315,6 +319,7 @@ export function usePullDetailsModel({
 // PullDetailsPanel).
 export function PullDetailsControl({
   canWrite,
+  className,
   conversations,
   diffStats,
   getGitHubToken,
@@ -348,16 +353,18 @@ export function PullDetailsControl({
           aria-label={`Pull request details: ${model.details.title}`}
           className={cn(
             CHROME_ICON_BUTTON_CLASS,
-            'w-auto max-w-80 min-w-0 gap-1.5 px-2'
+            'w-auto max-w-80 min-w-0 gap-1.5 px-2',
+            className
           )}
         >
           <PullStateBadge details={model.details} iconOnly />
-          {/* The title truncates harder as the header narrows and drops out
-              below lg, where the URL beside the chip already names the pull
-              and the state icon carries it. */}
+          {/* The title truncates harder as the header narrows; below lg the
+              chip falls back to the pull's number, so the state icon never
+              stands alone as an unexplained glyph. */}
           <span className="min-w-0 truncate max-lg:hidden lg:max-w-[18ch] xl:max-w-none">
             {model.details.title}
           </span>
+          <span className="tabular-nums lg:hidden">#{pullRequest.number}</span>
           {model.editDraft != null && (
             <IconPencil
               aria-label="Unsaved edits"
@@ -448,6 +455,19 @@ export function PullDetailsPanel({
     </p>
   );
   const editing = model.editDraft != null;
+  // Draft, close, and reopen render beside the merge button, in the same
+  // action cluster, so the next step for a draft (Ready for review) sits
+  // where the eye goes for "what can I do with this pull".
+  const stateActions = model.showStateActions ? (
+    <PullStateActions
+      details={model.details}
+      getGitHubToken={getGitHubToken}
+      onUpdated={(updated) =>
+        onDetailsEdited(pullRequest, withoutLabels(updated))
+      }
+      pullRequest={pullRequest}
+    />
+  ) : null;
   return (
     // A size container: once the panel is wider than 48rem (the /pulls
     // preview on large screens; never the 720px popover), labels and
@@ -623,7 +643,7 @@ export function PullDetailsPanel({
             footerSurfaceClassName
           )}
         >
-          {model.showMergeControls && (
+          {model.showMergeControls ? (
             <MergeCapabilitySection
               baseRef={pullInfo?.baseRef}
               capabilities={model.supplementalValue?.mergeCapabilities ?? null}
@@ -653,17 +673,10 @@ export function PullDetailsPanel({
                 onMerged();
               }}
               pullRequest={pullRequest}
+              secondaryActions={stateActions}
             />
-          )}
-          {model.showStateActions && (
-            <PullStateActions
-              details={model.details}
-              getGitHubToken={getGitHubToken}
-              onUpdated={(updated) =>
-                onDetailsEdited(pullRequest, withoutLabels(updated))
-              }
-              pullRequest={pullRequest}
-            />
+          ) : (
+            <FooterActionRow secondary={stateActions} />
           )}
         </div>
       )}
@@ -683,30 +696,33 @@ function MergeCapabilitySection({
   mergeQueue: PullMergeQueueStatus | null;
   onMergeQueueChange(status: PullMergeQueueStatus | null): void;
 } & Omit<ComponentProps<typeof MergeControls>, 'capabilities'>) {
-  if (loading) {
+  const message = loading
+    ? 'Checking merge permissions…'
+    : capabilities == null
+      ? 'Merge permissions could not be loaded. Open this pull request on GitHub to merge it.'
+      : !capabilities.canMerge
+        ? 'Your GitHub token does not have permission to merge this pull request.'
+        : mergeQueue == null && capabilities.methods.length === 0
+          ? 'This repository does not expose a direct merge method. Use GitHub for repository-specific merge rules.'
+          : null;
+  // (`capabilities == null` always has a message; the check narrows it.)
+  if (message != null || capabilities == null) {
     return (
-      <p className="text-muted-foreground text-xs">
-        Checking merge permissions…
-      </p>
-    );
-  }
-  if (capabilities == null) {
-    return (
-      <p className="text-muted-foreground text-xs">
-        Merge permissions could not be loaded. Open this pull request on GitHub
-        to merge it.
-      </p>
-    );
-  }
-  if (!capabilities.canMerge) {
-    return (
-      <p className="text-muted-foreground text-xs">
-        Your GitHub token does not have permission to merge this pull request.
-      </p>
+      <FooterActionRow
+        lead={<p className="text-muted-foreground text-xs">{message}</p>}
+        secondary={controls.secondaryActions}
+      />
     );
   }
   if (mergeQueue != null) {
-    const { baseRef, details, getGitHubToken, headSha, pullRequest } = controls;
+    const {
+      baseRef,
+      details,
+      getGitHubToken,
+      headSha,
+      pullRequest,
+      secondaryActions,
+    } = controls;
     return (
       <MergeQueueControls
         baseRef={baseRef}
@@ -715,19 +731,35 @@ function MergeCapabilitySection({
         headSha={headSha}
         onStatusChange={onMergeQueueChange}
         pullRequest={pullRequest}
+        secondaryActions={secondaryActions}
         status={mergeQueue}
       />
     );
   }
-  if (capabilities.methods.length === 0) {
-    return (
-      <p className="text-muted-foreground text-xs">
-        This repository does not expose a direct merge method. Use GitHub for
-        repository-specific merge rules.
-      </p>
-    );
-  }
   return <MergeControls {...controls} capabilities={capabilities} />;
+}
+
+// The pinned footer's one row layout, shared by every merge state: a lead
+// (merge-method picker or status line) on the left, then the state actions
+// (draft, close) and the primary merge button clustered on the right.
+function FooterActionRow({
+  lead,
+  primary,
+  secondary,
+}: {
+  lead?: ReactNode;
+  primary?: ReactNode;
+  secondary?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      {lead}
+      <span className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
+        {secondary}
+        {primary}
+      </span>
+    </div>
+  );
 }
 
 interface PullEditDraft {
@@ -873,7 +905,8 @@ function PullEditForm({
 }
 
 // Closing asks first because it notifies participants. Draft toggles only apply
-// to open pulls.
+// to open pulls. On a draft, Ready for review is the solid button: merging is
+// blocked until it's pressed, so it's the next step.
 function PullStateActions({
   details,
   getGitHubToken,
@@ -934,13 +967,28 @@ function PullStateActions({
       />
     );
   }
+  // A fragment: the footer's FooterActionRow owns the cluster layout.
   return (
-    <div className="flex flex-wrap items-center justify-end gap-1.5">
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={pending != null}
+        className={isOpen ? 'text-red-600 dark:text-red-400' : undefined}
+        onClick={() => (isOpen ? setConfirmingClose(true) : toggleState())}
+      >
+        {pending === 'state'
+          ? 'Updating…'
+          : isOpen
+            ? 'Close pull request'
+            : 'Reopen pull request'}
+      </Button>
       {isOpen && (
         <Button
           type="button"
-          variant="outline"
-          size="xs"
+          variant={details.draft ? 'default' : 'outline'}
+          size="sm"
           blockedReason={draftBlocked}
           disabled={pending != null}
           onClick={() =>
@@ -958,21 +1006,7 @@ function PullStateActions({
               : 'Convert to draft'}
         </Button>
       )}
-      <Button
-        type="button"
-        variant="outline"
-        size="xs"
-        disabled={pending != null}
-        className={isOpen ? 'text-red-500' : undefined}
-        onClick={() => (isOpen ? setConfirmingClose(true) : toggleState())}
-      >
-        {pending === 'state'
-          ? 'Updating…'
-          : isOpen
-            ? 'Close pull request'
-            : 'Reopen pull request'}
-      </Button>
-    </div>
+    </>
   );
 }
 
@@ -1023,8 +1057,31 @@ function PullLabels({
           label.name.toLowerCase().includes(query)
         )
       : [];
+  // Opens the picker. With labels it's a quiet "Edit" in the heading; with
+  // none it's an outlined "Add labels" where the chips would be.
+  const empty = labels.length === 0;
+  const pickerToggle = canEdit && (
+    <Button
+      type="button"
+      variant={empty ? 'outline' : 'ghost'}
+      size="xs"
+      aria-expanded={pickerOpen}
+      onClick={() => setPickerOpen(!pickerOpen)}
+    >
+      {pickerOpen ? (
+        'Done'
+      ) : empty ? (
+        <>
+          <IconPlus className="size-3" />
+          Add labels
+        </>
+      ) : (
+        'Edit'
+      )}
+    </Button>
+  );
   return (
-    <div className="flex flex-col gap-1.5">
+    <PanelSection action={!empty && pickerToggle} heading="Labels">
       <div className="flex flex-wrap items-center gap-1">
         {labels.map((label) => (
           <span
@@ -1046,16 +1103,7 @@ function PullLabels({
             )}
           </span>
         ))}
-        {canEdit && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            onClick={() => setPickerOpen(!pickerOpen)}
-          >
-            {pickerOpen ? 'Done' : labels.length === 0 ? 'Add labels' : 'Edit'}
-          </Button>
-        )}
+        {empty && pickerToggle}
       </div>
       {pickerOpen && (
         <div
@@ -1126,7 +1174,7 @@ function PullLabels({
           )}
         </div>
       )}
-    </div>
+    </PanelSection>
   );
 }
 
@@ -1139,16 +1187,23 @@ function withoutLabels({
   return fields;
 }
 
+// A titled block of the panel. `action` sits at the heading's right edge
+// (GitHub's sidebar puts each section's edit control there).
 function PanelSection({
+  action,
   children,
   heading,
 }: {
+  action?: ReactNode;
   children: ReactNode;
   heading: string;
 }) {
   return (
     <section className="flex flex-col gap-1.5">
-      <h4 className="text-muted-foreground text-xs font-medium">{heading}</h4>
+      <div className="flex min-h-5 items-center justify-between gap-2">
+        <h4 className="text-muted-foreground text-xs font-medium">{heading}</h4>
+        {action}
+      </div>
       {children}
     </section>
   );
@@ -1350,6 +1405,7 @@ function MergeQueueControls({
   headSha,
   onStatusChange,
   pullRequest,
+  secondaryActions,
   status,
 }: {
   baseRef: string | undefined;
@@ -1358,6 +1414,8 @@ function MergeQueueControls({
   headSha: string | undefined;
   onStatusChange(status: PullMergeQueueStatus | null): void;
   pullRequest: PullRequestRef;
+  // Draft/close buttons, placed in the same cluster as the queue button.
+  secondaryActions?: ReactNode;
   status: PullMergeQueueStatus;
 }) {
   const blockedReason = useMergeBlockedReason(details);
@@ -1372,56 +1430,66 @@ function MergeQueueControls({
   const { entry } = status;
   if (entry != null || status.pendingAutoMerge) {
     return (
-      <div className="flex items-center justify-between gap-2 text-xs">
-        <span>
-          {entry != null ? (
-            <>
-              #{entry.position} in the <BaseBranchLabel baseRef={baseRef} />{' '}
-              merge queue (
-              {QUEUE_ENTRY_STATE_LABELS[entry.state] ??
-                entry.state.toLowerCase()}
-              ).
-            </>
-          ) : (
-            <>
-              Joins the <BaseBranchLabel baseRef={baseRef} /> merge queue once
-              required checks pass.
-            </>
-          )}
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          disabled={busy}
-          onClick={() =>
-            queueAction(entry != null ? 'dequeue' : 'cancel-auto-merge')
-          }
-        >
-          {entry != null ? 'Remove from queue' : 'Cancel'}
-        </Button>
-      </div>
+      <FooterActionRow
+        lead={
+          <span className="text-xs">
+            {entry != null ? (
+              <>
+                #{entry.position} in the <BaseBranchLabel baseRef={baseRef} />{' '}
+                merge queue (
+                {QUEUE_ENTRY_STATE_LABELS[entry.state] ??
+                  entry.state.toLowerCase()}
+                ).
+              </>
+            ) : (
+              <>
+                Joins the <BaseBranchLabel baseRef={baseRef} /> merge queue once
+                required checks pass.
+              </>
+            )}
+          </span>
+        }
+        secondary={secondaryActions}
+        primary={
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            onClick={() =>
+              queueAction(entry != null ? 'dequeue' : 'cancel-auto-merge')
+            }
+          >
+            {entry != null ? 'Remove from queue' : 'Cancel auto-merge'}
+          </Button>
+        }
+      />
     );
   }
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-muted-foreground text-xs">
-          <BaseBranchLabel baseRef={baseRef} /> merges through a merge queue.
-        </span>
-        <Button
-          type="button"
-          variant="default"
-          size="sm"
-          disabled={blockedReason != null || busy}
-          className="bg-emerald-600 hover:bg-emerald-700"
-          onClick={() => queueAction('enqueue')}
-        >
-          <IconMerged className="size-3.5" />
-          {busy ? 'Queueing…' : 'Merge when ready'}
-        </Button>
-      </div>
+      <FooterActionRow
+        lead={
+          <span className="text-muted-foreground text-xs">
+            <BaseBranchLabel baseRef={baseRef} /> merges through a merge queue.
+          </span>
+        }
+        secondary={secondaryActions}
+        primary={
+          <Button
+            type="button"
+            variant="default"
+            size="sm"
+            disabled={blockedReason != null || busy}
+            className="bg-emerald-600 hover:bg-emerald-700"
+            onClick={() => queueAction('enqueue')}
+          >
+            <IconMerged className="size-3.5" />
+            {busy ? 'Queueing…' : 'Merge when ready'}
+          </Button>
+        }
+      />
       {blockedReason != null && (
         <p className="text-muted-foreground text-xs">{blockedReason}</p>
       )}
@@ -1440,6 +1508,7 @@ function MergeControls({
   headSha,
   onMerged,
   pullRequest,
+  secondaryActions,
 }: {
   baseRef: string | undefined;
   capabilities: PullMergeCapabilities;
@@ -1448,6 +1517,8 @@ function MergeControls({
   headSha: string | undefined;
   onMerged(): void;
   pullRequest: PullRequestRef;
+  // Draft/close buttons, placed in the same cluster as the merge button.
+  secondaryActions?: ReactNode;
 }) {
   const [method, setMethod] = useState<PullMergeMethod>(
     capabilities.methods[0] ?? 'merge'
@@ -1480,30 +1551,35 @@ function MergeControls({
   }
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <ButtonGroup
-          size="sm"
-          value={method}
-          onValueChange={(value) => setMethod(value as PullMergeMethod)}
-        >
-          {capabilities.methods.map((value) => (
-            <ButtonGroupItem key={value} value={value}>
-              {MERGE_METHOD_LABELS[value]}
-            </ButtonGroupItem>
-          ))}
-        </ButtonGroup>
-        <Button
-          type="button"
-          variant="default"
-          size="sm"
-          disabled={blockedReason != null || isMerging || confirming}
-          className="bg-emerald-600 hover:bg-emerald-700"
-          onClick={() => setConfirming(true)}
-        >
-          <IconMerged className="size-3.5" />
-          {isMerging ? 'Merging…' : 'Merge'}
-        </Button>
-      </div>
+      <FooterActionRow
+        lead={
+          <ButtonGroup
+            size="sm"
+            value={method}
+            onValueChange={(value) => setMethod(value as PullMergeMethod)}
+          >
+            {capabilities.methods.map((value) => (
+              <ButtonGroupItem key={value} value={value}>
+                {MERGE_METHOD_LABELS[value]}
+              </ButtonGroupItem>
+            ))}
+          </ButtonGroup>
+        }
+        secondary={secondaryActions}
+        primary={
+          <Button
+            type="button"
+            variant="default"
+            size="sm"
+            disabled={blockedReason != null || isMerging || confirming}
+            className="bg-emerald-600 hover:bg-emerald-700"
+            onClick={() => setConfirming(true)}
+          >
+            <IconMerged className="size-3.5" />
+            {isMerging ? 'Merging…' : 'Merge'}
+          </Button>
+        }
+      />
       {confirming && (
         <div className="flex items-center justify-between gap-2 text-xs">
           <span>

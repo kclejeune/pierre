@@ -18,6 +18,11 @@ import { toast } from 'sonner';
 
 import { AppPermissionsProvider } from './AppPermissionsContext';
 import {
+  CHROME_SEGMENT_CLASS,
+  CHROME_SEGMENT_DIVIDER_CLASS,
+  CHROME_SEGMENT_ITEM_CLASS,
+} from './chromeButtonStyles';
+import {
   type CommandPaletteContextValue,
   type PaletteRunnableEntry,
   useCommandPaletteContext,
@@ -55,6 +60,7 @@ import {
   docsThemeCatalog,
   themeController,
 } from '@/components/themeController';
+import { cn } from '@/lib/cn';
 import {
   compileCollapsePatterns,
   loadCollapsePatternsText,
@@ -1029,22 +1035,34 @@ function ReviewUIInner({
             reviewControl={
               pullRequest != null ? (
                 <>
-                  <PullCommitRangePicker
-                    getGitHubToken={getGitHubToken}
-                    githubTokenVersion={githubTokenVersion}
-                    pullRequest={pullRequest}
-                  />
-                  <PullDetailsControl
-                    canWrite={hasGitHubToken}
-                    conversations={conversationCounts}
-                    diffStats={diffStats}
-                    getGitHubToken={getGitHubToken}
-                    githubTokenVersion={githubTokenVersion}
-                    onDetailsEdited={mergePullDetails}
-                    onMerged={retryLoad}
-                    pullInfo={pullInfo}
-                    pullRequest={pullRequest}
-                  />
+                  {/* The pull and its commit range share one outlined
+                      segment, so at narrow widths (title gone, Commits
+                      label gone) the two still read as "this pull
+                      request" rather than loose icons. */}
+                  <span className={cn(CHROME_SEGMENT_CLASS, 'mr-1')}>
+                    <PullDetailsControl
+                      className={CHROME_SEGMENT_ITEM_CLASS}
+                      canWrite={hasGitHubToken}
+                      conversations={conversationCounts}
+                      diffStats={diffStats}
+                      getGitHubToken={getGitHubToken}
+                      githubTokenVersion={githubTokenVersion}
+                      onDetailsEdited={mergePullDetails}
+                      onMerged={retryLoad}
+                      pullInfo={pullInfo}
+                      pullRequest={pullRequest}
+                    />
+                    <span
+                      aria-hidden
+                      className={CHROME_SEGMENT_DIVIDER_CLASS}
+                    />
+                    <PullCommitRangePicker
+                      className={CHROME_SEGMENT_ITEM_CLASS}
+                      getGitHubToken={getGitHubToken}
+                      githubTokenVersion={githubTokenVersion}
+                      pullRequest={pullRequest}
+                    />
+                  </span>
                   {showConflicts && (
                     <PullConflictControl
                       blockedReason={editSession.commitBlockedReason}

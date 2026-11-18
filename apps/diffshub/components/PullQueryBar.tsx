@@ -1,13 +1,30 @@
 'use client';
 
 import { IconChevronSm, IconX } from '@pierre/icons';
-import { useEffect, useRef } from 'react';
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
+import { FooterHint } from './CommandPalette';
 import { RepoName, ScopeIcon } from './RepoName';
 import { ShortcutHint } from './ShortcutHint';
+import { useRepoLabels } from './useRepoLabels';
 import { useResettableState } from './useResettableState';
 import { cn } from '@/lib/cn';
+import { splitRepoName } from '@/lib/pinnedRepos';
 import { isEditableEventTarget } from '@/lib/platform';
+import {
+  applyQuerySuggestion,
+  getQuerySuggestions,
+  type QuerySuggestion,
+  queryWordAtCaret,
+} from '@/lib/pullQuerySuggestions';
 import { DEFAULT_QUERY_TEXT, type PullScope } from '@/lib/pullScopes';
 import {
   KNOWN_PULL_QUALIFIERS,
@@ -71,12 +88,19 @@ export function PullQueryBar({
     }
   };
   useEffect(syncScroll, [draft]);
+  const completion = useQueryCompletion({
+    draft,
+    inputRef,
+    onAccepted: syncScroll,
+    scope,
+    setDraft,
+  });
 
   return (
     <form
       role="search"
       aria-label="Search pull requests"
-      className="bg-background focus-within:border-ring focus-within:ring-ring/40 flex h-10 min-w-0 items-stretch rounded-lg border shadow-xs transition-[border-color,box-shadow] focus-within:ring-[3px]"
+      className="bg-background focus-within:border-ring focus-within:ring-ring/40 relative flex h-10 min-w-0 items-stretch rounded-lg border shadow-xs transition-[border-color,box-shadow] focus-within:ring-[3px]"
       onSubmit={(event) => {
         event.preventDefault();
         onApply(draft.trim());
@@ -94,6 +118,11 @@ export function PullQueryBar({
         </div>
         <input
           ref={inputRef}
+          role="combobox"
+          aria-activedescendant={completion.activeId}
+          aria-autocomplete="list"
+          aria-controls={completion.listId}
+          aria-expanded={completion.suggestions != null}
           aria-label="GitHub search qualifiers"
           autoCapitalize="off"
           autoComplete="off"
@@ -102,15 +131,25 @@ export function PullQueryBar({
           placeholder="Filter with GitHub search, e.g. label:bug author:octocat"
           spellCheck={false}
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => completion.setCaret(null)}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            completion.onEdit(event.target.selectionStart);
+          }}
           onKeyDown={(event) => {
+            if (completion.onKeyDown(event)) {
+              return;
+            }
             if (event.key === 'Escape' && dirty) {
               event.preventDefault();
               setDraft(appliedText);
             }
           }}
           onScroll={syncScroll}
-          onSelect={syncScroll}
+          onSelect={(event) => {
+            syncScroll();
+            completion.setCaret(event.currentTarget.selectionStart);
+          }}
         />
       </div>
       <div className="flex shrink-0 items-center gap-1 pr-2">
@@ -138,7 +177,213 @@ export function PullQueryBar({
           </button>
         )}
       </div>
+      {completion.suggestions != null && (
+        <SuggestionList
+          activeIndex={completion.activeIndex}
+          id={completion.listId}
+          items={completion.suggestions.items}
+          optionId={completion.optionId}
+          onAccept={completion.accept}
+          onHover={completion.setActiveIndex}
+        />
+      )}
     </form>
+  );
+}
+
+// Autocomplete state for the search bar: where the caret is (null while the
+// input is blurred), which suggestion arrow keys have highlighted, and
+// whether Escape closed the list until the next edit. Repo labels are only
+// fetched once a `label:` value is being typed in a single-repo scope.
+function useQueryCompletion({
+  draft,
+  inputRef,
+  onAccepted,
+  scope,
+  setDraft,
+}: {
+  draft: string;
+  inputRef: RefObject<HTMLInputElement | null>;
+  // Runs after an accepted completion's caret is placed.
+  onAccepted(): void;
+  scope: PullScope;
+  setDraft(text: string): void;
+}) {
+  const [caret, setCaret] = useState<number | null>(null);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [dismissed, setDismissed] = useState(false);
+  const listId = useId();
+
+  const typingLabel =
+    caret != null &&
+    /^-?label:/.test(queryWordAtCaret(draft, caret)?.typed ?? '');
+  const labelRepo = useMemo(
+    () =>
+      typingLabel && scope.kind === 'repo' ? splitRepoName(scope.repo) : null,
+    [scope, typingLabel]
+  );
+  const repoLabels = useRepoLabels(labelRepo);
+  const labels = useMemo(
+    () =>
+      repoLabels?.kind === 'ready'
+        ? repoLabels.labels.map((label) => label.name)
+        : undefined,
+    [repoLabels]
+  );
+
+  const suggestions = useMemo(
+    () =>
+      caret == null || dismissed
+        ? null
+        : getQuerySuggestions(draft, caret, { labels, now: new Date() }),
+    [caret, dismissed, draft, labels]
+  );
+  const itemCount = suggestions?.items.length ?? 0;
+  const active = activeIndex < itemCount ? activeIndex : -1;
+  const optionId = (index: number) => `${listId}-option-${index}`;
+
+  // After any text change: track the new caret, clear the highlight, and
+  // let a dismissed list come back.
+  const onEdit = (nextCaret: number | null) => {
+    setCaret(nextCaret);
+    setActiveIndex(-1);
+    setDismissed(false);
+  };
+
+  // Swaps the word under the caret for the chosen completion and puts the
+  // caret after it, so a key's values (or the next qualifier) can follow.
+  const accept = (item: QuerySuggestion) => {
+    if (suggestions == null) {
+      return;
+    }
+    const next = applyQuerySuggestion(draft, suggestions, item);
+    setDraft(next.text);
+    onEdit(next.caret);
+    requestAnimationFrame(() => {
+      inputRef.current?.setSelectionRange(next.caret, next.caret);
+      onAccepted();
+    });
+  };
+
+  return {
+    accept,
+    activeId: active >= 0 ? optionId(active) : undefined,
+    activeIndex: active,
+    listId,
+    onEdit,
+    optionId,
+    setActiveIndex,
+    setCaret,
+    suggestions,
+    // Arrows move the highlight, Tab completes (the highlighted item or the
+    // first), Enter completes only a highlighted item so a plain Enter still
+    // searches, and Escape closes the list. Returns whether it handled the
+    // key, in which case the input's own handling should stop.
+    onKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): boolean {
+      if (suggestions == null || event.nativeEvent.isComposing) {
+        return false;
+      }
+      switch (event.key) {
+        case 'ArrowDown':
+        case 'ArrowUp': {
+          const step = event.key === 'ArrowDown' ? 1 : -1;
+          setActiveIndex(
+            active === -1 && step === -1
+              ? itemCount - 1
+              : (active + step + itemCount) % itemCount
+          );
+          break;
+        }
+        case 'Tab':
+          if (event.shiftKey) {
+            return false;
+          }
+          accept(suggestions.items[Math.max(active, 0)]);
+          break;
+        case 'Enter':
+          if (active === -1) {
+            return false;
+          }
+          accept(suggestions.items[active]);
+          break;
+        case 'Escape':
+          setDismissed(true);
+          break;
+        default:
+          return false;
+      }
+      event.preventDefault();
+      return true;
+    },
+  };
+}
+
+// The completion dropdown under the bar. Items keep the input focused on
+// press (mousedown is prevented) so clicking one reads like pressing Tab.
+function SuggestionList({
+  activeIndex,
+  id,
+  items,
+  onAccept,
+  onHover,
+  optionId,
+}: {
+  activeIndex: number;
+  id: string;
+  items: QuerySuggestion[];
+  onAccept(item: QuerySuggestion): void;
+  onHover(index: number): void;
+  optionId(index: number): string;
+}) {
+  return (
+    <div className="bg-popover text-popover-foreground absolute inset-x-0 top-full z-50 mt-1.5 overflow-hidden rounded-lg border shadow-lg">
+      <ul
+        id={id}
+        role="listbox"
+        aria-label="Search suggestions"
+        className="py-1"
+      >
+        {items.map((item, index) => {
+          const colon = item.text.indexOf(':');
+          return (
+            <li
+              key={item.text}
+              id={optionId(index)}
+              role="option"
+              aria-selected={index === activeIndex}
+              className={cn(
+                'flex cursor-pointer items-baseline gap-3 px-3 py-1.5',
+                index === activeIndex && 'bg-accent'
+              )}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                onAccept(item);
+              }}
+              onMouseEnter={() => onHover(index)}
+            >
+              <span className="min-w-0 truncate font-mono text-[13px]">
+                <span className="text-muted-foreground">
+                  {item.text.slice(0, colon + 1)}
+                </span>
+                <span className="text-sky-700 dark:text-sky-300">
+                  {item.text.slice(colon + 1)}
+                </span>
+              </span>
+              {item.detail != null && (
+                <span className="text-muted-foreground ml-auto shrink-0 truncate text-xs">
+                  {item.detail}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <div className="text-muted-foreground bg-muted/40 flex gap-3 border-t px-3 py-1.5 text-[11px]">
+        <FooterHint keys="⇥" label="Complete" />
+        <FooterHint keys="↑↓" label="Choose" />
+        <FooterHint keys="esc" label="Dismiss" />
+      </div>
+    </div>
   );
 }
 

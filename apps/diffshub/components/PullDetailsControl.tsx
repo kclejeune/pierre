@@ -275,6 +275,8 @@ export function PullDetailsControl({
     reviewers: approvalsCell,
   });
   const showMergeControls = details.state === 'open' && canWrite;
+  // Draft, close, and reopen share the merge controls' sticky footer.
+  const showStateActions = canEdit && details.state !== 'merged';
   // Unresolved review conversations, the one overview number worth showing
   // on the closed chip: it is what a reviewer acts on next. Only known once
   // resolution has loaded (`counted`).
@@ -383,41 +385,6 @@ export function PullDetailsControl({
             pullInfo={pullInfo}
           />
           <MergeStatusCard
-            actions={
-              showMergeControls ? (
-                <MergeCapabilitySection
-                  baseRef={pullInfo?.baseRef}
-                  capabilities={supplementalValue?.mergeCapabilities ?? null}
-                  details={details}
-                  getGitHubToken={getGitHubToken}
-                  headSha={headSha}
-                  loading={supplementLoading}
-                  mergeQueue={supplementalValue?.mergeQueue ?? null}
-                  // Applies only to the supplement the action started from: if
-                  // it reloaded meanwhile (say, a push moved the head), the
-                  // late response describes an old head and is dropped.
-                  onMergeQueueChange={(mergeQueue) =>
-                    setSupplement((current) =>
-                      current.kind === 'ready' &&
-                      current.value === supplementalValue
-                        ? {
-                            ...current,
-                            value: { ...current.value, mergeQueue },
-                          }
-                        : current
-                    )
-                  }
-                  onMerged={() => {
-                    // Marks the pull merged right away; the reloads that
-                    // follow confirm it.
-                    onDetailsEdited(pullRequest, { state: 'merged' });
-                    setOpen(false);
-                    onMerged();
-                  }}
-                  pullRequest={pullRequest}
-                />
-              ) : undefined
-            }
             approvals={approvalsCell}
             checks={checksCell}
             checksDetail={
@@ -510,15 +477,57 @@ export function PullDetailsControl({
               )}
             </PanelSection>
           )}
-          {canEdit && details.state !== 'merged' && (
-            <PullStateActions
-              details={details}
-              getGitHubToken={getGitHubToken}
-              onUpdated={(updated) =>
-                onDetailsEdited(pullRequest, withoutLabels(updated))
-              }
-              pullRequest={pullRequest}
-            />
+          {(showMergeControls || showStateActions) && (
+            // Pinned to the panel's bottom edge so the actions stay in reach
+            // while a long description scrolls; -mx/-mb span the panel's
+            // padding, and the popover background hides what scrolls under.
+            <div
+              className={`sticky bottom-0 -mx-3 -mb-3 flex flex-col gap-2 border-t ${annotationBorderColor} bg-[var(--diffshub-popover-bg,var(--color-popover))] px-3 py-2.5`}
+            >
+              {showMergeControls && (
+                <MergeCapabilitySection
+                  baseRef={pullInfo?.baseRef}
+                  capabilities={supplementalValue?.mergeCapabilities ?? null}
+                  details={details}
+                  getGitHubToken={getGitHubToken}
+                  headSha={headSha}
+                  loading={supplementLoading}
+                  mergeQueue={supplementalValue?.mergeQueue ?? null}
+                  // Applies only to the supplement the action started from: if
+                  // it reloaded meanwhile (say, a push moved the head), the
+                  // late response describes an old head and is dropped.
+                  onMergeQueueChange={(mergeQueue) =>
+                    setSupplement((current) =>
+                      current.kind === 'ready' &&
+                      current.value === supplementalValue
+                        ? {
+                            ...current,
+                            value: { ...current.value, mergeQueue },
+                          }
+                        : current
+                    )
+                  }
+                  onMerged={() => {
+                    // Marks the pull merged right away; the reloads that
+                    // follow confirm it.
+                    onDetailsEdited(pullRequest, { state: 'merged' });
+                    setOpen(false);
+                    onMerged();
+                  }}
+                  pullRequest={pullRequest}
+                />
+              )}
+              {showStateActions && (
+                <PullStateActions
+                  details={details}
+                  getGitHubToken={getGitHubToken}
+                  onUpdated={(updated) =>
+                    onDetailsEdited(pullRequest, withoutLabels(updated))
+                  }
+                  pullRequest={pullRequest}
+                />
+              )}
+            </div>
           )}
         </div>
       </DropdownMenuContent>
@@ -777,24 +786,20 @@ function PullStateActions({
     );
   if (confirmingClose) {
     return (
-      <div className={`border-t ${annotationBorderColor} pt-3`}>
-        <InlineConfirm
-          confirmLabel="Close pull request"
-          disabled={pending != null}
-          message={`Close #${pullRequest.number} without merging?`}
-          onCancel={() => setConfirmingClose(false)}
-          onConfirm={() => {
-            setConfirmingClose(false);
-            toggleState();
-          }}
-        />
-      </div>
+      <InlineConfirm
+        confirmLabel="Close pull request"
+        disabled={pending != null}
+        message={`Close #${pullRequest.number} without merging?`}
+        onCancel={() => setConfirmingClose(false)}
+        onConfirm={() => {
+          setConfirmingClose(false);
+          toggleState();
+        }}
+      />
     );
   }
   return (
-    <div
-      className={`flex flex-wrap items-center justify-end gap-1.5 border-t ${annotationBorderColor} pt-3`}
-    >
+    <div className="flex flex-wrap items-center justify-end gap-1.5">
       {isOpen && (
         <Button
           type="button"

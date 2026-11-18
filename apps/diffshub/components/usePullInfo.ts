@@ -24,6 +24,9 @@ interface UsePullInfoOptions {
 }
 
 interface UsePullInfoResult {
+  // The last fetch for the current pull failed (not aborted). The viewer
+  // chrome ignores it; the /pulls preview pane offers a retry.
+  loadFailed: boolean;
   pullInfo: PullInfo | null;
   // The pull's head sha, but only when the info was fetched for the current
   // viewer generation. `pullInfo` deliberately keeps the previous response
@@ -68,6 +71,7 @@ export function usePullInfo({
   // deciding staleness needs the full owner/repo/number ref. `forViewerKey`
   // is the viewer generation whose load fetched it.
   const [state, setState] = useState<PullInfoState | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const loadedViewerKey = useRef<number | undefined>(undefined);
   useEffect(() => {
     // Keep the current value while the same pull refetches (a reload or token
@@ -82,6 +86,7 @@ export function usePullInfo({
         ? current
         : null
     );
+    setLoadFailed(false);
     if (pullRequest == null || !tokenHydrated) {
       return;
     }
@@ -93,11 +98,15 @@ export function usePullInfo({
       loadedViewerKey.current == null || loadedViewerKey.current === viewerKey
         ? 'default'
         : 'reload';
+    // Set once the first response lands, so a failed mergeability re-read
+    // afterwards does not count as a failed load.
+    let loaded = false;
     fetchPullInfo(pullRequest, getGitHubToken(), controller.signal, cache)
       .then((info) => {
         if (controller.signal.aborted) {
           return;
         }
+        loaded = true;
         loadedViewerKey.current = viewerKey;
         setState({ forPull: pullRequest, forViewerKey: viewerKey, info });
         // GitHub computes mergeability lazily, and recomputes it after either
@@ -134,7 +143,11 @@ export function usePullInfo({
           );
         });
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!controller.signal.aborted && !loaded) {
+          setLoadFailed(true);
+        }
+      });
     return () => controller.abort();
   }, [
     getGitHubToken,
@@ -162,6 +175,7 @@ export function usePullInfo({
     [getGitHubToken]
   );
   return {
+    loadFailed,
     pullInfo: state?.info ?? null,
     viewerHeadSha:
       state?.forViewerKey === viewerKey ? state.info.headSha : undefined,

@@ -26,6 +26,7 @@ import { RepoPinStrip } from '@/components/RepoPinStrip';
 import { useGitHubToken } from '@/components/useGitHubToken';
 import { usePinnedRepos } from '@/components/usePinnedRepos';
 import { useRepoRefs } from '@/components/useRepoRefs';
+import { cn } from '@/lib/cn';
 import type { GitHubRepo } from '@/lib/githubDiffSource';
 import { isValidRepoName, splitRepoName } from '@/lib/pinnedRepos';
 import { recordRecentRepo } from '@/lib/recentRepos';
@@ -71,7 +72,7 @@ export function BrowseDashboard({ initialRepo }: BrowseDashboardProps) {
   useCommandPaletteContext(paletteContext);
 
   return (
-    <DashboardShell section="browse" tokenState={tokenState}>
+    <DashboardShell section="browse" tokenState={tokenState} width="medium">
       <RepoPicker selected={repo} onSelect={selectRepo} />
       {repo != null && tokenState.hydrated && (
         <section
@@ -206,7 +207,17 @@ function RepoRefsLists({
           field above to open it anyway.
         </SectionMessage>
       ) : (
-        <>
+        // Branches and tags sit side by side once there is room, so both
+        // lists show without scrolling past the other. A lone list keeps the
+        // full width.
+        <div
+          className={cn(
+            'grid gap-4 lg:items-start',
+            visibleBranches.length > 0 &&
+              visibleTags.length > 0 &&
+              'lg:grid-cols-2'
+          )}
+        >
           {visibleBranches.length > 0 && (
             <RefListCard
               defaultBranch={data.defaultBranch}
@@ -223,7 +234,7 @@ function RepoRefsLists({
               repo={repo}
             />
           )}
-        </>
+        </div>
       )}
       {data.truncated && (
         <p className="text-muted-foreground text-xs">
@@ -340,7 +351,7 @@ function RefListCard({
     <section className="space-y-3">
       <h3 className="text-sm font-medium">{heading}</h3>
       <div className={SECTION_CARD_CLASS}>
-        <div className="max-h-80 overflow-y-auto">
+        <div className="max-h-80 overflow-y-auto lg:max-h-[32rem]">
           {refs.map((ref) => (
             <div
               key={ref}

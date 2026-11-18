@@ -1,7 +1,15 @@
 'use client';
 
 import { IconCheck, IconChevronSm, IconPin } from '@pierre/icons';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { Button } from '@/components/Button';
 import { ButtonGroup, ButtonGroupItem } from '@/components/ButtonGroup';
@@ -27,6 +35,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/DropdownMenu';
 import { GitHubTokenControl } from '@/components/GitHubTokenControl';
+import { PullPreviewPane } from '@/components/PullPreviewPane';
 import { PullQueryBar } from '@/components/PullQueryBar';
 import { PullRequestRow } from '@/components/PullRequestRow';
 import { RepoPinStrip, ScopeChip } from '@/components/RepoPinStrip';
@@ -40,6 +49,7 @@ import {
 } from '@/components/useDashboardPulls';
 import { useGitHubToken } from '@/components/useGitHubToken';
 import { useLatestValueRef } from '@/components/useLatestValueRef';
+import { useMediaQuery } from '@/components/useMediaQuery';
 import { usePinnedRepos } from '@/components/usePinnedRepos';
 import { cn } from '@/lib/cn';
 import { GITHUB_APP_OWNER_FIX } from '@/lib/githubAppAccess';
@@ -50,7 +60,9 @@ import {
   PULL_INVOLVEMENTS,
   type PullAudience,
   type PullInvolvement,
+  type PullSummary,
 } from '@/lib/githubPullSummaries';
+import { isEditableEventTarget } from '@/lib/platform';
 import {
   audienceAnyoneAllowed,
   DEFAULT_QUERY_TEXT,
@@ -71,6 +83,7 @@ import {
   writePullSort,
   writePullStateFilter,
 } from '@/lib/pullSearchQuery';
+import { recordRecentDiff } from '@/lib/recentDiffs';
 import { recordRecentRepo } from '@/lib/recentRepos';
 
 export function PullsDashboard() {
@@ -79,11 +92,11 @@ export function PullsDashboard() {
   const modifier = useModifierKey();
 
   return (
-    <DashboardShell section="pulls" tokenState={tokenState}>
+    <DashboardShell section="pulls" tokenState={tokenState} width="full">
       {!hydrated ? null : hasToken ? (
         <SignedInDashboard tokenVersion={tokenVersion} />
       ) : (
-        <div className={SECTION_CARD_CLASS}>
+        <div className={cn(SECTION_CARD_CLASS, 'max-w-3xl')}>
           <p className="text-muted-foreground border-b px-4 py-3 text-sm">
             Sign in with GitHub to search pull requests across your
             repositories, or narrow to one repository with{' '}
@@ -140,10 +153,30 @@ function usePullsPageState() {
   return [state, update] as const;
 }
 
+// Matches Tailwind's `lg` breakpoint (laptops and up): from here a row click
+// previews the pull in a pane beside the list instead of navigating.
+const PREVIEW_LAYOUT_QUERY = '(min-width: 64rem)';
+// Matches Tailwind's `2xl` breakpoint: from here the scope and involvement
+// filters move into a sticky side rail, so the list starts at the top of the
+// page instead of under three rows of controls. Below it the rail would
+// squeeze the list and preview until titles and metric labels truncate.
+const RAIL_LAYOUT_QUERY = '(min-width: 96rem)';
+
 function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   const modifier = useModifierKey();
   const [page, updatePage] = usePullsPageState();
   const { hydrated, pinned, toggle } = usePinnedRepos();
+  // This view renders only after hydration (below), so the client value is
+  // the first one painted.
+  const previewLayout = useMediaQuery(PREVIEW_LAYOUT_QUERY, false);
+  const railLayout = useMediaQuery(RAIL_LAYOUT_QUERY, false);
+  const orientation = railLayout ? 'vertical' : 'horizontal';
+  // The pull shown in the preview pane. Kept as the row's summary (not just
+  // its key) so the pane stays put while the list refetches or filters
+  // change around it.
+  const [preview, setPreview] = useState<PullSummary | null>(null);
+  // Bumped when the preview pane changed a pull, so the list refetches.
+  const [listVersion, setListVersion] = useState(0);
 
   const selectScope = (scope: PullScope) => {
     if (scope.kind === 'repo') {
@@ -178,72 +211,155 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
     text: page.text,
   };
 
-  return (
-    <div className="space-y-3">
-      <PullQueryBar
-        appliedText={page.text}
-        scope={page.scope}
-        onApply={applyText}
-        onOpenScope={openCommandPaletteAtTop}
-      />
-      <RepoPinStrip
-        ariaLabel="Repository scopes"
-        pinned={pinned}
-        selectedRepo={page.scope.kind === 'repo' ? page.scope.repo : null}
-        leading={
-          <BroadScopeChips
-            pinnedCount={pinned.length}
-            scope={page.scope}
-            onSelect={selectScope}
-          />
-        }
-        onAddPin={openCommandPaletteAtTop}
-        onSelectRepo={(repo) => selectScope({ kind: 'repo', repo })}
-        onTogglePin={toggle}
-      />
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-1">
-        <AudienceFilter
-          anyoneAllowed={audienceAnyoneAllowed(page.scope, page.text)}
-          value={involves}
-          onChange={(next) => updatePage({ ...page, involves: next })}
-        />
-        {usesReviewRequests && (
-          <label
-            className="text-muted-foreground flex cursor-pointer items-center gap-2 text-xs"
-            title="Also count review requests sent to teams you're on"
-          >
-            Include team requests
-            <Switch
-              checked={page.reviewRequests === 'teams'}
-              onCheckedChange={(checked) =>
-                updatePage({
-                  ...page,
-                  reviewRequests: checked ? 'teams' : 'direct',
-                })
-              }
-            />
-          </label>
-        )}
-      </div>
-      {page.scope.kind === 'pinned' && pinned.length === 0 ? (
-        <div className={cn(SECTION_CARD_CLASS, 'px-4 py-6 text-sm')}>
-          <p className="font-medium">No pinned repositories yet.</p>
-          <p className="text-muted-foreground mt-1">
-            Press {formatShortcut(modifier, 'K')}, find a repository, and press{' '}
-            {formatShortcut(modifier, '↵')} to pin it. Pinned repositories
-            appear above for one-click switching, and this view searches all of
-            them at once.
-          </p>
-        </div>
-      ) : (
-        <PullList
-          request={request}
+  const queryBar = (
+    <PullQueryBar
+      appliedText={page.text}
+      scope={page.scope}
+      onApply={applyText}
+      onOpenScope={openCommandPaletteAtTop}
+    />
+  );
+  const scopeNav = (
+    <RepoPinStrip
+      ariaLabel="Repository scopes"
+      orientation={orientation}
+      pinned={pinned}
+      selectedRepo={page.scope.kind === 'repo' ? page.scope.repo : null}
+      leading={
+        <BroadScopeChips
+          orientation={orientation}
+          pinnedCount={pinned.length}
           scope={page.scope}
-          tokenVersion={tokenVersion}
-          onApplyText={applyText}
+          onSelect={selectScope}
         />
+      }
+      onAddPin={openCommandPaletteAtTop}
+      onSelectRepo={(repo) => selectScope({ kind: 'repo', repo })}
+      onTogglePin={toggle}
+    />
+  );
+  const audienceFilter = (
+    <AudienceFilter
+      anyoneAllowed={audienceAnyoneAllowed(page.scope, page.text)}
+      orientation={orientation}
+      value={involves}
+      onChange={(next) => updatePage({ ...page, involves: next })}
+    />
+  );
+  const teamToggle = usesReviewRequests && (
+    <label
+      className={cn(
+        'text-muted-foreground flex cursor-pointer items-center gap-2 text-xs',
+        railLayout && 'justify-between px-2'
       )}
+      title="Also count review requests sent to teams you're on"
+    >
+      Include team requests
+      <Switch
+        checked={page.reviewRequests === 'teams'}
+        onCheckedChange={(checked) =>
+          updatePage({
+            ...page,
+            reviewRequests: checked ? 'teams' : 'direct',
+          })
+        }
+      />
+    </label>
+  );
+  const list =
+    page.scope.kind === 'pinned' && pinned.length === 0 ? (
+      <div className={cn(SECTION_CARD_CLASS, 'px-4 py-6 text-sm')}>
+        <p className="font-medium">No pinned repositories yet.</p>
+        <p className="text-muted-foreground mt-1">
+          Press {formatShortcut(modifier, 'K')}, find a repository, and press{' '}
+          {formatShortcut(modifier, '↵')} to pin it. Pinned repositories appear
+          {railLayout ? ' at the left' : ' above'} for one-click switching, and
+          this view searches all of them at once.
+        </p>
+      </div>
+    ) : (
+      <PullList
+        listVersion={listVersion}
+        request={request}
+        scope={page.scope}
+        selectedKey={preview == null ? null : pullKey(preview)}
+        tokenVersion={tokenVersion}
+        onApplyText={applyText}
+        onClosePreview={() => setPreview(null)}
+        onPreview={previewLayout ? setPreview : undefined}
+      />
+    );
+  const previewPane = previewLayout && (
+    <PullPreviewPane
+      pull={preview}
+      tokenVersion={tokenVersion}
+      onClose={() => setPreview(null)}
+      onPullChanged={() => setListVersion((value) => value + 1)}
+    />
+  );
+
+  // Columns: [rail] list, preview. The pane is always present in the wide
+  // layouts (empty until a row is picked) so selecting a pull never reflows
+  // the list under the pointer. It grows at 0.8x the list's rate, from a
+  // floor that keeps the overview's metric bars legible.
+  if (railLayout) {
+    return (
+      <div className="grid grid-cols-[15rem_minmax(0,1fr)_minmax(26rem,0.8fr)] items-start gap-8">
+        <aside
+          aria-label="Pull request filters"
+          className="sticky top-4 space-y-5"
+        >
+          <RailSection heading="Repositories">{scopeNav}</RailSection>
+          <RailSection heading="Involvement">
+            {audienceFilter}
+            {teamToggle}
+          </RailSection>
+        </aside>
+        <div className="min-w-0 space-y-3">
+          {queryBar}
+          {list}
+        </div>
+        {previewPane}
+      </div>
+    );
+  }
+  const stacked = (
+    <div className="min-w-0 space-y-3">
+      {queryBar}
+      {scopeNav}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-1">
+        {audienceFilter}
+        {teamToggle}
+      </div>
+      {list}
     </div>
+  );
+  if (previewLayout) {
+    return (
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(24rem,0.8fr)] items-start gap-6">
+        {stacked}
+        {previewPane}
+      </div>
+    );
+  }
+  return stacked;
+}
+
+// A titled group in the wide layout's filter rail.
+function RailSection({
+  children,
+  heading,
+}: {
+  children: ReactNode;
+  heading: string;
+}) {
+  return (
+    <section className="space-y-1.5">
+      <h2 className="text-muted-foreground px-2 text-xs font-medium">
+        {heading}
+      </h2>
+      <div className="space-y-3">{children}</div>
+    </section>
   );
 }
 
@@ -316,16 +432,19 @@ function usePullsPaletteContext(
 // once, before the individual pins.
 function BroadScopeChips({
   onSelect,
+  orientation,
   pinnedCount,
   scope,
 }: {
   onSelect(scope: PullScope): void;
+  orientation: 'horizontal' | 'vertical';
   pinnedCount: number;
   scope: PullScope;
 }) {
   return (
     <>
       <ScopeChip
+        fill={orientation === 'vertical'}
         selected={scope.kind === 'all'}
         onClick={() => onSelect({ kind: 'all' })}
       >
@@ -333,6 +452,7 @@ function BroadScopeChips({
       </ScopeChip>
       {pinnedCount > 0 && (
         <ScopeChip
+          fill={orientation === 'vertical'}
           selected={scope.kind === 'pinned'}
           title={`Search all ${pinnedCount} pinned repositories`}
           onClick={() => onSelect({ kind: 'pinned' })}
@@ -344,7 +464,13 @@ function BroadScopeChips({
           </span>
         </ScopeChip>
       )}
-      <span aria-hidden="true" className="bg-border mx-1 h-4 w-px" />
+      <span
+        aria-hidden="true"
+        className={cn(
+          'bg-border',
+          orientation === 'vertical' ? 'mx-2 my-1 h-px' : 'mx-1 h-4 w-px'
+        )}
+      />
     </>
   );
 }
@@ -356,12 +482,25 @@ function BroadScopeChips({
 function AudienceFilter({
   anyoneAllowed,
   onChange,
+  orientation,
   value,
 }: {
   anyoneAllowed: boolean;
   onChange(next: PullAudience): void;
+  orientation: 'horizontal' | 'vertical';
   value: PullAudience;
 }) {
+  const vertical = orientation === 'vertical';
+  // Rail rows read as a nav list (left-aligned, filled when selected, like
+  // the repository rows above them) rather than a vertical segmented control.
+  const itemClassName = (isSelected: boolean) =>
+    vertical
+      ? cn(
+          'w-full justify-start',
+          isSelected &&
+            'bg-accent dark:bg-accent border-transparent font-medium shadow-none'
+        )
+      : undefined;
   const selected: readonly PullInvolvement[] = value === 'anyone' ? [] : value;
   const toggle = (involvement: PullInvolvement) =>
     onChange(
@@ -374,11 +513,16 @@ function AudienceFilter({
   return (
     <ButtonGroup
       aria-label="Filter by involvement"
-      className="flex-wrap"
+      className={
+        vertical
+          ? 'w-full flex-col gap-0.5 self-stretch bg-transparent'
+          : 'flex-wrap'
+      }
       size="sm"
     >
       {anyoneAllowed && (
         <ButtonGroupItem
+          className={itemClassName(value === 'anyone')}
           aria-pressed={value === 'anyone'}
           selected={value === 'anyone'}
           title="Every pull request in this scope, whoever it involves"
@@ -389,6 +533,7 @@ function AudienceFilter({
         </ButtonGroupItem>
       )}
       <ButtonGroupItem
+        className={itemClassName(value !== 'anyone' && value.length === 0)}
         aria-pressed={value !== 'anyone' && value.length === 0}
         selected={value !== 'anyone' && value.length === 0}
         title="Pull requests involving you in any way below"
@@ -400,6 +545,7 @@ function AudienceFilter({
       {PULL_INVOLVEMENTS.map((involvement) => (
         <ButtonGroupItem
           key={involvement}
+          className={itemClassName(selected.includes(involvement))}
           aria-pressed={selected.includes(involvement)}
           selected={selected.includes(involvement)}
           title={PULL_ACTIVITY_LABELS[involvement]}
@@ -463,14 +609,24 @@ function getEmptyCopy(request: PullSearchRequest, scope: PullScope): string {
 // search text (is:/sort: qualifiers), so the bar always shows the whole
 // search.
 function PullList({
+  listVersion,
   onApplyText,
+  onClosePreview,
+  onPreview,
   request,
   scope,
+  selectedKey,
   tokenVersion,
 }: {
+  // Bumped by the parent to refetch after a pull changed elsewhere.
+  listVersion: number;
   onApplyText(text: string): void;
+  onClosePreview(): void;
+  // Set in the wide layout: plain row clicks preview instead of navigating.
+  onPreview?(pull: PullSummary): void;
   request: PullSearchRequest;
   scope: PullScope;
+  selectedKey: string | null;
   tokenVersion: number;
 }) {
   const { text } = request;
@@ -481,6 +637,7 @@ function PullList({
     loading,
     loadingMore,
     pulls,
+    refresh,
     retry,
     totalCount,
   } = useDashboardPulls(request, tokenVersion);
@@ -490,6 +647,17 @@ function PullList({
     PULL_SORT_OPTIONS.find((option) => option.value === sort)?.label ??
     `sort:${sort}`;
   const showRepo = scope.kind !== 'repo';
+  // Refetch, past the browser cache, when the parent says a pull changed;
+  // skip the mount run, which the hook's own first fetch covers.
+  const refreshRef = useLatestValueRef(refresh);
+  const seenListVersion = useRef(listVersion);
+  useEffect(() => {
+    if (seenListVersion.current !== listVersion) {
+      seenListVersion.current = listVersion;
+      refreshRef.current();
+    }
+  }, [listVersion, refreshRef]);
+  usePreviewKeyboard(pulls, selectedKey, onPreview, onClosePreview);
   return (
     <section
       aria-busy={loading}
@@ -577,7 +745,13 @@ function PullList({
         onRetry={retry}
       >
         {pulls.map((pull) => (
-          <PullRequestRow key={pullKey(pull)} pull={pull} showRepo={showRepo} />
+          <PullRequestRow
+            key={pullKey(pull)}
+            pull={pull}
+            selected={selectedKey === pullKey(pull)}
+            showRepo={showRepo}
+            onPreview={onPreview}
+          />
         ))}
       </DashboardSectionState>
       {pulls.length > 0 && error != null && (
@@ -609,4 +783,115 @@ function PullList({
         )}
     </section>
   );
+}
+
+// Keyboard control of the preview selection, active only in the wide layout
+// (`onPreview` set): J/K (or the arrow keys) move through the loaded rows,
+// Enter opens the focused row's diff (or the selected pull's, when no
+// control has focus), and Escape closes the preview. Keys
+// typed into fields, or already handled by an open menu or dialog, are left
+// alone.
+function usePreviewKeyboard(
+  pulls: readonly PullSummary[],
+  selectedKey: string | null,
+  onPreview: ((pull: PullSummary) => void) | undefined,
+  onClosePreview: () => void
+) {
+  const router = useRouter();
+  const latest = useLatestValueRef({
+    onClosePreview,
+    onPreview,
+    pulls,
+    selectedKey,
+  });
+  const enabled = onPreview != null;
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        isEditableEventTarget(event) ||
+        document.querySelector('[role="dialog"], [role="menu"]') != null
+      ) {
+        return;
+      }
+      const { onClosePreview, onPreview, pulls, selectedKey } = latest.current;
+      const index = pulls.findIndex((pull) => pullKey(pull) === selectedKey);
+      const step =
+        event.key === 'j' || event.key === 'ArrowDown'
+          ? 1
+          : event.key === 'k' || event.key === 'ArrowUp'
+            ? -1
+            : 0;
+      if (step !== 0 && onPreview != null && pulls.length > 0) {
+        event.preventDefault();
+        const next =
+          pulls[
+            index === -1
+              ? 0
+              : Math.min(pulls.length - 1, Math.max(0, index + step))
+          ];
+        onPreview(next);
+        return;
+      }
+      if (event.key === 'Enter') {
+        // A focused pull row: open its diff. Its native activation would be
+        // a click, which the row turns into a preview, so cancel that and
+        // navigate here.
+        const row =
+          event.target instanceof HTMLAnchorElement &&
+          event.target.matches('[data-pull-row]')
+            ? event.target
+            : null;
+        const pull =
+          row != null
+            ? pulls.find(
+                (candidate) => candidate.viewerPath === row.getAttribute('href')
+              )
+            : // Focus on no control (the page body, as after J/K from a
+              // click elsewhere): open the selected pull. Any focused
+              // control, from links to a description's <summary>, keeps its
+              // native Enter.
+              event.target === document.body
+              ? pulls[index]
+              : undefined;
+        if (pull != null) {
+          event.preventDefault();
+          recordRecentDiff({ path: pull.viewerPath, title: pull.title });
+          router.push(pull.viewerPath);
+          return;
+        }
+      }
+      if (event.key === 'Escape' && selectedKey != null) {
+        onClosePreview();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [enabled, latest, router]);
+
+  // Keeps the selected row on screen as J/K move past the viewport edge, and
+  // moves focus with the selection when focus was already on a row, so the
+  // focus ring and the selection highlight never mark two different rows.
+  useEffect(() => {
+    if (selectedKey == null) {
+      return;
+    }
+    const row = document.querySelector<HTMLElement>(
+      '[data-pull-row][aria-current="true"]'
+    );
+    row?.scrollIntoView({ block: 'nearest' });
+    if (
+      row != null &&
+      document.activeElement instanceof HTMLElement &&
+      document.activeElement.matches('[data-pull-row]')
+    ) {
+      row.focus({ preventScroll: true });
+    }
+  }, [selectedKey]);
 }

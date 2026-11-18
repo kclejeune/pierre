@@ -30,6 +30,9 @@ export interface DashboardPullsState {
   loadingMore: boolean;
   loadMore(): void;
   pulls: PullSummary[];
+  // Refetches the first page, bypassing the browser cache, after a
+  // mutation made the cached rows stale.
+  refresh(): void;
   // Repeats whichever request produced `error` (the first-page fetch or a
   // load-more), or refetches the first page when nothing failed. Rows on
   // screen can come from the cache with a next page, so whether more pages
@@ -81,11 +84,13 @@ function rememberPulls(key: string, value: CachedPulls): void {
 function fetchPullsPage(
   search: string,
   cursor: string | undefined,
-  signal: AbortSignal
+  signal: AbortSignal,
+  cache: RequestCache = 'default'
 ): Promise<PullsPage> {
   const query =
     cursor == null ? search : `${search}&cursor=${encodeURIComponent(cursor)}`;
   return requestJSON(`/api/github-pulls?${query}`, {
+    cache,
     headers: storedGitHubTokenHeaders(),
     signal,
   }) as Promise<PullsPage>;
@@ -128,6 +133,10 @@ export function useDashboardPulls(
 
   const [storedState, setState] = useState(() => initialSearchState(cacheKey));
   const [reloadVersion, setReloadVersion] = useState(0);
+  // Set by `refresh` for the next first-page fetch only: the route is
+  // browser-cached for 30s, so a reload right after a mutation would
+  // otherwise get the pre-mutation response back.
+  const bypassCacheRef = useRef(false);
   // On a search change, render the new search's cached rows this pass.
   const state =
     storedState.key === cacheKey ? storedState : initialSearchState(cacheKey);
@@ -144,7 +153,9 @@ export function useDashboardPulls(
         ? { ...previous, failure: null, loading: true }
         : initialSearchState(cacheKey)
     );
-    fetchPullsPage(search, undefined, controller.signal)
+    const cache = bypassCacheRef.current ? 'reload' : 'default';
+    bypassCacheRef.current = false;
+    fetchPullsPage(search, undefined, controller.signal, cache)
       .then((page) => {
         if (controller.signal.aborted) {
           return;
@@ -238,6 +249,13 @@ export function useDashboardPulls(
     loadingMore: state.loadingMore,
     loadMore,
     pulls: state.pulls,
+    // Refetches the first page from the network after the viewer changed a
+    // pull ('reload' also rewrites the browser's cached copy, so later
+    // default fetches of this search see the change too).
+    refresh: () => {
+      bypassCacheRef.current = true;
+      setReloadVersion((version) => version + 1);
+    },
     retry: () =>
       state.failure?.request === 'more'
         ? loadMore()

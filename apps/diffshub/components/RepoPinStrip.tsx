@@ -12,7 +12,8 @@ import { splitPath } from '@/lib/splitPath';
 // a repository's refs). A repository opened from the palette but not pinned
 // shows as a dashed chip at the end, with its pin button, so pinning is
 // something you do to what you're looking at. `leading` chips (the /pulls
-// broad scopes) come first.
+// broad scopes) come first. `vertical` stacks the chips full-width for a side
+// rail instead of wrapping them in a row.
 export function RepoPinStrip({
   addPinLabel = 'Pin repositories you check often',
   ariaLabel,
@@ -20,12 +21,14 @@ export function RepoPinStrip({
   onAddPin,
   onSelectRepo,
   onTogglePin,
+  orientation = 'horizontal',
   pinned,
   selectedRepo,
 }: {
   addPinLabel?: string;
   ariaLabel: string;
   leading?: ReactNode;
+  orientation?: 'horizontal' | 'vertical';
   onAddPin(): void;
   onSelectRepo(repo: string): void;
   onTogglePin(repo: string): void;
@@ -40,8 +43,15 @@ export function RepoPinStrip({
   const ambiguous = new Set(
     names.filter((name, index) => names.indexOf(name) !== index)
   );
+  const vertical = orientation === 'vertical';
   return (
-    <nav aria-label={ariaLabel} className="flex flex-wrap items-center gap-1">
+    <nav
+      aria-label={ariaLabel}
+      className={cn(
+        'flex gap-1',
+        vertical ? 'flex-col items-stretch gap-0.5' : 'flex-wrap items-center'
+      )}
+    >
       {leading}
       {pinned.map((repo, index) => {
         const selected =
@@ -50,6 +60,7 @@ export function RepoPinStrip({
         return (
           <ScopeChip
             key={repo}
+            fill={vertical}
             mono
             selected={selected}
             title={repo}
@@ -66,6 +77,7 @@ export function RepoPinStrip({
       })}
       {selectedRepo != null && !selectedIsPinned && (
         <ScopeChip
+          fill={vertical}
           mono
           selected
           dashed
@@ -86,7 +98,10 @@ export function RepoPinStrip({
       {pinned.length === 0 && selectedRepo == null && (
         <button
           type="button"
-          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-6 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs outline-none focus-visible:ring-2"
+          className={cn(
+            'text-muted-foreground hover:text-foreground focus-visible:ring-ring flex cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs outline-none focus-visible:ring-2',
+            vertical ? 'h-7 px-2 text-left' : 'h-6'
+          )}
           onClick={onAddPin}
         >
           <IconPlus className="size-3" />
@@ -98,10 +113,12 @@ export function RepoPinStrip({
 }
 
 // A chip in the strip. Without `onClick` it's a static label (the dashed
-// chip for the current, unpinned repo, which is already selected).
+// chip for the current, unpinned repo, which is already selected). `fill`
+// makes it a full-width rail row instead of an inline chip.
 export function ScopeChip({
   children,
   dashed = false,
+  fill = false,
   mono = false,
   onClick,
   selected,
@@ -110,6 +127,7 @@ export function ScopeChip({
 }: {
   children: ReactNode;
   dashed?: boolean;
+  fill?: boolean;
   mono?: boolean;
   onClick?(): void;
   selected: boolean;
@@ -117,7 +135,8 @@ export function ScopeChip({
   trailing?: ReactNode;
 }) {
   const labelClassName = cn(
-    'flex h-full max-w-56 items-center gap-1 rounded-[inherit] px-2',
+    'flex h-full items-center gap-1 rounded-[inherit] px-2',
+    fill ? 'min-w-0 flex-1' : 'max-w-56',
     mono && 'font-mono text-[12px]',
     trailing != null && 'pr-1'
   );
@@ -127,10 +146,15 @@ export function ScopeChip({
   return (
     <span
       className={cn(
-        'flex h-6 items-center rounded-md border text-xs transition-colors',
+        'flex items-center rounded-md border text-xs transition-colors',
+        fill ? 'h-7' : 'h-6',
+        // Inline chips lift like a segmented control; rail rows fill like a
+        // nav list, so a selected row doesn't read as a text field.
         selected
-          ? 'bg-background text-foreground shadow-xs'
-          : 'text-muted-foreground hover:text-foreground border-transparent',
+          ? fill
+            ? 'bg-accent text-foreground border-transparent font-medium'
+            : 'bg-background text-foreground shadow-xs'
+          : 'text-muted-foreground hover:text-foreground hover:bg-accent/50 border-transparent',
         dashed && 'border-dashed'
       )}
     >

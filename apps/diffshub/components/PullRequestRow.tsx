@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import type { MouseEvent } from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { LabelColorDot } from './LabelColorDot';
@@ -33,24 +34,58 @@ const ACTIVITY_CHIP_CLASSES: Record<PullActivity, string> = {
 };
 
 interface PullRequestRowProps {
+  // Plain clicks preview the pull instead of navigating when set (the wide
+  // /pulls layout); modified clicks still follow the link.
+  onPreview?(pull: PullSummary): void;
   pull: PullSummary;
+  // The pull shown in the preview pane.
+  selected?: boolean;
   // Hide the owner/repo label inside sections already scoped to one repo.
   showRepo?: boolean;
 }
 
+// Whether a click asked the browser for something other than a plain
+// same-tab navigation (new tab/window, download, middle button).
+function isModifiedClick(event: MouseEvent<HTMLAnchorElement>): boolean {
+  return (
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  );
+}
+
 // One dashboard pull row. Clicking records the diff in recents with its title,
 // which the patch stream lacks.
-export function PullRequestRow({ pull, showRepo = true }: PullRequestRowProps) {
+export function PullRequestRow({
+  onPreview,
+  pull,
+  selected = false,
+  showRepo = true,
+}: PullRequestRowProps) {
   const stateDisplay = PULL_STATE_DISPLAY[pull.state];
   const StateIcon = stateDisplay.Icon;
   return (
     <Link
       href={pull.viewerPath}
-      onClick={() =>
-        recordRecentDiff({ path: pull.viewerPath, title: pull.title })
-      }
+      aria-current={selected ? 'true' : undefined}
+      data-pull-row=""
+      onClick={(event) => {
+        if (onPreview != null && !isModifiedClick(event)) {
+          event.preventDefault();
+          onPreview(pull);
+          return;
+        }
+        recordRecentDiff({ path: pull.viewerPath, title: pull.title });
+      }}
       // The ring is inset because section cards clip overflow.
-      className="hover:bg-accent/60 focus-visible:ring-ring flex items-center gap-3 border-b p-3 transition-colors outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 focus-visible:ring-2 focus-visible:ring-inset"
+      className={cn(
+        'focus-visible:ring-ring flex items-center gap-3 border-b p-3 transition-colors outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 focus-visible:ring-2 focus-visible:ring-inset',
+        selected
+          ? 'bg-accent shadow-[inset_2px_0_0_var(--color-ring)]'
+          : 'hover:bg-accent/60'
+      )}
     >
       <StateIcon
         className={cn('size-4 shrink-0', stateDisplay.className)}

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
 import { AppPermissionsProvider } from './AppPermissionsContext';
+import { revealScrollbarWhileScrolling } from './autoHideScrollbar';
 import { Button } from './Button';
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
 import { readStoredGitHubToken } from './githubSession';
@@ -17,10 +18,10 @@ import type { PullRequestRef } from '@/lib/pullCommentsClient';
 import type { ConversationCounts } from '@/lib/pullOverview';
 import { recordRecentDiff } from '@/lib/recentDiffs';
 
-// The pane's outer frame: sticky beside the list, as tall as the viewport,
-// scrolling on its own so the list keeps its place.
+// The pane's outer frame: the full height of its grid row beside the list
+// (the /pulls page fills the viewport on desktop), scrolling on its own.
 const PANE_CLASS =
-  'bg-background sticky top-4 flex max-h-[calc(100svh-2rem)] min-h-80 flex-col overflow-hidden rounded-lg border';
+  'bg-background flex h-full min-h-0 flex-col overflow-hidden rounded-lg border';
 
 function getStoredToken(): string | undefined {
   const token = readStoredGitHubToken();
@@ -50,11 +51,23 @@ export function PullPreviewPane({
         aria-label="Pull request preview"
         className={cn(PANE_CLASS, 'items-center justify-center p-6')}
       >
-        <p className="text-muted-foreground max-w-64 text-center text-sm text-pretty">
-          Select a pull request to see its status, reviewers, and description
-          here. Use <Kbd>J</Kbd> and <Kbd>K</Kbd> to move between pull requests
-          and <Kbd>Enter</Kbd> to open the diff.
-        </p>
+        <div className="flex flex-col gap-4 text-sm">
+          <p className="text-foreground">
+            Select a pull request to preview it.
+          </p>
+          <dl className="text-muted-foreground grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 text-xs">
+            {PREVIEW_SHORTCUTS.map(({ keys, label }) => (
+              <div key={label} className="contents">
+                <dt className="flex justify-end gap-1">
+                  {keys.map((key) => (
+                    <Kbd key={key}>{key}</Kbd>
+                  ))}
+                </dt>
+                <dd>{label}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
       </aside>
     );
   }
@@ -71,6 +84,14 @@ export function PullPreviewPane({
     </AppPermissionsProvider>
   );
 }
+
+// The keyboard controls the list offers while the preview is showing (see
+// usePreviewKeyboard in PullsDashboard), listed in the empty pane.
+const PREVIEW_SHORTCUTS: readonly { keys: string[]; label: string }[] = [
+  { keys: ['J', 'K'], label: 'Move between pull requests' },
+  { keys: ['Enter'], label: 'Open the diff' },
+  { keys: ['Esc'], label: 'Close the preview' },
+];
 
 function pullKeyOf(pull: PullSummary): string {
   return `${pull.owner}/${pull.repo}#${pull.number}`;
@@ -130,9 +151,9 @@ function LoadedPreview({
   return (
     <aside aria-label={`Preview of ${pull.title}`} className={PANE_CLASS}>
       <div className="bg-muted/30 flex h-11 shrink-0 items-center gap-2 border-b px-3">
+        {/* The number sits beside the title below; the bar names the repo. */}
         <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
           {pull.owner}/{pull.repo}
-          <span className="text-foreground"> #{pull.number}</span>
         </span>
         <Button asChild className="h-7 px-2.5" size="xs" variant="outline">
           <Link
@@ -167,44 +188,52 @@ function LoadedPreview({
           <IconX className="size-3.5" />
         </Button>
       </div>
-      <div className="cv-scrollbar min-h-0 flex-1 overflow-y-auto p-3">
-        {model != null ? (
-          <PullDetailsPanel
-            diffStats={null}
-            footerSurfaceClassName="bg-background"
-            getGitHubToken={getGitHubToken}
-            model={model}
-            pullInfo={pullInfo}
-            pullRequest={pullRequest}
-            onDetailsEdited={(ref, fields) => {
-              mergePullDetails(ref, fields);
-              if (
-                fields.state != null ||
-                fields.draft != null ||
-                fields.title != null ||
-                fields.labels != null
-              ) {
-                onPullChanged();
-              }
-            }}
-            onMerged={onPullChanged}
-          />
-        ) : loadFailed ? (
-          <div className="flex flex-col items-start gap-2 text-sm">
-            <p className="text-muted-foreground">
-              This pull request&apos;s details didn&apos;t load.
-            </p>
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => setAttempt((value) => value + 1)}
-            >
-              Retry
-            </Button>
-          </div>
-        ) : (
-          <PreviewSkeleton title={pull.title} />
-        )}
+      {/* The scroller itself has no padding: Chrome insets sticky offsets by
+          it, which would float the panel's pinned action footer above the
+          bottom edge with content showing beneath. */}
+      <div
+        className="cv-autohide-scrollbar min-h-0 flex-1 overflow-y-auto"
+        onScroll={revealScrollbarWhileScrolling}
+      >
+        <div className="p-3">
+          {model != null ? (
+            <PullDetailsPanel
+              diffStats={null}
+              footerSurfaceClassName="bg-background"
+              getGitHubToken={getGitHubToken}
+              model={model}
+              pullInfo={pullInfo}
+              pullRequest={pullRequest}
+              onDetailsEdited={(ref, fields) => {
+                mergePullDetails(ref, fields);
+                if (
+                  fields.state != null ||
+                  fields.draft != null ||
+                  fields.title != null ||
+                  fields.labels != null
+                ) {
+                  onPullChanged();
+                }
+              }}
+              onMerged={onPullChanged}
+            />
+          ) : loadFailed ? (
+            <div className="flex flex-col items-start gap-2 text-sm">
+              <p className="text-muted-foreground">
+                This pull request&apos;s details didn&apos;t load.
+              </p>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => setAttempt((value) => value + 1)}
+              >
+                Retry
+              </Button>
+            </div>
+          ) : (
+            <PreviewSkeleton title={pull.title} />
+          )}
+        </div>
       </div>
     </aside>
   );

@@ -484,6 +484,38 @@ diffs-container {
   border-radius: 5px;
 }
 
+/* Scrollbar that stays invisible until its container scrolls: the thumb is
+   transparent unless revealScrollbarWhileScrolling (components/
+   autoHideScrollbar.ts) has marked the element data-scrolling. The gutter
+   stays reserved so content never shifts when the thumb appears. */
+.cv-autohide-scrollbar {
+  --cv-autohide-scrollbar-thumb-bg: transparent;
+  scrollbar-gutter: stable;
+}
+
+.cv-autohide-scrollbar[data-scrolling] {
+  --cv-autohide-scrollbar-thumb-bg: light-dark(
+    color-mix(in lab, var(--background) 80%, black),
+    color-mix(in lab, var(--background) 75%, white)
+  );
+}
+
+.cv-autohide-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.cv-autohide-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cv-autohide-scrollbar::-webkit-scrollbar-thumb {
+  background-color: var(--cv-autohide-scrollbar-thumb-bg);
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 5px;
+}
+
 @supports (-moz-appearance: none) {
   .cv-scrollbar {
     scrollbar-color: var(--cv-scrollbar-thumb-bg)
@@ -491,6 +523,10 @@ diffs-container {
   }
   .cv-mini-scrollbar {
     scrollbar-color: var(--cv-mini-scrollbar-thumb-bg) transparent;
+    scrollbar-width: thin;
+  }
+  .cv-autohide-scrollbar {
+    scrollbar-color: var(--cv-autohide-scrollbar-thumb-bg) transparent;
     scrollbar-width: thin;
   }
 }

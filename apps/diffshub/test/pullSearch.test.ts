@@ -333,6 +333,36 @@ describe('filter presets', () => {
     );
   });
 
+  test('label filters read NOT and negated groups as exclusions', () => {
+    expect(readPullLabelFilters('is:open NOT label:bug')).toEqual({
+      exclude: ['bug'],
+      include: [],
+      unlabeled: false,
+    });
+    expect(readPullLabelFilters('-(label:a OR label:"b c")').exclude).toEqual([
+      'a',
+      'b c',
+    ]);
+    // Including a NOT-excluded label swaps the term, leaving no stray NOT.
+    expect(
+      togglePullLabelFilter('is:open NOT label:bug', 'bug', 'include')
+    ).toBe('is:open label:bug');
+  });
+
+  test('filter edits leave exclusions the menus do not show alone', () => {
+    expect(clearPullFilters('is:open NOT author:app/renovate label:a')).toBe(
+      'is:open NOT author:app/renovate'
+    );
+    expect(
+      writePullQualifierFilter('NOT status:failure', 'status', 'success')
+    ).toBe('NOT status:failure status:success');
+    // Mid-typing, an unbalanced paren falls back to each term's own "-".
+    expect(readPullLabelFilters('label:bug (is:open').include).toEqual(['bug']);
+    expect(
+      togglePullLabelFilter('label:bug (is:open', 'bug', 'include')
+    ).not.toContain('label:bug');
+  });
+
   test('label toggles include, exclude, and clear one label at a time', () => {
     const pep = 'renovate-manager: pep621';
     const included = togglePullLabelFilter('is:open', pep, 'include');

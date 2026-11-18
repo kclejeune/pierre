@@ -251,16 +251,22 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
       total: rows.length,
     });
   }, []);
-  // J/K in the quick look: the neighboring row, like J/K in the list.
+  // J/K in the quick look: the neighboring row, like J/K in the list. The
+  // previewed pull is found by key at step time, since a refetch or an
+  // expanded group can move it after the quick look opened.
   const stepQuickLook = useCallback(
     (delta: -1 | 1) => {
-      const index = quickLook?.index ?? -1;
-      const next = index === -1 ? undefined : queueRef.current[index + delta];
+      const rows = queueRef.current;
+      const index =
+        preview == null
+          ? -1
+          : rows.findIndex((row) => pullKey(row) === pullKey(preview));
+      const next = index === -1 ? undefined : rows[index + delta];
       if (next != null) {
         openQuickLook(next);
       }
     },
-    [openQuickLook, quickLook]
+    [openQuickLook, preview]
   );
 
   const selectScope = (scope: PullScope) => {
@@ -878,6 +884,7 @@ function PullList({
       <div className="bg-muted/30 @container/header flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-2 py-1.5">
         {selection.checked.length > 0 || batch.running != null ? (
           <PullBatchBar
+            allLoadedChecked={selection.allLoadedChecked}
             checked={selection.checked}
             loadedCount={pulls.length}
             running={batch.running}
@@ -886,7 +893,9 @@ function PullList({
               batchSearch.current = searchKey;
               batch.run(action, selection.checked);
             }}
-            onSelectAll={() => selection.set(pulls)}
+            // Adds every loaded pull, keeping pulls checked from earlier
+            // pages (a batch's failures) selected.
+            onSelectAll={() => selection.set([...selection.checked, ...pulls])}
           />
         ) : (
           <>

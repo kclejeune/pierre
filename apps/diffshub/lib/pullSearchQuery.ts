@@ -149,22 +149,24 @@ export function hasQualifier(text: string, key: string): boolean {
   );
 }
 
-// Values of the `key:` qualifiers the text asks for rather than excludes,
-// in order (e.g. the authors an author: term requests). Negation comes from
-// a leading "-" on the term, a NOT before it, or a NOT or "-" before an
-// enclosing group, and two negations cancel. Unbalanced parens have no
-// reliable reading, so they yield nothing.
-export function readPositiveQualifierValues(
-  text: string,
-  key: string
-): string[] {
-  const values: string[] = [];
+// Whether the search excludes each qualifier token. Negation comes from a
+// leading "-" on the term, a NOT before it, or a NOT or "-" before an
+// enclosing group, and two negations cancel; this matches what GitHub runs
+// once normalizeQualifierNegation rewrites NOT qualifiers. Unbalanced parens
+// (mid-typing) have no reliable group reading, so each term then falls back
+// to its own "-" and `balanced` is false.
+function qualifierNegations(tokens: readonly PullQueryToken[]): {
+  balanced: boolean;
+  negated: Map<PullQueryToken, boolean>;
+} {
+  const negated = new Map<PullQueryToken, boolean>();
   // Whether each open group (and the text outside them) is negated.
   const groups: boolean[] = [];
   let groupNegated = false;
   // A NOT or bare "-" waiting for the term or group it negates.
   let pendingNot = false;
-  for (const token of tokenizePullQuery(text)) {
+  let balanced = true;
+  for (const token of tokens) {
     if (token.kind === 'space') {
       continue;
     }
@@ -179,19 +181,57 @@ export function readPositiveQualifierValues(
     } else if (isCloseParen(token)) {
       const outer = groups.pop();
       if (outer == null) {
-        return [];
+        balanced = false;
+        break;
       }
       groupNegated = outer;
-    } else if (token.kind === 'qualifier' && token.key === key) {
-      const negated =
-        (groupNegated !== pendingNot) !== (token.negated === true);
-      if (!negated) {
-        values.push(token.value ?? '');
-      }
+    } else if (token.kind === 'qualifier') {
+      negated.set(
+        token,
+        (groupNegated !== pendingNot) !== (token.negated === true)
+      );
     }
     pendingNot = false;
   }
-  return groups.length === 0 ? values : [];
+  if (!balanced || groups.length > 0) {
+    const lexical = new Map<PullQueryToken, boolean>();
+    for (const token of tokens) {
+      if (token.kind === 'qualifier') {
+        lexical.set(token, token.negated === true);
+      }
+    }
+    return { balanced: false, negated: lexical };
+  }
+  return { balanced: true, negated };
+}
+
+// A qualifier value without its surrounding quotes: author:"svc-bump" and
+// author:svc-bump name the same author.
+function unquote(value: string): string {
+  return value.length >= 2 && value.startsWith('"') && value.endsWith('"')
+    ? value.slice(1, -1)
+    : value;
+}
+
+// Values of the `key:` qualifiers the text asks for rather than excludes,
+// unquoted and in order (e.g. the authors an author: term requests).
+// With unbalanced parens it returns nothing: muting reads this to decide
+// which exclusions to lift, and keeping them is the safe reading.
+export function readPositiveQualifierValues(
+  text: string,
+  key: string
+): string[] {
+  const { balanced, negated } = qualifierNegations(tokenizePullQuery(text));
+  if (!balanced) {
+    return [];
+  }
+  const values: string[] = [];
+  for (const [token, isNegated] of negated) {
+    if (token.key === key && !isNegated) {
+      values.push(unquote(token.value ?? ''));
+    }
+  }
+  return values;
 }
 
 const isOrToken = (token: PullQueryToken | undefined) =>
@@ -426,15 +466,19 @@ function replaceQualifier(
 
 // replaceQualifier's engine: drops every token `remove` accepts (and a NOT
 // negating it), prunes dangling structure, and appends `replacement`.
+// `remove` also gets whether the search excludes the token
+// (qualifierNegations), so filter edits leave alone the terms their menus
+// don't show as chosen.
 function replaceTerms(
   text: string,
-  remove: (token: PullQueryToken) => boolean,
+  remove: (token: PullQueryToken, negated: boolean) => boolean,
   replacement: string | null
 ): string {
   const tokens = tokenizePullQuery(text);
+  const { negated } = qualifierNegations(tokens);
   const removed = new Set<number>();
   tokens.forEach((token, index) => {
-    if (remove(token)) {
+    if (remove(token, negated.get(token) ?? false)) {
       removed.add(index);
       const before = neighbor(tokens, index, -1);
       if (tokens[before]?.raw === 'NOT') {
@@ -468,10 +512,10 @@ export function writePullQualifierFilter(
   key: string,
   value: string | null
 ): string {
-  return replaceQualifier(
+  return replaceTerms(
     text,
-    new Set([key]),
-    () => true,
+    (token, negated) =>
+      token.kind === 'qualifier' && token.key === key && !negated,
     value == null ? null : `${key}:${value}`
   );
 }
@@ -516,12 +560,6 @@ export function quoteSearchValue(name: string): string {
   return /[\s():]/.test(clean) ? `"${clean}"` : clean;
 }
 
-function unquote(value: string): string {
-  return value.length >= 2 && value.startsWith('"') && value.endsWith('"')
-    ? value.slice(1, -1)
-    : value;
-}
-
 // The labels the Label filter shows as chosen: names the text includes
 // (label:x), excludes (-label:x), and whether it asks for unlabeled pulls
 // (no:label). Names are unquoted; comparisons are case-insensitive, as on
@@ -538,16 +576,15 @@ export function readPullLabelFilters(text: string): PullLabelFilters {
     include: [],
     unlabeled: false,
   };
-  for (const token of tokenizePullQuery(text)) {
-    if (token.kind !== 'qualifier') {
-      continue;
-    }
+  // Negation as the search runs it, so `NOT label:bug` reads as excluded.
+  const { negated } = qualifierNegations(tokenizePullQuery(text));
+  for (const [token, isNegated] of negated) {
     const value = unquote(token.value ?? '');
     if (token.key === 'label' && value !== '') {
-      (token.negated === true ? filters.exclude : filters.include).push(value);
+      (isNegated ? filters.exclude : filters.include).push(value);
     } else if (
       token.key === 'no' &&
-      token.negated !== true &&
+      !isNegated &&
       value.toLowerCase() === 'label'
     ) {
       filters.unlabeled = true;
@@ -581,13 +618,14 @@ export function togglePullLabelFilter(
   );
 }
 
-const NO_KEYS: ReadonlySet<string> = new Set(['no']);
-
 export function togglePullUnlabeledFilter(text: string): string {
-  return replaceQualifier(
+  return replaceTerms(
     text,
-    NO_KEYS,
-    (value) => value === 'label',
+    (token, negated) =>
+      token.kind === 'qualifier' &&
+      token.key === 'no' &&
+      !negated &&
+      (token.value ?? '').toLowerCase() === 'label',
     readPullLabelFilters(text).unlabeled ? null : 'no:label'
   );
 }
@@ -671,10 +709,10 @@ export function splitPullSort(text: string): { rest: string; sort?: string } {
 export function clearPullFilters(text: string): string {
   return replaceTerms(
     text,
-    (token) =>
+    (token, negated) =>
       token.kind === 'qualifier' &&
       (token.key === 'label' ||
-        (token.negated !== true &&
+        (!negated &&
           (token.key === 'author' ||
             token.key === 'review' ||
             token.key === 'status' ||

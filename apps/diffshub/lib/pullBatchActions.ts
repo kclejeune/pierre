@@ -66,6 +66,12 @@ async function mergePull(ref: PullRequestRef, token: string): Promise<void> {
     throw new Error(plan.message);
   }
   if (plan.kind === 'queue') {
+    // Already queued, or set to auto-merge (GitHub queues it once checks
+    // pass): it's on track to merge, and enqueuing again would only fail.
+    const queue = supplement.mergeQueue;
+    if (queue?.entry != null || queue?.pendingAutoMerge === true) {
+      return;
+    }
     await updateMergeQueue(ref, token, 'enqueue', headSha);
     return;
   }

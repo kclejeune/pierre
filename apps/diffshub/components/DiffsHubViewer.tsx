@@ -19,12 +19,7 @@ import {
 } from '@pierre/diffs';
 import type { EditorChangeEvent, EditorType } from '@pierre/diffs/edit';
 import { type CodeViewHandle, useStableCallback } from '@pierre/diffs/react';
-import {
-  IconBook,
-  IconChevronSm,
-  IconComment,
-  IconPencil,
-} from '@pierre/icons';
+import { IconBook, IconComment, IconPencil } from '@pierre/icons';
 import {
   memo,
   type RefObject,
@@ -35,6 +30,7 @@ import {
 } from 'react';
 import { toast } from 'sonner';
 
+import { CollapseDiffButton } from './CollapseDiffButton';
 import { DraftAnnotation } from './DraftAnnotation';
 import { ExampleAnnotation } from './ExampleAnnotation';
 import type { SuggestionTarget } from './MarkdownContent';
@@ -1533,44 +1529,6 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
     </ExpandedThreadsContext>
   );
 });
-
-interface CollapseDiffButtonProps {
-  disabled?: boolean;
-  collapsed?: boolean;
-  onToggle(): void;
-}
-
-function CollapseDiffButton({
-  disabled = false,
-  collapsed = false,
-  onToggle,
-}: CollapseDiffButtonProps) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      aria-expanded={!disabled && !collapsed}
-      aria-hidden={disabled}
-      aria-label={
-        disabled ? undefined : collapsed ? 'Expand diff' : 'Collapse diff'
-      }
-      className="text-muted-foreground hover:bg-muted hover:text-foreground ml-[-8px] inline-flex size-6 cursor-pointer items-center justify-center rounded-md transition disabled:pointer-events-none disabled:opacity-50"
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onToggle();
-      }}
-    >
-      <IconChevronSm
-        aria-hidden="true"
-        className={cn(
-          'size-4 transition-transform',
-          (disabled || collapsed) && '-rotate-90'
-        )}
-      />
-    </button>
-  );
-}
 
 // Resolves a token event to an identifier target, or null for operators,
 // punctuation, strings, and whitespace. File items have no side; their lines

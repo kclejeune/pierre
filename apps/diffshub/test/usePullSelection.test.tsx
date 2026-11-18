@@ -113,6 +113,12 @@ describe('usePullSelection', () => {
     // A refresh reloads only the first page; c falls off it.
     render({ pulls: [a, b], search: 'A' });
     expect(checkedRepos()).toEqual(['a', 'c']);
+    // Two checked pulls, two loaded, but b isn't one of them: "Select all"
+    // still has a row to add.
+    expect(selection().allLoadedChecked).toBe(false);
+    act(() => selection().set([...selection().checked, a, b]));
+    expect(selection().allLoadedChecked).toBe(true);
+    expect(checkedRepos()).toEqual(['a', 'b', 'c']);
   });
 
   test('shift-click checks the range from the last row flipped', () => {

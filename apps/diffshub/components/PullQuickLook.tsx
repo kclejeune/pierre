@@ -1,12 +1,14 @@
 'use client';
 
-import type { CodeViewHandle } from '@pierre/diffs/react';
+import type { CodeViewItem } from '@pierre/diffs';
+import { type CodeViewHandle, useStableCallback } from '@pierre/diffs/react';
 import { IconArrowUpRight, IconX } from '@pierre/icons';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from './Button';
 import { ButtonGroup, ButtonGroupItem } from './ButtonGroup';
+import { CollapseDiffButton } from './CollapseDiffButton';
 import {
   Dialog,
   DialogContent,
@@ -33,6 +35,7 @@ import {
   loadDisplaySettings,
 } from '@/lib/displaySettings';
 import { pullKey, type PullSummary } from '@/lib/githubPullSummaries';
+import { incrementItemVersion } from '@/lib/incrementItemVersion';
 import { isEditableEventTarget } from '@/lib/platform';
 import type { CommentMetadata } from '@/lib/types';
 
@@ -294,6 +297,32 @@ function QuickLookDiff({
     },
     [onViewerReady]
   );
+  // Files arrive collapsed when the reader's settings say so (collapsed
+  // mode, a collapse pattern, a file marked viewed on the review page), so
+  // each file header gets the review page's expand/collapse chevron.
+  const toggleItemCollapsed = useStableCallback((itemId: string) => {
+    const handle = viewerRef.current;
+    const item = handle?.getItem(itemId);
+    if (handle == null || item == null) {
+      return;
+    }
+    item.collapsed = item.collapsed !== true;
+    incrementItemVersion(item);
+    handle.updateItem(item);
+  });
+  const renderHeaderPrefix = useStableCallback(
+    (item: CodeViewItem<CommentMetadata>) =>
+      item.type === 'diff' ? (
+        <CollapseDiffButton
+          collapsed={item.collapsed}
+          disabled={
+            item.fileDiff.splitLineCount === 0 &&
+            item.fileDiff.unifiedLineCount === 0
+          }
+          onToggle={() => toggleItemCollapsed(item.id)}
+        />
+      ) : null
+  );
   const options = useMemo(
     () => ({
       layout: CODE_VIEW_LAYOUT,
@@ -363,6 +392,7 @@ function QuickLookDiff({
           initialItems={initialItems}
           className="cv-scrollbar relative h-full min-h-0 w-full min-w-0 flex-1 overflow-x-clip overflow-y-auto overscroll-contain [contain:strict] [overflow-anchor:none] [&_diffs-container]:overflow-clip"
           options={options}
+          renderHeaderPrefix={renderHeaderPrefix}
         />
       )}
     </div>

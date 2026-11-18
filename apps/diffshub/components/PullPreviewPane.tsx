@@ -22,6 +22,7 @@ import { pullKey, type PullSummary } from '@/lib/githubPullSummaries';
 import {
   authorSearchName,
   isAuthorMuted,
+  MAX_MUTED_AUTHORS,
   mutedAuthorLabel,
 } from '@/lib/mutedAuthors';
 import type { PullRequestRef } from '@/lib/pullCommentsClient';
@@ -301,17 +302,31 @@ function MuteAuthorButton({
     return null;
   }
   const label = `Mute ${mutedAuthorLabel(author)}`;
+  // The muted list is capped (each author adds a search exclusion); past the
+  // cap a mute would be dropped, so the button says so instead of no-oping.
+  const full = muted.length >= MAX_MUTED_AUTHORS;
+  // The title sits on a wrapper: a disabled button takes no pointer events,
+  // so its own tooltip wouldn't show.
   return (
-    <Button
-      className="size-7 rounded-md"
-      size="icon-sm"
-      variant="ghost"
-      title={`${label}: hide their pull requests from this list`}
-      aria-label={label}
-      onClick={() => onMute([author])}
+    <span
+      className="flex"
+      title={
+        full
+          ? `You've muted ${MAX_MUTED_AUTHORS} authors, the most the list can hide. Unmute one from the Muted menu first.`
+          : `${label}: hide their pull requests from this list`
+      }
     >
-      <IconEyeSlash className="size-3.5" />
-    </Button>
+      <Button
+        className="size-7 rounded-md"
+        size="icon-sm"
+        variant="ghost"
+        disabled={full}
+        aria-label={label}
+        onClick={() => onMute([author])}
+      >
+        <IconEyeSlash className="size-3.5" />
+      </Button>
+    </span>
   );
 }
 

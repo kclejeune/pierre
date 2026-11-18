@@ -17,7 +17,12 @@ function pull(repo: string): PullSummary {
 
 // Routes each client call to a canned response: pull-info gives the head,
 // pull-details whether the base branch has a merge queue.
-function mockRoutes(options: { queued?: string[]; failApprove?: string[] }) {
+function mockRoutes(options: {
+  // Bases with a merge queue, and pulls already in one.
+  queued?: string[];
+  inQueue?: string[];
+  failApprove?: string[];
+}) {
   const calls: { path: string; body?: Record<string, unknown> }[] = [];
   const spy = spyOn(globalThis, 'fetch').mockImplementation(((
     input: RequestInfo | URL,
@@ -37,9 +42,14 @@ function mockRoutes(options: { queued?: string[]; failApprove?: string[] }) {
         return Promise.resolve(
           Response.json({
             mergeCapabilities: { canMerge: true, methods: ['squash', 'merge'] },
-            mergeQueue: (options.queued ?? []).includes(repo)
-              ? { entry: null, pendingAutoMerge: false }
-              : null,
+            mergeQueue: (options.inQueue ?? []).includes(repo)
+              ? {
+                  entry: { position: 1, state: 'QUEUED' },
+                  pendingAutoMerge: false,
+                }
+              : (options.queued ?? []).includes(repo)
+                ? { entry: null, pendingAutoMerge: false }
+                : null,
           })
         );
       case '/api/pull-comments':
@@ -117,6 +127,19 @@ describe('runPullBatch', () => {
         method: 'squash',
         repo: 'm',
       });
+    } finally {
+      routes.restore();
+    }
+  });
+
+  test('a pull already in the merge queue counts as done without re-enqueuing', async () => {
+    const routes = mockRoutes({ inQueue: ['q'] });
+    try {
+      const result = await runPullBatch([pull('q')], 'merge', 'ghu_token');
+      expect(result).toEqual({ failures: [], succeeded: 1 });
+      expect(
+        routes.calls.some((call) => call.path === '/api/pull-merge-queue')
+      ).toBe(false);
     } finally {
       routes.restore();
     }

@@ -10,6 +10,9 @@ interface PullSelection {
   // The checked pulls: those still in the list first (in list order, with
   // their current row data), then any the list no longer holds.
   checked: PullSummary[];
+  // Every loaded pull is checked (pulls kept from earlier pages don't
+  // count), so there's nothing left for "Select all" to add.
+  allLoadedChecked: boolean;
   // Every pull the row covers is checked (a collapsed group's lead covers
   // the whole group).
   isRowChecked(row: PullRow): boolean;
@@ -120,16 +123,20 @@ export function usePullSelection(
     },
     [latest]
   );
-  const checked = useMemo(() => {
+  const { allLoadedChecked, checked } = useMemo(() => {
     const inList = pulls.filter((pull) => picked.has(pullKey(pull)));
     const listed = new Set(inList.map(pullKey));
-    return [
-      ...inList,
-      ...[...picked.values()].filter((pull) => !listed.has(pullKey(pull))),
-    ];
+    return {
+      allLoadedChecked: pulls.length > 0 && inList.length === pulls.length,
+      checked: [
+        ...inList,
+        ...[...picked.values()].filter((pull) => !listed.has(pullKey(pull))),
+      ],
+    };
   }, [picked, pulls]);
 
   return {
+    allLoadedChecked,
     checked,
     clear,
     isRowChecked: (row) =>

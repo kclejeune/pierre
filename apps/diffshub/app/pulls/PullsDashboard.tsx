@@ -46,6 +46,7 @@ import { PullBatchBar, usePullBatch } from '@/components/PullBatchBar';
 import { PullFilterMenus } from '@/components/PullFilterMenus';
 import { PullPreviewPane } from '@/components/PullPreviewPane';
 import { PullQueryBar } from '@/components/PullQueryBar';
+import { PullQuickLook } from '@/components/PullQuickLook';
 import { PullRequestRow } from '@/components/PullRequestRow';
 import { RepoPinStrip, ScopeChip } from '@/components/RepoPinStrip';
 import { formatShortcut, useModifierKey } from '@/components/ShortcutHint';
@@ -217,6 +218,13 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   // its key) so the pane stays put while the list refetches or filters
   // change around it.
   const [preview, setPreview] = useState<PullSummary | null>(null);
+  // The quick look (components/PullQuickLook) over the list, showing the
+  // previewed pull's diff: its place among the list's rows, or null while
+  // closed. index -1 means the pull isn't among the rows on screen.
+  const [quickLook, setQuickLook] = useState<{
+    index: number;
+    total: number;
+  } | null>(null);
   // Bumped when the preview pane changed a pull, so the list refetches.
   const [listVersion, setListVersion] = useState(0);
   // The list's rows on screen, kept current by PullList. Opening a diff from
@@ -232,6 +240,34 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
       }))
     );
   }, []);
+
+  // Opens the quick look on `pull`, which also becomes the previewed pull
+  // (the list's selection follows the quick look as it steps).
+  const openQuickLook = useCallback((pull: PullSummary) => {
+    const rows = queueRef.current;
+    setPreview(pull);
+    setQuickLook({
+      index: rows.findIndex((row) => pullKey(row) === pullKey(pull)),
+      total: rows.length,
+    });
+  }, []);
+  // J/K in the quick look: the neighboring row, like J/K in the list.
+  const stepQuickLook = useCallback(
+    (delta: -1 | 1) => {
+      const rows = queueRef.current;
+      const index =
+        preview == null
+          ? -1
+          : rows.findIndex((row) => pullKey(row) === pullKey(preview));
+      const next = index === -1 ? undefined : rows[index + delta];
+      if (next == null) {
+        return;
+      }
+      setPreview(next);
+      setQuickLook({ index: index + delta, total: rows.length });
+    },
+    [preview]
+  );
 
   const selectScope = (scope: PullScope) => {
     if (scope.kind === 'repo') {
@@ -354,19 +390,34 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
         onClosePreview={() => setPreview(null)}
         onOpen={openDiff}
         onPreview={previewLayout ? setPreview : undefined}
+        onQuickLook={previewLayout ? openQuickLook : undefined}
         queueRef={queueRef}
       />
     );
+  // The quick look renders with the preview pane: both exist only in the
+  // wide layout, and the dialog portals over the whole page anyway.
   const previewPane = previewLayout && (
-    <PullPreviewPane
-      muted={mutedAuthors.muted}
-      pull={preview}
-      tokenVersion={tokenVersion}
-      onClose={() => setPreview(null)}
-      onMute={mutedAuthors.mute}
-      onOpenDiff={openDiff}
-      onPullChanged={() => setListVersion((value) => value + 1)}
-    />
+    <>
+      <PullPreviewPane
+        muted={mutedAuthors.muted}
+        pull={preview}
+        tokenVersion={tokenVersion}
+        onClose={() => setPreview(null)}
+        onMute={mutedAuthors.mute}
+        onOpenDiff={openDiff}
+        onPullChanged={() => setListVersion((value) => value + 1)}
+        onQuickLook={openQuickLook}
+      />
+      {quickLook != null && preview != null && (
+        <PullQuickLook
+          position={quickLook.index === -1 ? null : quickLook}
+          pull={preview}
+          onClose={() => setQuickLook(null)}
+          onOpenReview={openDiff}
+          onStep={stepQuickLook}
+        />
+      )}
+    </>
   );
 
   // Columns: [rail] list, preview. The pane is always present in the wide
@@ -699,6 +750,7 @@ function PullList({
   onClosePreview,
   onOpen,
   onPreview,
+  onQuickLook,
   queueRef,
   request,
   scope,
@@ -717,6 +769,8 @@ function PullList({
   onOpen(pull: PullSummary): void;
   // Set in the wide layout: plain row clicks preview instead of navigating.
   onPreview?(pull: PullSummary): void;
+  // Space on the previewed row opens the quick look (wide layout only).
+  onQuickLook?(pull: PullSummary): void;
   // Receives the rows on screen, which openDiff saves as the diff view's
   // queue.
   queueRef: RefObject<readonly PullSummary[]>;
@@ -816,6 +870,7 @@ function PullList({
     onClosePreview,
     onOpen,
     onPreview,
+    onQuickLook,
     onToggleChecked: selection.toggleRow,
   });
   return (
@@ -1017,6 +1072,7 @@ function usePreviewKeyboard(
     onClosePreview(): void;
     onOpen(pull: PullSummary): void;
     onPreview?(pull: PullSummary): void;
+    onQuickLook?(pull: PullSummary): void;
     onToggleChecked(key: string, shiftKey: boolean): void;
   }
 ) {
@@ -1041,11 +1097,27 @@ function usePreviewKeyboard(
         onClosePreview,
         onOpen,
         onPreview,
+        onQuickLook,
         onToggleChecked,
         pulls,
         selectedKey,
       } = latest.current;
       const index = pulls.findIndex((pull) => pullKey(pull) === selectedKey);
+      // Space: a quick look at the previewed pull's diff, like Finder's. Only
+      // with focus on the page or a pull row, so a focused button or
+      // <summary> keeps its own Space.
+      if (
+        event.key === ' ' &&
+        index !== -1 &&
+        onQuickLook != null &&
+        (event.target === document.body ||
+          (event.target instanceof HTMLElement &&
+            event.target.matches('[data-pull-row]')))
+      ) {
+        event.preventDefault();
+        onQuickLook(pulls[index]);
+        return;
+      }
       if (event.key === 'x' && index !== -1) {
         event.preventDefault();
         onToggleChecked(pullKey(pulls[index]), false);

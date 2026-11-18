@@ -2,6 +2,7 @@
 
 import {
   IconArrowUpRight,
+  IconEye,
   IconEyeSlash,
   IconShare,
   IconX,
@@ -47,6 +48,7 @@ export function PullPreviewPane({
   onMute,
   onOpenDiff,
   onPullChanged,
+  onQuickLook,
   pull,
   tokenVersion,
 }: {
@@ -60,6 +62,8 @@ export function PullPreviewPane({
   // Called after an action here changed the pull (merge, close, draft), so
   // the list can refetch its rows.
   onPullChanged(): void;
+  // Opens the diff in a quick look over the page (Space).
+  onQuickLook(pull: PullSummary): void;
   pull: PullSummary | null;
   tokenVersion: number;
 }) {
@@ -101,6 +105,7 @@ export function PullPreviewPane({
         onMute={onMute}
         onOpenDiff={onOpenDiff}
         onPullChanged={onPullChanged}
+        onQuickLook={onQuickLook}
       />
     </AppPermissionsProvider>
   );
@@ -110,6 +115,7 @@ export function PullPreviewPane({
 // usePreviewKeyboard in PullsDashboard), listed in the empty pane.
 const PREVIEW_SHORTCUTS: readonly { keys: string[]; label: string }[] = [
   { keys: ['J', 'K'], label: 'Move between pull requests' },
+  { keys: ['Space'], label: 'Quick look at the diff' },
   { keys: ['Enter'], label: 'Open the diff in a new tab' },
   { keys: ['Esc'], label: 'Close the preview' },
 ];
@@ -128,6 +134,7 @@ function LoadedPreview({
   onMute,
   onOpenDiff,
   onPullChanged,
+  onQuickLook,
   pull,
   tokenVersion,
 }: {
@@ -136,6 +143,7 @@ function LoadedPreview({
   onOpenDiff(pull: PullSummary): void;
   onClose(): void;
   onPullChanged(): void;
+  onQuickLook(pull: PullSummary): void;
   pull: PullSummary;
   tokenVersion: number;
 }) {
@@ -179,6 +187,17 @@ function LoadedPreview({
           {pull.owner}/{pull.repo}
         </span>
         <MuteAuthorButton muted={muted} pull={pull} onMute={onMute} />
+        <Button
+          type="button"
+          className="h-7 px-2.5"
+          size="xs"
+          variant="outline"
+          title="Look at the diff without leaving the list (Space)"
+          onClick={() => onQuickLook(pull)}
+        >
+          <IconEye className="size-3.5" />
+          Quick look
+        </Button>
         <Button asChild className="h-7 px-2.5" size="xs" variant="outline">
           <a
             href={pull.viewerPath}

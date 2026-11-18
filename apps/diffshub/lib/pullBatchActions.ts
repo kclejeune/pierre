@@ -51,7 +51,13 @@ async function mergePull(ref: PullRequestRef, token: string): Promise<void> {
   if (blocked != null) {
     throw new Error(blocked);
   }
-  const supplement = await fetchPullDetailsSupplement(ref, headSha, token);
+  const supplement = await fetchPullDetailsSupplement(
+    ref,
+    headSha,
+    token,
+    undefined,
+    { accessOnly: true }
+  );
   const plan = planPullMerge(
     supplement.mergeCapabilities,
     supplement.mergeQueue

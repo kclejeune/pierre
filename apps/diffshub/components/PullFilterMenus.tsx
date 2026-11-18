@@ -28,20 +28,17 @@ import { useModifierKey } from './ShortcutHint';
 import { cn } from '@/lib/cn';
 import { pullKey, type PullSummary } from '@/lib/githubPullSummaries';
 import { authorSearchName, mutedAuthorLabel } from '@/lib/mutedAuthors';
+import { includesName } from '@/lib/nameList';
 import type { PullLabel } from '@/lib/pullInfoClient';
 import {
   clearPullFilters,
-  countPullFilters,
   PULL_CHECKS_FILTER_OPTIONS,
   PULL_REVIEW_FILTER_OPTIONS,
-  type PullPresetKey,
-  readPullAuthorFilter,
   readPullLabelFilters,
-  readPullPresetFilter,
+  readPullQualifierFilter,
   togglePullLabelFilter,
   togglePullUnlabeledFilter,
-  writePullAuthorFilter,
-  writePullPresetFilter,
+  writePullQualifierFilter,
 } from '@/lib/pullSearchQuery';
 
 // Options listed before the filter box has to narrow them.
@@ -70,30 +67,19 @@ export function PullFilterMenus({
 }: PullFilterMenusProps) {
   const seen = useSeenPulls(pulls);
   const filters = useFilterSections(seen, text, onApplyText);
-  const count = countPullFilters(text);
+  const count = filters.reduce((total, filter) => total + filter.active, 0);
   return (
     <>
       <div className="ml-auto hidden items-center @min-[44rem]/header:flex">
         {filters.map((filter) => (
           <DropdownMenu key={filter.id}>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="xs"
-                className={cn(
-                  'h-7 tabular-nums',
-                  filter.active === 0
-                    ? 'text-muted-foreground'
-                    : 'text-foreground'
-                )}
-              >
-                {filter.label}
-                {filter.active > 1 && (
-                  <span className="text-muted-foreground">{filter.active}</span>
-                )}
-                <IconChevronSm className="size-3" />
-              </Button>
-            </DropdownMenuTrigger>
+            <FilterTrigger
+              active={filter.active}
+              label={filter.label}
+              // One choice is visible in the label's color; a count only
+              // helps once a filter (Label) holds several.
+              showCount={filter.active > 1}
+            />
             <DropdownMenuContent
               align="end"
               className="max-h-96 w-64 overflow-y-auto"
@@ -105,22 +91,7 @@ export function PullFilterMenus({
       </div>
       <div className="ml-auto @min-[44rem]/header:hidden">
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="xs"
-              className={cn(
-                'h-7 tabular-nums',
-                count === 0 ? 'text-muted-foreground' : 'text-foreground'
-              )}
-            >
-              Filters
-              {count > 0 && (
-                <span className="text-muted-foreground">{count}</span>
-              )}
-              <IconChevronSm className="size-3" />
-            </Button>
-          </DropdownMenuTrigger>
+          <FilterTrigger active={count} label="Filters" showCount={count > 0} />
           <DropdownMenuContent align="end" className="min-w-48">
             {filters.map((filter) => (
               <DropdownMenuSub key={filter.id}>
@@ -151,6 +122,35 @@ export function PullFilterMenus({
         </DropdownMenu>
       </div>
     </>
+  );
+}
+
+// A filter menu's ghost trigger: muted until the filter sets something, with
+// an optional count of what it sets.
+function FilterTrigger({
+  active,
+  label,
+  showCount,
+}: {
+  active: number;
+  label: string;
+  showCount: boolean;
+}) {
+  return (
+    <DropdownMenuTrigger asChild>
+      <Button
+        variant="ghost"
+        size="xs"
+        className={cn(
+          'h-7 tabular-nums',
+          active === 0 ? 'text-muted-foreground' : 'text-foreground'
+        )}
+      >
+        {label}
+        {showCount && <span className="text-muted-foreground">{active}</span>}
+        <IconChevronSm className="size-3" />
+      </Button>
+    </DropdownMenuTrigger>
   );
 }
 
@@ -208,12 +208,12 @@ function useFilterSections(
   text: string,
   onApplyText: (text: string) => void
 ): FilterSection[] {
-  const author = readPullAuthorFilter(text);
+  const author = readPullQualifierFilter(text, 'author');
   const labels = readPullLabelFilters(text);
   const labelCount =
     labels.include.length + labels.exclude.length + (labels.unlabeled ? 1 : 0);
-  const preset = (key: PullPresetKey, label: string, id: string) => {
-    const value = readPullPresetFilter(text, key);
+  const preset = (key: 'review' | 'status', label: string, id: string) => {
+    const value = readPullQualifierFilter(text, key)?.toLowerCase() ?? '';
     const options =
       key === 'review'
         ? PULL_REVIEW_FILTER_OPTIONS
@@ -226,7 +226,9 @@ function useFilterSections(
           options={options}
           value={value}
           onChoose={(next) =>
-            onApplyText(writePullPresetFilter(text, key, next))
+            onApplyText(
+              writePullQualifierFilter(text, key, next === '' ? null : next)
+            )
           }
         />
       ),
@@ -242,7 +244,9 @@ function useFilterSections(
         <AuthorItems
           current={author}
           pulls={pulls}
-          onChoose={(next) => onApplyText(writePullAuthorFilter(text, next))}
+          onChoose={(next) =>
+            onApplyText(writePullQualifierFilter(text, 'author', next))
+          }
         />
       ),
       label: 'Author',
@@ -377,8 +381,7 @@ function AuthorItems({
   const loaded = useAuthorOptions(pulls);
   const needle = query.trim().toLowerCase();
   const options = (
-    current == null ||
-    loaded.some((name) => name.toLowerCase() === current.toLowerCase())
+    current == null || includesName(loaded, current)
       ? loaded
       : [current, ...loaded]
   )
@@ -477,27 +480,23 @@ function LabelItems({
   // Whether the pointer or key that's selecting an item held Alt. Radix's
   // onSelect event doesn't carry modifier keys.
   const excludeRef = useRef(false);
-  const filters = readPullLabelFilters(text);
   // Memoized on the text, so the options list only rebuilds when it changes.
-  const chosen = useMemo(() => {
-    const current = readPullLabelFilters(text);
-    return [...current.include, ...current.exclude];
-  }, [text]);
+  const filters = useMemo(() => readPullLabelFilters(text), [text]);
+  const chosen = useMemo(
+    () => [...filters.include, ...filters.exclude],
+    [filters]
+  );
   const loaded = useLabelOptions(pulls, chosen);
   const needle = query.trim().toLowerCase();
   const options = loaded
     .filter((label) => label.name.toLowerCase().includes(needle))
     .slice(0, MAX_LISTED_OPTIONS);
-  const modeOf = (name: string) => {
-    const lower = name.toLowerCase();
-    if (filters.include.some((label) => label.toLowerCase() === lower)) {
-      return 'include';
-    }
-    if (filters.exclude.some((label) => label.toLowerCase() === lower)) {
-      return 'exclude';
-    }
-    return null;
-  };
+  const modeOf = (name: string) =>
+    includesName(filters.include, name)
+      ? 'include'
+      : includesName(filters.exclude, name)
+        ? 'exclude'
+        : null;
   const trackModifier = (event: { altKey: boolean }) => {
     excludeRef.current = event.altKey;
   };

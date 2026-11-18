@@ -53,7 +53,6 @@ import { formatShortcut, useModifierKey } from '@/components/ShortcutHint';
 import { Spinner } from '@/components/Spinner';
 import { Switch } from '@/components/Switch';
 import {
-  pullKey,
   type PullSearchRequest,
   useDashboardPulls,
 } from '@/components/useDashboardPulls';
@@ -66,12 +65,14 @@ import { usePullSelection } from '@/components/usePullSelection';
 import { cn } from '@/lib/cn';
 import { GITHUB_APP_OWNER_FIX } from '@/lib/githubAppAccess';
 import {
+  effectiveMutedAuthors,
   involvementsUseReviewRequests,
   normalizePullInvolvements,
   PULL_ACTIVITY_LABELS,
   PULL_INVOLVEMENTS,
   type PullAudience,
   type PullInvolvement,
+  pullKey,
   type PullSummary,
 } from '@/lib/githubPullSummaries';
 import {
@@ -98,10 +99,9 @@ import {
 import {
   PULL_SORT_OPTIONS,
   type PullStateFilter,
-  readPositiveQualifierValues,
   readPullSort,
   readPullStateFilter,
-  writePullAuthorFilter,
+  writePullQualifierFilter,
   writePullSort,
   writePullStateFilter,
 } from '@/lib/pullSearchQuery';
@@ -254,19 +254,13 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   // J/K in the quick look: the neighboring row, like J/K in the list.
   const stepQuickLook = useCallback(
     (delta: -1 | 1) => {
-      const rows = queueRef.current;
-      const index =
-        preview == null
-          ? -1
-          : rows.findIndex((row) => pullKey(row) === pullKey(preview));
-      const next = index === -1 ? undefined : rows[index + delta];
-      if (next == null) {
-        return;
+      const index = quickLook?.index ?? -1;
+      const next = index === -1 ? undefined : queueRef.current[index + delta];
+      if (next != null) {
+        openQuickLook(next);
       }
-      setPreview(next);
-      setQuickLook({ index: index + delta, total: rows.length });
     },
-    [preview]
+    [openQuickLook, quickLook]
   );
 
   const selectScope = (scope: PullScope) => {
@@ -803,18 +797,15 @@ function PullList({
   // once so each row's check is a set lookup. An author the query asks for
   // (author:x, e.g. from "Show only their pull requests") isn't excluded by
   // the search, so their rows show at full strength.
-  const mutedNames = useMemo(() => {
-    const requested = new Set(
-      readPositiveQualifierValues(text, 'author').map((name) =>
-        name.toLowerCase()
-      )
-    );
-    return new Set(
-      muting.muted
-        .map((author) => author.toLowerCase())
-        .filter((author) => !requested.has(author))
-    );
-  }, [muting.muted, text]);
+  const mutedNames = useMemo(
+    () =>
+      new Set(
+        effectiveMutedAuthors(muting.muted, text).map((author) =>
+          author.toLowerCase()
+        )
+      ),
+    [muting.muted, text]
+  );
   // Near-duplicate pulls (same title and author) fold into one row until
   // expanded; `rows` is what's on screen, which J/K walk and the diff
   // view's queue follows.
@@ -1311,7 +1302,9 @@ function MutedAuthorsMenu({
                 <DropdownMenuSubContent>
                   <DropdownMenuItem
                     onSelect={() =>
-                      onApplyText(writePullAuthorFilter(text, author))
+                      onApplyText(
+                        writePullQualifierFilter(text, 'author', author)
+                      )
                     }
                   >
                     Show only their pull requests

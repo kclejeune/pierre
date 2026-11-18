@@ -257,11 +257,11 @@ function GroupToggle({
       title={
         expanded
           ? 'Fold the matching pull requests back into this row'
-          : `${size - 1} more with the same title and author`
+          : `${others} more with the same title and author`
       }
       onClick={onToggle}
     >
-      {expanded ? 'Fold' : `+${size - 1}`}
+      {expanded ? 'Fold' : `+${others}`}
       <IconChevronSm
         className={cn('size-3 transition-transform', expanded && 'rotate-180')}
       />

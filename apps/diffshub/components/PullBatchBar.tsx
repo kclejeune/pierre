@@ -13,6 +13,7 @@ import {
   type PullBatchResult,
   runPullBatch,
 } from '@/lib/pullBatchActions';
+import { plural } from '@/lib/pullOverview';
 
 const ACTION_COPY: Record<PullBatchAction, { done: string; running: string }> =
   {
@@ -20,17 +21,15 @@ const ACTION_COPY: Record<PullBatchAction, { done: string; running: string }> =
     merge: { done: 'Merged or queued', running: 'Merging' },
   };
 
-function pluralPulls(count: number): string {
-  return count === 1 ? '1 pull request' : `${count} pull requests`;
-}
-
 // Toasts a finished batch: one success line, plus the first few failures
 // with GitHub's reasons (own pulls can't be approved, a branch moved, checks
 // are required, ...).
 function reportBatch(action: PullBatchAction, result: PullBatchResult) {
   const { failures, succeeded } = result;
   if (failures.length === 0) {
-    toast.success(`${ACTION_COPY[action].done} ${pluralPulls(succeeded)}.`);
+    toast.success(
+      `${ACTION_COPY[action].done} ${plural(succeeded, 'pull request', 'pull requests')}.`
+    );
     return;
   }
   const shown = failures

@@ -951,12 +951,15 @@ export function usePatchLoader({
   ]);
 
   useEffect(() => {
+    if (!syncLocationHash) {
+      return;
+    }
     window.addEventListener('hashchange', tryApplyLineHashTarget);
     tryApplyLineHashTarget();
     return () => {
       window.removeEventListener('hashchange', tryApplyLineHashTarget);
     };
-  }, [tryApplyLineHashTarget]);
+  }, [syncLocationHash, tryApplyLineHashTarget]);
 
   const retryLoad = useCallback(() => {
     setLoadAttempt((attempt) => attempt + 1);

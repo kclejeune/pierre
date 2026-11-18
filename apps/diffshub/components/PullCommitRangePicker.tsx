@@ -25,6 +25,9 @@ import {
 import { recordRecentDiff } from '@/lib/recentDiffs';
 
 interface PullCommitRangePickerProps {
+  // Extra classes for the trigger button (the header's PR group restyles
+  // it as a segment).
+  className?: string;
   getGitHubToken(): string | undefined;
   // Bumped when the saved token changes so the cached listing refetches
   // under the new identity.
@@ -42,6 +45,7 @@ type CommitsState =
 // spanning a start/end pair — in the same viewer. Selection is two clicks;
 // clicking a third commit restarts from it.
 export function PullCommitRangePicker({
+  className,
   getGitHubToken,
   githubTokenVersion,
   pullRequest,
@@ -153,7 +157,11 @@ export function PullCommitRangePicker({
           size="sm"
           title="View changes from a commit range"
           aria-label="Commits"
-          className={cn(CHROME_ICON_BUTTON_CLASS, 'w-auto gap-1.5 px-2')}
+          className={cn(
+            CHROME_ICON_BUTTON_CLASS,
+            'w-auto gap-1.5 px-2',
+            className
+          )}
         >
           <IconBranch className="size-3.5" />
           {/* Icon-only below xl, where the PR title needs the room. */}

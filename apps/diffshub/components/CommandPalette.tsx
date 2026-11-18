@@ -600,7 +600,9 @@ function PaletteFooter({
   );
 }
 
-function FooterHint({
+// A key badge and what it does, for keyboard-hint footers (the palettes and
+// the /pulls search suggestions).
+export function FooterHint({
   className,
   keys,
   label,

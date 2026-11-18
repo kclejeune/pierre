@@ -62,15 +62,23 @@ export function savePullQueue(items: readonly PullQueueItem[]): void {
   writeStoredJSON(STORAGE_KEY, stored);
 }
 
-// Where `pathname` sits in the queue: an exact match, or a page under a
-// queued pull (its commit-range views). -1 when it isn't queued.
+// Where the current page sits in the queue: the queued pull itself, a page
+// under it, or a commit or compare view opened from it. Those views live at
+// /<owner>/<repo>/commit/<sha> and name their pull only in the ?fromPull=
+// parameter (lib/pullCommitsList's commitRangeViewerHref), so `fromPull`
+// counts as the pull's own path. -1 when the page isn't queued.
 export function findQueuePosition(
   items: readonly PullQueueItem[],
-  pathname: string
+  pathname: string,
+  fromPull?: string | null
 ): number {
-  const path = pathname.replace(/\/$/, '').toLowerCase();
+  const candidates = [pathname, fromPull]
+    .filter((path): path is string => path != null && path.startsWith('/'))
+    .map((path) => path.replace(/\/$/, '').toLowerCase());
   return items.findIndex((item) => {
     const queued = item.path.toLowerCase();
-    return path === queued || path.startsWith(`${queued}/`);
+    return candidates.some(
+      (path) => path === queued || path.startsWith(`${queued}/`)
+    );
   });
 }

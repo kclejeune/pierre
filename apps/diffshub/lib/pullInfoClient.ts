@@ -25,6 +25,8 @@ export interface PullReviewer {
   avatarUrl?: string;
   login: string;
   state: PullReviewerState;
+  // A requested team, listed by slug. Teams have no user profile to look up.
+  team?: boolean;
 }
 
 // One CI signal on the head commit (a check run or a legacy commit status),

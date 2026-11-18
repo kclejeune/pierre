@@ -16,6 +16,24 @@ describe('pull queue', () => {
     expect(findQueuePosition(items, '/acme/a/pull/12')).toBe(-1);
   });
 
+  test('finds commit and compare views through their fromPull parameter', () => {
+    expect(
+      findQueuePosition(items, '/acme/b/commit/abc123', '/acme/b/pull/2')
+    ).toBe(1);
+    expect(
+      findQueuePosition(items, '/acme/a/compare/abc...def', '/acme/a/pull/1')
+    ).toBe(0);
+    expect(findQueuePosition(items, '/acme/b/commit/abc123', null)).toBe(-1);
+    // Only app-relative paths count; anything else is ignored.
+    expect(
+      findQueuePosition(
+        items,
+        '/acme/b/commit/abc123',
+        'https://x/acme/b/pull/2'
+      )
+    ).toBe(-1);
+  });
+
   test('reads stored queues, dropping expired or malformed ones', () => {
     const now = Date.now();
     const stored = (savedAt: number, value: unknown = items) => ({

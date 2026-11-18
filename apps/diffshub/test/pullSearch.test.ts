@@ -8,6 +8,7 @@ import {
   writePullsPageState,
 } from '@/lib/pullScopes';
 import {
+  normalizeQualifierNegation,
   readPullSort,
   readPullStateFilter,
   splitPullSort,
@@ -241,6 +242,40 @@ describe('search builder reads the typed text with the tokenizer', () => {
       })
     ).toBe(
       '(label:a OR label:b) is:open is:pr archived:false repo:oven-sh/bun'
+    );
+  });
+
+  test('NOT before a qualifier is sent as a "-" exclusion', () => {
+    expect(
+      buildActiveSearchQuery({
+        involves: 'anyone',
+        mutedAuthors: ['renovate-bot'],
+        repos: ['oven-sh/bun'],
+        text: 'is:open (NOT author:renovate-bot OR label:"a b")',
+      })
+    ).toBe(
+      'is:open (-author:renovate-bot OR label:"a b") is:pr archived:false repo:oven-sh/bun -author:renovate-bot'
+    );
+  });
+});
+
+describe('normalizeQualifierNegation', () => {
+  test('rewrites NOT qualifier, and leaves keywords and groups alone', () => {
+    expect(normalizeQualifierNegation('is:open NOT author:x')).toBe(
+      'is:open -author:x'
+    );
+    expect(normalizeQualifierNegation('NOT  label:"a b" fix')).toBe(
+      '-label:"a b" fix'
+    );
+    expect(normalizeQualifierNegation('is:open NOT flaky')).toBe(
+      'is:open NOT flaky'
+    );
+    expect(normalizeQualifierNegation('NOT (label:a OR label:b)')).toBe(
+      'NOT (label:a OR label:b)'
+    );
+    expect(normalizeQualifierNegation('NOT -author:x')).toBe('NOT -author:x');
+    expect(normalizeQualifierNegation('label:"NOT author:x"')).toBe(
+      'label:"NOT author:x"'
     );
   });
 });

@@ -1,18 +1,22 @@
 'use client';
 
-import { IconChevronSm } from '@pierre/icons';
+import { IconCheck, IconChevronSm, IconCircleFill, IconX } from '@pierre/icons';
 import Link from 'next/link';
 import { memo, type MouseEvent } from 'react';
 
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { LabelColorDot } from './LabelColorDot';
+import { TONE_TEXT_CLASS } from './PullOverview';
 import { PULL_STATE_DISPLAY } from './pullStateDisplay';
 import { RelativeTime } from './RelativeTime';
 import { cn } from '@/lib/cn';
 import {
   PULL_ACTIVITY_LABELS,
+  PULL_REVIEW_DECISION_LABELS,
   type PullActivity,
+  type PullChecksSummary,
   pullKey,
+  type PullReviewDecision,
   type PullSummary,
 } from '@/lib/githubPullSummaries';
 import type { PullLabel } from '@/lib/pullInfoClient';
@@ -111,7 +115,7 @@ export const PullRequestRow = memo(function PullRequestRow({
   return (
     <div
       className={cn(
-        'group/row flex items-center border-b transition-colors first:rounded-t-lg last:rounded-b-lg last:border-b-0',
+        'group/row flex items-start border-b transition-colors first:rounded-t-lg last:rounded-b-lg last:border-b-0',
         selected
           ? // Full-contrast edge: the palette is monochrome, so the
             // selection that ties this row to the preview pane is marked
@@ -131,7 +135,7 @@ export const PullRequestRow = memo(function PullRequestRow({
           checked={checked}
           disabled={selectionLocked}
           className={cn(
-            'accent-foreground ml-3 size-3.5 shrink-0 cursor-pointer disabled:cursor-not-allowed',
+            'accent-foreground mt-[13px] ml-3 size-3.5 shrink-0 cursor-pointer disabled:cursor-not-allowed',
             !selecting &&
               !checked &&
               'opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100'
@@ -155,20 +159,38 @@ export const PullRequestRow = memo(function PullRequestRow({
           onOpen(pull);
         }}
         // The ring is inset because section cards clip overflow.
-        className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-3 p-3 outline-none focus-visible:ring-2 focus-visible:ring-inset"
+        className="focus-visible:ring-ring flex min-w-0 flex-1 items-start gap-3 px-3 py-2.5 outline-none focus-visible:ring-2 focus-visible:ring-inset"
       >
         <StateIcon
-          className={cn('size-4 shrink-0', stateDisplay.className)}
+          className={cn('mt-0.5 size-4 shrink-0', stateDisplay.className)}
           aria-label={`${stateDisplay.label} pull request`}
         />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <span className="text-foreground truncate text-sm font-medium">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          {/* The repository leads the title, as on GitHub's cross-repo
+              list, so it never competes with the label chips for room. Long
+              titles wrap to a second line: bot titles keep their most
+              telling part ("[security]", the target version) at the end. */}
+          <span className="text-foreground line-clamp-2 text-sm font-medium break-words">
+            {showRepo && (
+              <span className="text-muted-foreground mr-1.5 font-normal">
+                {pull.owner}/{pull.repo}
+              </span>
+            )}
             {pull.title}
           </span>
-          <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
-            <span className="text-muted-foreground truncate text-xs">
-              {showRepo ? `${pull.owner}/${pull.repo} ` : ''}#{pull.number}
+          {/* A size container: what fits on this line depends on the row's
+              own width (the list narrows beside the preview pane, and group
+              leads give room to their toggle), not the viewport's. */}
+          <div className="@container flex min-w-0 items-center gap-1.5 overflow-hidden">
+            <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+              #{pull.number}
             </span>
+            {/* CI and review state sit together after the number: the two
+                things that decide whether the pull can merge. They live
+                here rather than after the title so the title's two-line
+                clamp can never cut them off. */}
+            {pull.checks != null && <ChecksGlyph checks={pull.checks} />}
+            <ReviewDecisionText pull={pull} />
             {pull.activity?.map((activity) => (
               <span
                 key={activity}
@@ -184,7 +206,7 @@ export const PullRequestRow = memo(function PullRequestRow({
           </div>
         </div>
         <RelativeTime
-          className="text-muted-foreground shrink-0 text-xs"
+          className="text-muted-foreground mt-0.5 shrink-0 text-xs"
           iso={pull.updatedAt}
           titlePrefix="Updated "
         />
@@ -195,7 +217,7 @@ export const PullRequestRow = memo(function PullRequestRow({
                 avatarUrl: pull.authorAvatarUrl ?? '',
                 login: pull.authorLogin,
               }}
-              className="size-6 self-center"
+              className="-mt-0.5 size-6"
             />
           </span>
         )}
@@ -222,11 +244,14 @@ function GroupToggle({
   onToggle(): void;
   size: number;
 }) {
+  const others = size - 1;
+  const othersLabel = `${others} matching pull request${others === 1 ? '' : 's'}`;
   return (
     <button
       type="button"
       aria-expanded={expanded}
-      className="text-muted-foreground hover:text-foreground hover:bg-accent focus-visible:ring-ring mr-3 flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md border px-1.5 text-[11px] tabular-nums outline-none focus-visible:ring-2"
+      aria-label={expanded ? `Fold ${othersLabel}` : `Show ${othersLabel}`}
+      className="text-muted-foreground hover:text-foreground hover:bg-accent focus-visible:ring-ring mt-2 mr-3 flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md border px-1.5 text-[11px] tabular-nums outline-none focus-visible:ring-2"
       title={
         expanded
           ? 'Fold the matching pull requests back into this row'
@@ -242,33 +267,124 @@ function GroupToggle({
   );
 }
 
-// The row's first MAX_ROW_LABELS labels, then a "+N" chip naming the rest in
-// its tooltip.
+const CHECKS_GLYPHS: Record<
+  PullChecksSummary,
+  { className: string; Icon: typeof IconCheck; label: string }
+> = {
+  failure: {
+    className: TONE_TEXT_CLASS.failure,
+    Icon: IconX,
+    label: 'Some checks failed',
+  },
+  pending: {
+    className: TONE_TEXT_CLASS.pending,
+    Icon: IconCircleFill,
+    label: 'Checks in progress',
+  },
+  success: {
+    className: TONE_TEXT_CLASS.success,
+    Icon: IconCheck,
+    label: 'All checks passed',
+  },
+};
+
+// The head commit's CI result, in GitHub's list glyphs: a check, a cross,
+// or (still running) a small dot.
+function ChecksGlyph({ checks }: { checks: PullChecksSummary }) {
+  const { className, Icon, label } = CHECKS_GLYPHS[checks];
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      className={cn('inline-flex shrink-0 items-center', className)}
+    >
+      <Icon
+        aria-hidden
+        className={checks === 'pending' ? 'size-2' : 'size-3'}
+      />
+    </span>
+  );
+}
+
+const DECISION_TEXT_CLASSES: Record<PullReviewDecision, string> = {
+  approved: TONE_TEXT_CLASS.success,
+  'changes-requested': TONE_TEXT_CLASS.failure,
+  'review-required': 'text-muted-foreground',
+};
+
+// The pull's overall review state ("Approved", "Review required"), which is
+// what decides whether it can merge. Skipped when a viewer chip already says
+// the same word (the viewer's own approval on a pull that's approved).
+function ReviewDecisionText({ pull }: { pull: PullSummary }) {
+  const decision = pull.reviewDecision;
+  if (
+    decision == null ||
+    (pull.activity ?? []).some((activity) => activity === decision)
+  ) {
+    return null;
+  }
+  return (
+    <span
+      className={cn(
+        'shrink-0 text-xs',
+        DECISION_TEXT_CLASSES[decision],
+        // The default state for most pulls; the first thing a tight line
+        // drops, ahead of the viewer's own involvement chip.
+        decision === 'review-required' && '@max-[22rem]:hidden'
+      )}
+    >
+      {PULL_REVIEW_DECISION_LABELS[decision]}
+    </span>
+  );
+}
+
+// The row's labels. With room (a meta line of 26rem or more), the first
+// MAX_ROW_LABELS as chips and then a "+N" naming the rest in its tooltip;
+// on a narrower line, one "N labels" chip naming them all, so the count
+// stays readable instead of chips squeezing down to empty pills.
 function RowLabels({ labels }: { labels: readonly PullLabel[] }) {
+  if (labels.length === 0) {
+    return null;
+  }
   const shown = labels.slice(0, MAX_ROW_LABELS);
   const rest = labels.slice(MAX_ROW_LABELS);
+  const countChipClass =
+    'text-muted-foreground shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] leading-none tabular-nums';
   return (
     <>
-      {shown.map((label) => (
-        <LabelChip key={label.name} label={label} />
-      ))}
-      {rest.length > 0 && (
-        <span
-          className="text-muted-foreground shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] leading-none tabular-nums"
-          title={rest.map((label) => label.name).join(', ')}
-        >
-          +{rest.length}
-        </span>
-      )}
+      <span className="hidden min-w-0 items-center gap-1.5 overflow-hidden @min-[26rem]:flex">
+        {shown.map((label) => (
+          <LabelChip key={label.name} label={label} />
+        ))}
+        {rest.length > 0 && (
+          <span
+            className={countChipClass}
+            title={rest.map((label) => label.name).join(', ')}
+          >
+            +{rest.length}
+          </span>
+        )}
+      </span>
+      <span
+        className={cn(countChipClass, '@min-[26rem]:hidden')}
+        title={labels.map((label) => label.name).join(', ')}
+      >
+        {labels.length} {labels.length === 1 ? 'label' : 'labels'}
+      </span>
     </>
   );
 }
 
 // A repository label: the label's own color as a dot, with the name in the
-// row's muted text so arbitrary label colors never decide legibility.
+// row's muted text so arbitrary label colors never decide legibility. The
+// full name rides in the tooltip for chips that truncate.
 function LabelChip({ label }: { label: PullLabel }) {
   return (
-    <span className="text-muted-foreground inline-flex max-w-40 shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] leading-none">
+    <span
+      title={label.name}
+      className="text-muted-foreground inline-flex max-w-40 min-w-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] leading-none"
+    >
       <LabelColorDot className="size-1.5" color={label.color} />
       <span className="truncate">{label.name}</span>
     </span>

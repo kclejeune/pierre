@@ -1304,6 +1304,7 @@ function ReviewerRow({ reviewer }: { reviewer: PullReviewer }) {
       <CommentAuthorAvatar
         author={{ avatarUrl: reviewer.avatarUrl ?? '', login: reviewer.login }}
         className="size-5 self-center"
+        lookupProfile={reviewer.team !== true}
       />
       <span className="min-w-0 flex-1 truncate text-xs">{reviewer.login}</span>
       <span

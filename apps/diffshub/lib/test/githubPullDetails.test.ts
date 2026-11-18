@@ -46,7 +46,7 @@ describe('parsePullDetails', () => {
     ]);
     expect(details.reviewers).toEqual([
       { avatarUrl: 'https://a/o.png', login: 'octocat', state: 'PENDING' },
-      { avatarUrl: undefined, login: 'core-team', state: 'PENDING' },
+      { login: 'core-team', state: 'PENDING', team: true },
     ]);
   });
 

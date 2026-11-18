@@ -713,6 +713,14 @@ describe('muted authors', () => {
     });
     expect(variables.query).not.toContain('-author:app/renovate');
     expect(variables.query).toContain('-author:svc-bump');
+    // A quoted value names the same author.
+    expect(
+      buildActivePullsVariables({
+        involves: [],
+        mutedAuthors: muted,
+        text: 'is:open author:"svc-bump"',
+      }).query
+    ).not.toContain('-author:svc-bump');
     expect(
       buildActivePullsVariables({
         involves: [],

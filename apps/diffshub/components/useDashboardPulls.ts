@@ -44,8 +44,10 @@ export interface DashboardPullsState {
   // screen can come from the cache with a next page, so whether more pages
   // exist says nothing about which request failed.
   retry(): void;
-  // Identifies this search (and token), for state that should reset when
-  // the search changes, like the list's batch selection.
+  // Identifies this search, for state that should reset when the search
+  // changes, like the list's batch selection. It leaves out the token
+  // version: a token refresh mid-batch reloads the rows but is still the
+  // same search, so the batch's failures can return to the selection.
   searchKey: string;
   totalCount: number;
 }
@@ -278,7 +280,7 @@ export function useDashboardPulls(
       state.failure?.request === 'more'
         ? loadMore()
         : setReloadVersion((version) => version + 1),
-    searchKey: cacheKey,
+    searchKey: search,
     totalCount: state.totalCount,
   };
 }

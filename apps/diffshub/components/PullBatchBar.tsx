@@ -105,6 +105,7 @@ export function usePullBatch(
 // confirm step, since merging can't be undone), and clear. While a batch
 // runs it shows progress instead of actions.
 export function PullBatchBar({
+  allLoadedChecked,
   checked,
   loadedCount,
   onClear,
@@ -112,6 +113,7 @@ export function PullBatchBar({
   onSelectAll,
   running,
 }: {
+  allLoadedChecked: boolean;
   checked: readonly PullSummary[];
   loadedCount: number;
   onClear(): void;
@@ -119,9 +121,15 @@ export function PullBatchBar({
   onSelectAll(): void;
   running: PullBatchProgress | null;
 }) {
-  const [confirmingMerge, setConfirmingMerge] = useState(false);
+  // The selection the merge confirm was armed for, as its pull keys. Merging
+  // can't be undone, so any change to the selection (a shift-click, Select
+  // all) disarms the confirm rather than carrying it over to pulls the
+  // viewer never confirmed.
+  const selectionKey = checked.map(pullKey).join(' ');
+  const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
+  const confirmingMerge = confirmedFor === selectionKey;
   const run = (action: PullBatchAction) => {
-    setConfirmingMerge(false);
+    setConfirmedFor(null);
     onRun(action);
   };
 
@@ -135,7 +143,7 @@ export function PullBatchBar({
       <span className="text-foreground font-medium tabular-nums">
         {running == null ? `${count} selected` : `${running.total} in batch`}
       </span>
-      {count < loadedCount && running == null && (
+      {!allLoadedChecked && running == null && (
         <Button
           size="xs"
           variant="link"
@@ -177,7 +185,7 @@ export function PullBatchBar({
                 variant="outline"
                 className="h-7 px-2.5"
                 title="Join the merge queue where there is one, otherwise merge with the repository's default method"
-                onClick={() => setConfirmingMerge(true)}
+                onClick={() => setConfirmedFor(selectionKey)}
               >
                 Merge when ready
               </Button>

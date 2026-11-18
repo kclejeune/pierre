@@ -43,6 +43,7 @@ import {
 } from '@/components/DropdownMenu';
 import { GitHubTokenControl } from '@/components/GitHubTokenControl';
 import { PullBatchBar, usePullBatch } from '@/components/PullBatchBar';
+import { PullFilterMenus } from '@/components/PullFilterMenus';
 import { PullPreviewPane } from '@/components/PullPreviewPane';
 import { PullQueryBar } from '@/components/PullQueryBar';
 import { PullRequestRow } from '@/components/PullRequestRow';
@@ -828,7 +829,7 @@ function PullList({
         fill && 'flex min-h-64 flex-1 flex-col'
       )}
     >
-      <div className="bg-muted/30 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-2 py-1.5">
+      <div className="bg-muted/30 @container/header flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-2 py-1.5">
         {selection.checked.length > 0 || batch.running != null ? (
           <PullBatchBar
             checked={selection.checked}
@@ -878,6 +879,11 @@ function PullList({
                 </button>
               ))}
             </div>
+            <PullFilterMenus
+              pulls={pulls}
+              text={text}
+              onApplyText={onApplyText}
+            />
             <MutedAuthorsMenu
               muting={muting}
               mutedCount={mutedCount}
@@ -1199,7 +1205,7 @@ function MutedAuthorsMenu({
         <Button
           variant="ghost"
           size="xs"
-          className="text-muted-foreground ml-auto h-7 tabular-nums"
+          className="text-muted-foreground h-7 tabular-nums"
           title="Authors whose pull requests this list leaves out"
         >
           <IconEyeSlash className="size-3" />

@@ -147,6 +147,51 @@ export function hasQualifier(text: string, key: string): boolean {
   );
 }
 
+// Values of the `key:` qualifiers the text asks for rather than excludes,
+// in order (e.g. the authors an author: term requests). Negation comes from
+// a leading "-" on the term, a NOT before it, or a NOT or "-" before an
+// enclosing group, and two negations cancel. Unbalanced parens have no
+// reliable reading, so they yield nothing.
+export function readPositiveQualifierValues(
+  text: string,
+  key: string
+): string[] {
+  const values: string[] = [];
+  // Whether each open group (and the text outside them) is negated.
+  const groups: boolean[] = [];
+  let groupNegated = false;
+  // A NOT or bare "-" waiting for the term or group it negates.
+  let pendingNot = false;
+  for (const token of tokenizePullQuery(text)) {
+    if (token.kind === 'space') {
+      continue;
+    }
+    if (token.kind === 'operator' || token.raw === '-') {
+      // AND and OR don't carry a negation across them.
+      pendingNot = token.raw === 'NOT' || token.raw === '-';
+      continue;
+    }
+    if (isOpenParen(token)) {
+      groups.push(groupNegated);
+      groupNegated = groupNegated !== pendingNot;
+    } else if (isCloseParen(token)) {
+      const outer = groups.pop();
+      if (outer == null) {
+        return [];
+      }
+      groupNegated = outer;
+    } else if (token.kind === 'qualifier' && token.key === key) {
+      const negated =
+        (groupNegated !== pendingNot) !== (token.negated === true);
+      if (!negated) {
+        values.push(token.value ?? '');
+      }
+    }
+    pendingNot = false;
+  }
+  return groups.length === 0 ? values : [];
+}
+
 const isOrToken = (token: PullQueryToken | undefined) =>
   token?.kind === 'operator' && token.raw === 'OR';
 const isOpenParen = (token: PullQueryToken | undefined) =>
@@ -372,6 +417,14 @@ function replaceQualifier(
   return hasTopLevelOr(kept)
     ? `(${base}) ${replacement}`
     : `${base} ${replacement}`;
+}
+
+const AUTHOR_KEYS: ReadonlySet<string> = new Set(['author']);
+
+// Narrows the search to one author (the dashboard's "show only their pull
+// requests"), replacing any author: term already there.
+export function writePullAuthorFilter(text: string, author: string): string {
+  return replaceQualifier(text, AUTHOR_KEYS, () => true, `author:${author}`);
 }
 
 // The list's state toggle. 'all' drops the state qualifier entirely, which is

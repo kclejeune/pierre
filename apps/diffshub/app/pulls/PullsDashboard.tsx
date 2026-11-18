@@ -1,9 +1,9 @@
 'use client';
 
-import { IconCheck, IconChevronSm, IconPin } from '@pierre/icons';
-import { useRouter } from 'next/navigation';
+import { IconCheck, IconChevronSm, IconEyeSlash, IconPin } from '@pierre/icons';
 import {
   type ReactNode,
+  type RefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -31,11 +31,18 @@ import {
 } from '@/components/DashboardShell';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/DropdownMenu';
 import { GitHubTokenControl } from '@/components/GitHubTokenControl';
+import { PullBatchBar, usePullBatch } from '@/components/PullBatchBar';
 import { PullPreviewPane } from '@/components/PullPreviewPane';
 import { PullQueryBar } from '@/components/PullQueryBar';
 import { PullRequestRow } from '@/components/PullRequestRow';
@@ -51,7 +58,9 @@ import {
 import { useGitHubToken } from '@/components/useGitHubToken';
 import { useLatestValueRef } from '@/components/useLatestValueRef';
 import { useMediaQuery } from '@/components/useMediaQuery';
+import { useMutedAuthors } from '@/components/useMutedAuthors';
 import { usePinnedRepos } from '@/components/usePinnedRepos';
+import { usePullSelection } from '@/components/usePullSelection';
 import { cn } from '@/lib/cn';
 import { GITHUB_APP_OWNER_FIX } from '@/lib/githubAppAccess';
 import {
@@ -63,7 +72,15 @@ import {
   type PullInvolvement,
   type PullSummary,
 } from '@/lib/githubPullSummaries';
+import {
+  authorSearchName,
+  isAuthorMuted,
+  MAX_MUTED_AUTHORS,
+  mutedAuthorLabel,
+} from '@/lib/mutedAuthors';
 import { isEditableEventTarget } from '@/lib/platform';
+import { buildPullRows, groupPulls } from '@/lib/pullGroups';
+import { savePullQueue } from '@/lib/pullQueue';
 import {
   audienceAnyoneAllowed,
   DEFAULT_QUERY_TEXT,
@@ -81,6 +98,7 @@ import {
   type PullStateFilter,
   readPullSort,
   readPullStateFilter,
+  writePullAuthorFilter,
   writePullSort,
   writePullStateFilter,
 } from '@/lib/pullSearchQuery';
@@ -184,6 +202,7 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   const modifier = useModifierKey();
   const [page, updatePage] = usePullsPageState();
   const { hydrated, pinned, toggle } = usePinnedRepos();
+  const mutedAuthors = useMutedAuthors();
   // This view renders only after hydration (below), so the client value is
   // the first one painted.
   const previewLayout = useMediaQuery(PREVIEW_LAYOUT_QUERY, false);
@@ -195,6 +214,19 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   const [preview, setPreview] = useState<PullSummary | null>(null);
   // Bumped when the preview pane changed a pull, so the list refetches.
   const [listVersion, setListVersion] = useState(0);
+  // The list's rows on screen, kept current by PullList. Opening a diff from
+  // the list or the preview saves them as the diff view's queue
+  // (lib/pullQueue), so the diff can step to the next pull.
+  const queueRef = useRef<readonly PullSummary[]>([]);
+  const openDiff = useCallback((pull: PullSummary) => {
+    recordRecentDiff({ path: pull.viewerPath, title: pull.title });
+    savePullQueue(
+      queueRef.current.map((entry) => ({
+        path: entry.viewerPath,
+        title: entry.title,
+      }))
+    );
+  }, []);
 
   const selectScope = (scope: PullScope) => {
     if (scope.kind === 'repo') {
@@ -212,7 +244,9 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
 
   // Wait for the single post-mount pin read: the pinned scope searches the
   // pinned list, and fetching before it loads would search everything.
-  if (!hydrated) {
+  // The muted list loads the same way, and searching before it does would
+  // flash the bots it hides.
+  if (!hydrated || !mutedAuthors.hydrated) {
     return null;
   }
 
@@ -224,6 +258,7 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
     involves !== 'anyone' && involvementsUseReviewRequests(involves);
   const request: PullSearchRequest = {
     involves,
+    mutedAuthors: page.showMuted ? undefined : mutedAuthors.muted,
     repos,
     reviewRequests: usesReviewRequests ? page.reviewRequests : undefined,
     text: page.text,
@@ -299,20 +334,32 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
       <PullList
         fill={previewLayout}
         listVersion={listVersion}
+        muting={{
+          muted: mutedAuthors.muted,
+          showMuted: page.showMuted,
+          onMute: mutedAuthors.mute,
+          onShowMutedChange: (showMuted) => updatePage({ ...page, showMuted }),
+          onUnmute: mutedAuthors.unmute,
+        }}
         request={request}
         scope={page.scope}
         selectedKey={preview == null ? null : pullKey(preview)}
         tokenVersion={tokenVersion}
         onApplyText={applyText}
         onClosePreview={() => setPreview(null)}
+        onOpen={openDiff}
         onPreview={previewLayout ? setPreview : undefined}
+        queueRef={queueRef}
       />
     );
   const previewPane = previewLayout && (
     <PullPreviewPane
+      muted={mutedAuthors.muted}
       pull={preview}
       tokenVersion={tokenVersion}
       onClose={() => setPreview(null)}
+      onMute={mutedAuthors.mute}
+      onOpenDiff={openDiff}
       onPullChanged={() => setListVersion((value) => value + 1)}
     />
   );
@@ -642,9 +689,12 @@ function getEmptyCopy(request: PullSearchRequest, scope: PullScope): string {
 function PullList({
   fill,
   listVersion,
+  muting,
   onApplyText,
   onClosePreview,
+  onOpen,
   onPreview,
+  queueRef,
   request,
   scope,
   selectedKey,
@@ -655,10 +705,16 @@ function PullList({
   fill: boolean;
   // Bumped by the parent to refetch after a pull changed elsewhere.
   listVersion: number;
+  muting: MutingControls;
   onApplyText(text: string): void;
   onClosePreview(): void;
+  // Opening a pull's diff from this list (see SignedInDashboard's openDiff).
+  onOpen(pull: PullSummary): void;
   // Set in the wide layout: plain row clicks preview instead of navigating.
   onPreview?(pull: PullSummary): void;
+  // Receives the rows on screen, which openDiff saves as the diff view's
+  // queue.
+  queueRef: RefObject<readonly PullSummary[]>;
   request: PullSearchRequest;
   scope: PullScope;
   selectedKey: string | null;
@@ -671,9 +727,11 @@ function PullList({
     loadMore,
     loading,
     loadingMore,
+    mutedCount,
     pulls,
     refresh,
     retry,
+    searchKey,
     totalCount,
   } = useDashboardPulls(request, tokenVersion);
   const state = readPullStateFilter(text);
@@ -682,6 +740,52 @@ function PullList({
     PULL_SORT_OPTIONS.find((option) => option.value === sort)?.label ??
     `sort:${sort}`;
   const showRepo = scope.kind !== 'repo';
+  // Lowercased once, so each row's muted check is a set lookup.
+  const mutedNames = useMemo(
+    () => new Set(muting.muted.map((author) => author.toLowerCase())),
+    [muting.muted]
+  );
+  // Near-duplicate pulls (same title and author) fold into one row until
+  // expanded; `rows` is what's on screen, which J/K walk and the diff
+  // view's queue follows.
+  const groups = useMemo(() => groupPulls(pulls), [pulls]);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
+  const rows = useMemo(
+    () => buildPullRows(groups, expanded),
+    [expanded, groups]
+  );
+  const visible = useMemo(() => rows.map((row) => row.pull), [rows]);
+  useEffect(() => {
+    queueRef.current = visible;
+  }, [queueRef, visible]);
+  // The search a running batch started from: its failures return to the
+  // selection only if the list still shows that search.
+  const batchSearch = useRef<string | null>(null);
+  const batch = usePullBatch((failed, changed) => {
+    selection.set(failed, batchSearch.current ?? undefined);
+    if (changed) {
+      refresh();
+    }
+  });
+  const selection = usePullSelection(
+    pulls,
+    rows,
+    searchKey,
+    batch.running != null
+  );
+  const toggleGroup = useCallback(
+    (key: string) =>
+      setExpanded((previous) => {
+        const next = new Set(previous);
+        if (!next.delete(key)) {
+          next.add(key);
+        }
+        return next;
+      }),
+    []
+  );
   // Refetch, past the browser cache, when the parent says a pull changed;
   // skip the mount run, which the hook's own first fetch covers.
   const refreshRef = useLatestValueRef(refresh);
@@ -692,7 +796,12 @@ function PullList({
       refreshRef.current();
     }
   }, [listVersion, refreshRef]);
-  usePreviewKeyboard(pulls, selectedKey, onPreview, onClosePreview);
+  usePreviewKeyboard(visible, selectedKey, {
+    onClosePreview,
+    onOpen,
+    onPreview,
+    onToggleChecked: selection.toggleRow,
+  });
   return (
     <section
       aria-busy={loading}
@@ -705,71 +814,96 @@ function PullList({
       )}
     >
       <div className="bg-muted/30 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-2 py-1.5">
-        <div
-          role="radiogroup"
-          aria-label="Pull request state"
-          className="flex items-center"
-        >
-          {STATE_TOGGLES.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              role="radio"
-              aria-checked={state === option.value}
-              className={cn(
-                'focus-visible:ring-ring h-7 cursor-pointer rounded-md px-2 text-xs outline-none focus-visible:ring-2',
-                state === option.value
-                  ? 'text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-              onClick={() =>
-                onApplyText(writePullStateFilter(text, option.value))
-              }
+        {selection.checked.length > 0 || batch.running != null ? (
+          <PullBatchBar
+            checked={selection.checked}
+            loadedCount={pulls.length}
+            running={batch.running}
+            onClear={selection.clear}
+            onRun={(action) => {
+              batchSearch.current = searchKey;
+              batch.run(action, selection.checked);
+            }}
+            onSelectAll={() => selection.set(pulls)}
+          />
+        ) : (
+          <>
+            <div
+              role="radiogroup"
+              aria-label="Pull request state"
+              className="flex items-center"
             >
-              {option.label}
-              {state === option.value &&
-                (loading ? (
-                  // Refetching: the count and any rows below are the
-                  // previous answer until the search returns.
-                  <Spinner className="text-muted-foreground ml-1.5 inline size-3 align-[-1px]" />
-                ) : (
-                  <span className="text-muted-foreground ml-1.5 font-normal tabular-nums">
-                    {totalCount.toLocaleString()}
-                  </span>
-                ))}
-            </button>
-          ))}
-        </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="xs"
-              className="text-muted-foreground ml-auto h-7"
-            >
-              {sortLabel}
-              <IconChevronSm className="size-3" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {PULL_SORT_OPTIONS.map((option) => (
-              <DropdownMenuItem
-                key={option.value}
-                selected={option.value === sort}
-                className="gap-2"
-                onSelect={() => onApplyText(writePullSort(text, option.value))}
-              >
-                <IconCheck
+              {STATE_TOGGLES.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={state === option.value}
                   className={cn(
-                    'size-3.5',
-                    option.value !== sort && 'invisible'
+                    'focus-visible:ring-ring h-7 cursor-pointer rounded-md px-2 text-xs outline-none focus-visible:ring-2',
+                    state === option.value
+                      ? 'text-foreground font-medium'
+                      : 'text-muted-foreground hover:text-foreground'
                   )}
-                />
-                {option.label}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+                  onClick={() =>
+                    onApplyText(writePullStateFilter(text, option.value))
+                  }
+                >
+                  {option.label}
+                  {state === option.value &&
+                    (loading ? (
+                      // Refetching: the count and any rows below are the
+                      // previous answer until the search returns.
+                      <Spinner className="text-muted-foreground ml-1.5 inline size-3 align-[-1px]" />
+                    ) : (
+                      <span className="text-muted-foreground ml-1.5 font-normal tabular-nums">
+                        {totalCount.toLocaleString()}
+                      </span>
+                    ))}
+                </button>
+              ))}
+            </div>
+            <MutedAuthorsMenu
+              muting={muting}
+              mutedCount={mutedCount}
+              pulls={pulls}
+              text={text}
+              onApplyText={onApplyText}
+            />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className="text-muted-foreground h-7"
+                >
+                  {sortLabel}
+                  <IconChevronSm className="size-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {PULL_SORT_OPTIONS.map((option) => (
+                  <DropdownMenuItem
+                    key={option.value}
+                    selected={option.value === sort}
+                    className="gap-2"
+                    onSelect={() =>
+                      onApplyText(writePullSort(text, option.value))
+                    }
+                  >
+                    <IconCheck
+                      className={cn(
+                        'size-3.5',
+                        option.value !== sort && 'invisible'
+                      )}
+                    />
+                    {option.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        )}
       </div>
       <div
         className={
@@ -792,13 +926,24 @@ function PullList({
           skeleton={<SkeletonRows variant="pull" />}
           onRetry={retry}
         >
-          {pulls.map((pull) => (
+          {rows.map((row) => (
             <PullRequestRow
-              key={pullKey(pull)}
-              pull={pull}
-              selected={selectedKey === pullKey(pull)}
+              key={pullKey(row.pull)}
+              checked={selection.isRowChecked(row)}
+              groupExpanded={expanded.has(row.group.key)}
+              groupKey={row.lead ? row.group.key : undefined}
+              groupSize={row.group.pulls.length}
+              muted={muting.showMuted && mutedNames.has(authorKey(row.pull))}
+              nested={!row.lead}
+              pull={row.pull}
+              selected={selectedKey === pullKey(row.pull)}
+              selecting={selection.checked.length > 0}
+              selectionLocked={batch.running != null}
               showRepo={showRepo}
+              onOpen={onOpen}
               onPreview={onPreview}
+              onToggleChecked={selection.toggleRow}
+              onToggleGroup={toggleGroup}
             />
           ))}
         </DashboardSectionState>
@@ -837,23 +982,22 @@ function PullList({
 // Keyboard control of the preview selection, active only in the wide layout
 // (`onPreview` set): J/K (or the arrow keys) move through the loaded rows,
 // Enter opens the focused row's diff (or the selected pull's, when no
-// control has focus), and Escape closes the preview. Keys
+// control has focus) in a new tab, X checks or unchecks the previewed row
+// for the batch bar, and Escape closes the preview. Keys
 // typed into fields, or already handled by an open menu or dialog, are left
 // alone.
 function usePreviewKeyboard(
   pulls: readonly PullSummary[],
   selectedKey: string | null,
-  onPreview: ((pull: PullSummary) => void) | undefined,
-  onClosePreview: () => void
+  handlers: {
+    onClosePreview(): void;
+    onOpen(pull: PullSummary): void;
+    onPreview?(pull: PullSummary): void;
+    onToggleChecked(key: string, shiftKey: boolean): void;
+  }
 ) {
-  const router = useRouter();
-  const latest = useLatestValueRef({
-    onClosePreview,
-    onPreview,
-    pulls,
-    selectedKey,
-  });
-  const enabled = onPreview != null;
+  const latest = useLatestValueRef({ ...handlers, pulls, selectedKey });
+  const enabled = handlers.onPreview != null;
   useEffect(() => {
     if (!enabled) {
       return;
@@ -869,8 +1013,20 @@ function usePreviewKeyboard(
       ) {
         return;
       }
-      const { onClosePreview, onPreview, pulls, selectedKey } = latest.current;
+      const {
+        onClosePreview,
+        onOpen,
+        onPreview,
+        onToggleChecked,
+        pulls,
+        selectedKey,
+      } = latest.current;
       const index = pulls.findIndex((pull) => pullKey(pull) === selectedKey);
+      if (event.key === 'x' && index !== -1) {
+        event.preventDefault();
+        onToggleChecked(pullKey(pulls[index]), false);
+        return;
+      }
       const step =
         event.key === 'j' || event.key === 'ArrowDown'
           ? 1
@@ -911,8 +1067,10 @@ function usePreviewKeyboard(
               : undefined;
         if (pull != null) {
           event.preventDefault();
-          recordRecentDiff({ path: pull.viewerPath, title: pull.title });
-          router.push(pull.viewerPath);
+          onOpen(pull);
+          // A new tab, like the preview's Open diff button, so the list
+          // stays where it was as a queue to come back to.
+          window.open(pull.viewerPath, '_blank', 'noopener');
           return;
         }
       }
@@ -922,7 +1080,7 @@ function usePreviewKeyboard(
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [enabled, latest, router]);
+  }, [enabled, latest]);
 
   // Keeps the selected row on screen as J/K move past the viewport edge, and
   // moves focus with the selection when focus was already on a row, so the
@@ -943,4 +1101,156 @@ function usePreviewKeyboard(
       row.focus({ preventScroll: true });
     }
   }, [selectedKey]);
+}
+
+// The muted-author list and its controls, handed from the page (which owns
+// the list and the ?muted= switch) to the list card's Muted menu.
+interface MutingControls {
+  muted: readonly string[];
+  // Muted authors' pulls are listed (dimmed) instead of excluded.
+  showMuted: boolean;
+  onMute(authors: readonly string[]): void;
+  onShowMutedChange(showMuted: boolean): void;
+  onUnmute(author: string): void;
+}
+
+// The lowercased author search name rows are matched against muted
+// authors by ('' for an authorless pull, which nothing mutes).
+function authorKey(pull: PullSummary): string {
+  return (authorSearchName(pull) ?? '').toLowerCase();
+}
+
+// Bot authors among the loaded rows that aren't muted yet, in list order:
+// the Muted menu offers them as one-click mutes, so the common case (bumps
+// from renovate or dependabot burying everything) needs no typing.
+function unmutedBotAuthors(
+  pulls: readonly PullSummary[],
+  muted: readonly string[]
+): string[] {
+  const authors: string[] = [];
+  for (const pull of pulls) {
+    const author = authorSearchName(pull);
+    if (
+      pull.authorIsBot === true &&
+      author != null &&
+      !isAuthorMuted(muted, author) &&
+      !isAuthorMuted(authors, author)
+    ) {
+      authors.push(author);
+    }
+  }
+  return authors;
+}
+
+// The list header's Muted menu: how many pulls muted authors hid, a switch
+// to list them anyway, each muted author (narrow the search to them, which
+// is how to triage a bot's pulls in one place, or unmute), and the bots in
+// view that could be muted. Hidden when nothing is muted and no bot is in
+// view; the preview pane's mute button covers people and machine accounts.
+function MutedAuthorsMenu({
+  muting,
+  mutedCount,
+  onApplyText,
+  pulls,
+  text,
+}: {
+  muting: MutingControls;
+  mutedCount: number | undefined;
+  onApplyText(text: string): void;
+  pulls: readonly PullSummary[];
+  text: string;
+}) {
+  const { muted, showMuted } = muting;
+  const bots = useMemo(() => unmutedBotAuthors(pulls, muted), [muted, pulls]);
+  const room = MAX_MUTED_AUTHORS - muted.length;
+  if (muted.length === 0 && bots.length === 0) {
+    return null;
+  }
+  const triggerLabel =
+    muted.length === 0
+      ? 'Mute bots'
+      : showMuted
+        ? 'Showing muted'
+        : mutedCount != null && mutedCount > 0
+          ? `${mutedCount.toLocaleString()} muted`
+          : 'Muted';
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="xs"
+          className="text-muted-foreground ml-auto h-7 tabular-nums"
+          title="Authors whose pull requests this list leaves out"
+        >
+          <IconEyeSlash className="size-3" />
+          {triggerLabel}
+          <IconChevronSm className="size-3" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-56">
+        {muted.length > 0 && (
+          <>
+            <DropdownMenuCheckboxItem
+              checked={showMuted}
+              onCheckedChange={(checked) =>
+                muting.onShowMutedChange(checked === true)
+              }
+            >
+              Show muted authors&apos; pulls
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
+              Muted authors
+            </DropdownMenuLabel>
+            {muted.map((author) => (
+              <DropdownMenuSub key={author}>
+                <DropdownMenuSubTrigger>
+                  {mutedAuthorLabel(author)}
+                  {author.startsWith('app/') && (
+                    <span className="text-muted-foreground text-xs">bot</span>
+                  )}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      onApplyText(writePullAuthorFilter(text, author))
+                    }
+                  >
+                    Show only their pull requests
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => muting.onUnmute(author)}>
+                    Unmute
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            ))}
+          </>
+        )}
+        {bots.length > 0 && room > 0 && (
+          <>
+            {muted.length > 0 && <DropdownMenuSeparator />}
+            <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
+              Bots in this list
+            </DropdownMenuLabel>
+            {bots.length > 1 && (
+              <DropdownMenuItem
+                onSelect={() => muting.onMute(bots.slice(0, room))}
+              >
+                Mute all {Math.min(bots.length, room)}
+              </DropdownMenuItem>
+            )}
+            {bots.map((author) => (
+              <DropdownMenuItem
+                key={author}
+                onSelect={() => muting.onMute([author])}
+              >
+                Mute {mutedAuthorLabel(author)}
+              </DropdownMenuItem>
+            ))}
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }

@@ -5,6 +5,7 @@
 // a synced preference (lib/preferenceSync), so pins follow signed-in viewers
 // across browsers.
 
+import { includesName, parseNameList, withoutName } from './nameList';
 import { readSyncedItem, writeSyncedItem } from './preferenceSync';
 
 export const MAX_PINNED_REPOS = 10;
@@ -26,23 +27,7 @@ export function splitRepoName(repo: string): { owner: string; repo: string } {
 // only, de-duplicated case-insensitively keeping the first, capped at `max`.
 // Anything that isn't an array reads as empty.
 export function parseRepoList(value: unknown, max: number): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const repos: string[] = [];
-  for (const entry of value) {
-    if (
-      typeof entry === 'string' &&
-      isValidRepoName(entry) &&
-      !isRepoPinned(repos, entry)
-    ) {
-      repos.push(entry);
-    }
-    if (repos.length >= max) {
-      break;
-    }
-  }
-  return repos;
+  return parseNameList(value, isValidRepoName, max);
 }
 
 export function loadPinnedRepos(): string[] {
@@ -68,8 +53,7 @@ export function savePinnedRepos(repos: string[]): void {
 }
 
 export function isRepoPinned(repos: readonly string[], repo: string): boolean {
-  const needle = repo.toLowerCase();
-  return repos.some((entry) => entry.toLowerCase() === needle);
+  return includesName(repos, repo);
 }
 
 // Pure toggle used by every pin control: removes the repo when present
@@ -78,9 +62,8 @@ export function togglePinnedRepo(
   repos: readonly string[],
   repo: string
 ): string[] {
-  const needle = repo.toLowerCase();
   if (isRepoPinned(repos, repo)) {
-    return repos.filter((entry) => entry.toLowerCase() !== needle);
+    return withoutName(repos, repo);
   }
   if (!isValidRepoName(repo) || repos.length >= MAX_PINNED_REPOS) {
     return [...repos];

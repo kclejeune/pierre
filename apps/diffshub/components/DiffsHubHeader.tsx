@@ -40,6 +40,7 @@ import { DiffsHubLogo } from './DiffsHubLogo';
 import { DiffUrlForm } from './DiffUrlForm';
 import { FileSearchPaletteTrigger } from './FileSearchPaletteTrigger';
 import { openPalette } from './PaletteDialog';
+import { PullQueueStepper } from './PullQueueStepper';
 import { RepoPaletteButton } from './RepoPaletteButton';
 import { useChromeThemeProps } from './useChromeThemeProps';
 import { usePinnedRepos } from './usePinnedRepos';
@@ -239,6 +240,9 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
           </Link>
         </Button>
       )}
+      {/* Steps through the /pulls list this diff was opened from; renders
+          nothing for diffs reached any other way. */}
+      <PullQueueStepper />
       {/* Narrow widths give way in order: the head/base pills truncate first,
           then the left group clips rather than painting under the actions on
           the right (the URL row itself never collapses). */}

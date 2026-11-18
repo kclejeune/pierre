@@ -66,6 +66,8 @@ export interface PullsPageState {
   // when the audience includes the review-request term.
   reviewRequests: ReviewRequestScope;
   scope: PullScope;
+  // Lists muted authors' pulls too (?muted=show) instead of excluding them.
+  showMuted: boolean;
   text: string;
 }
 
@@ -132,6 +134,7 @@ export function readPullsPageState(search: string): PullsPageState {
         ? requests
         : DEFAULT_REVIEW_REQUESTS,
     scope,
+    showMuted: params.get('muted') === 'show',
     text: params.get('q') ?? DEFAULT_QUERY_TEXT,
   };
 }
@@ -179,6 +182,11 @@ export function writePullsPageState(url: URL, state: PullsPageState): URL {
   } else {
     params.set('requests', state.reviewRequests);
   }
+  if (state.showMuted) {
+    params.set('muted', 'show');
+  } else {
+    params.delete('muted');
+  }
   return next;
 }
 
@@ -192,6 +200,7 @@ export function buildPullsRepoPath(repo: string): string {
       involves: defaultAudience(scope),
       reviewRequests: DEFAULT_REVIEW_REQUESTS,
       scope,
+      showMuted: false,
       text: DEFAULT_QUERY_TEXT,
     }
   );

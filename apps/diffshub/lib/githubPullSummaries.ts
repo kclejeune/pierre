@@ -4,12 +4,14 @@
 // optional set of repositories, and the GitHub search text typed in the
 // page's query bar.
 
+import { includesName } from './nameList';
 import type { PullLabel } from './pullInfoClient';
 import { parseLabels } from './pullLabels';
 import {
   DEFAULT_PULL_SORT,
   hasOrOperator,
   hasQualifier,
+  readPositiveQualifierValues,
   splitPullSort,
 } from './pullSearchQuery';
 import { asRecord } from './untypedJson';
@@ -64,12 +66,22 @@ export interface PullSummary {
   repo: string;
   authorLogin?: string;
   authorAvatarUrl?: string;
+  // The author is a GitHub App bot (renovate, dependabot, ...), which
+  // searches as author:app/<login>.
+  authorIsBot?: boolean;
   state: 'open' | 'draft' | 'closed' | 'merged';
   updatedAt: string;
   viewerPath: string;
   labels?: PullLabel[];
   // How the viewer is involved, as reported by the GraphQL search.
   activity?: PullActivity[];
+}
+
+// A pull's identity across lists, caches, and selections: "owner/repo#12".
+export function pullKey(
+  pull: Pick<PullSummary, 'number' | 'owner' | 'repo'>
+): string {
+  return `${pull.owner}/${pull.repo}#${pull.number}`;
 }
 
 // "anyone" drops the involvement terms entirely: every pull matching the rest
@@ -186,6 +198,9 @@ interface PullSearchScope {
   repos?: readonly string[];
   // Defaults to 'direct'.
   reviewRequests?: ReviewRequestScope;
+  // Author search names (lib/mutedAuthors) whose pulls are left out, except
+  // any the text asks for with an author: term.
+  mutedAuthors?: readonly string[];
   // The query bar's GitHub search text, e.g. "is:open label:bug". Its last
   // sort: qualifier (if any) replaces the default recently-updated order.
   text?: string;
@@ -220,12 +235,36 @@ function reposQualifier(repos: readonly string[]): string | undefined {
   return terms.length === 1 ? terms[0] : `(${terms.join(' OR ')})`;
 }
 
+// The muted authors a search actually excludes: all but those the text asks
+// for with an author: term, since excluding an author the viewer typed in
+// would empty the list.
+function effectiveMutedAuthors(scope: PullSearchScope): readonly string[] {
+  const muted = scope.mutedAuthors ?? [];
+  if (muted.length === 0) {
+    return muted;
+  }
+  const named = readPositiveQualifierValues(scope.text ?? '', 'author');
+  return muted.filter((author) => !includesName(named, author));
+}
+
 // The dashboard search, minus its sort: the typed text first (grouped when it
 // has its own OR, so the AND-ed scope terms after it apply to every branch),
-// then is:pr, the audience, `extra` (which narrows the audience further), and
-// the repository scope. Archived repos are skipped unless the text says
-// otherwise.
+// then is:pr, the audience, `extra` (which narrows the audience further), the
+// repository scope, and the muted-author exclusions. Archived repos are
+// skipped unless the text says otherwise.
 export function buildActiveSearchQuery(
+  scope: PullSearchScope,
+  extra?: string
+): string {
+  const exclusions = effectiveMutedAuthors(scope).map(
+    (author) => `-author:${author}`
+  );
+  return [buildUnmutedSearchQuery(scope, extra), ...exclusions].join(' ');
+}
+
+// buildActiveSearchQuery without the muted-author exclusions, whose hit
+// count tells how many pulls muting hides.
+function buildUnmutedSearchQuery(
   scope: PullSearchScope,
   extra?: string
 ): string {
@@ -268,6 +307,7 @@ function buildPullSummary(fields: {
   updatedAt: string;
   authorLogin: unknown;
   authorAvatarUrl: unknown;
+  authorType: unknown;
 }): PullSummary {
   const { owner, repo, number, authorLogin, authorAvatarUrl } = fields;
   const summary: PullSummary = {
@@ -285,6 +325,9 @@ function buildPullSummary(fields: {
   if (typeof authorAvatarUrl === 'string' && authorAvatarUrl !== '') {
     summary.authorAvatarUrl = authorAvatarUrl;
   }
+  if (fields.authorType === 'Bot') {
+    summary.authorIsBot = true;
+  }
   return summary;
 }
 
@@ -294,9 +337,11 @@ function buildPullSummary(fields: {
 // The subset is the main search narrowed by the "commented" term, sorted the
 // same way, so every commented pull in the main page also lands in the
 // subset's page (see buildActivePullsVariables for later pages).
-// $withCommented skips the subset when it can't match anything.
+// $withCommented skips the subset when it can't match anything. On the first
+// page of a search with muted authors, `unmuted` counts the same search
+// without their exclusions, so the list can say how many pulls muting hid.
 // ISSUE_ADVANCED opts into the search syntax that understands OR groups.
-export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: String!, $withCommented: Boolean!, $first: Int!, $commentedFirst: Int!, $after: String) {
+export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: String!, $withCommented: Boolean!, $unmutedQuery: String!, $withUnmuted: Boolean!, $first: Int!, $commentedFirst: Int!, $after: String) {
   pulls: search(query: $query, type: ISSUE_ADVANCED, first: $first, after: $after) {
     issueCount
     pageInfo { endCursor hasNextPage }
@@ -309,7 +354,7 @@ export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: Stri
         state
         updatedAt
         labels(first: 6) { nodes { name color } }
-        author { login avatarUrl }
+        author { __typename login avatarUrl }
         repository { name owner { login } }
         viewerDidAuthor
         viewerLatestReview { state }
@@ -320,6 +365,9 @@ export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: Stri
   }
   commented: search(query: $commentedQuery, type: ISSUE_ADVANCED, first: $commentedFirst) @include(if: $withCommented) {
     nodes { ... on PullRequest { id } }
+  }
+  unmuted: search(query: $unmutedQuery, type: ISSUE_ADVANCED, first: 1) @include(if: $withUnmuted) {
+    issueCount
   }
 }`;
 
@@ -404,7 +452,9 @@ export function buildActivePullsVariables(
   commentedQuery: string;
   first: number;
   query: string;
+  unmutedQuery: string;
   withCommented: boolean;
+  withUnmuted: boolean;
 } {
   const sort = readSearchSort(scope);
   const sorted = (query: string) => `${query} sort:${sort}`;
@@ -436,7 +486,10 @@ export function buildActivePullsVariables(
     commentedQuery: sorted(buildActiveSearchQuery(scope, commentedExtra)),
     first: PULLS_PAGE_SIZE,
     query: sorted(buildActiveSearchQuery(scope)),
+    // Sort doesn't change a count, so the unmuted search runs unsorted.
+    unmutedQuery: buildUnmutedSearchQuery(scope),
     withCommented: audienceCanComment && (cursor == null || window != null),
+    withUnmuted: cursor == null && effectiveMutedAuthors(scope).length > 0,
   };
 }
 
@@ -517,6 +570,7 @@ function parseGraphQLPullNode(
       updatedAt: record.updatedAt,
       authorLogin: author?.login,
       authorAvatarUrl: author?.avatarUrl,
+      authorType: author?.__typename,
     }),
     activity: readViewerActivity(record, commentedIds),
   };
@@ -556,6 +610,9 @@ export interface PullsPage {
   // count toward totalCount but never appear in `pulls`.
   hiddenCount: number;
   totalCount: number;
+  // First page only, when muted authors applied: how many more pulls the
+  // search matches without their exclusions.
+  mutedCount?: number;
   // Present while GitHub reports another page.
   nextCursor?: string;
 }
@@ -586,22 +643,24 @@ export function parseActivePullsPayload(
     typeof pullsSearch?.issueCount === 'number'
       ? pullsSearch.issueCount
       : pulls.length;
+  const page: PullsPage = { pulls, hiddenCount, totalCount };
+  const unmutedCount = asRecord(asRecord(data)?.unmuted)?.issueCount;
+  if (typeof unmutedCount === 'number') {
+    // The two searches run a moment apart, so a pull opened in between
+    // could make the difference negative.
+    page.mutedCount = Math.max(0, unmutedCount - totalCount);
+  }
   const pageInfo = asRecord(pullsSearch?.pageInfo);
   if (
     pageInfo?.hasNextPage === true &&
     typeof pageInfo.endCursor === 'string'
   ) {
-    return {
-      pulls,
-      hiddenCount,
-      totalCount,
-      nextCursor: encodePullsCursor({
-        after: pageInfo.endCursor,
-        ...nextCommentedBoundary(hits, previous),
-      }),
-    };
+    page.nextCursor = encodePullsCursor({
+      after: pageInfo.endCursor,
+      ...nextCommentedBoundary(hits, previous),
+    });
   }
-  return { pulls, hiddenCount, totalCount };
+  return page;
 }
 
 // The next page's commented bound (the last readable updatedAt) and its

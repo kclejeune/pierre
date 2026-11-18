@@ -9,14 +9,20 @@ import type {
   PullSummary,
   ReviewRequestScope,
 } from '@/lib/githubPullSummaries';
+import { pullKey } from '@/lib/githubPullSummaries';
+
+// Re-exported for the dashboard's existing imports.
+export { pullKey };
 import { requestJSON } from '@/lib/pullCommentsClient';
 
 // One /pulls list: who is involved, which repositories (none means every
 // repository the search can see), and the query bar's GitHub search text.
 // reviewRequests: 'teams' widens the review-request term; the dashboard only
-// passes it when that term is part of the search.
+// passes it when that term is part of the search. mutedAuthors leaves those
+// authors' pulls out (lib/mutedAuthors).
 export interface PullSearchRequest {
   involves: PullAudience;
+  mutedAuthors?: readonly string[];
   repos: readonly string[];
   reviewRequests?: ReviewRequestScope;
   text: string;
@@ -29,6 +35,9 @@ export interface DashboardPullsState {
   loading: boolean;
   loadingMore: boolean;
   loadMore(): void;
+  // How many pulls the muted authors hid from this search; undefined when
+  // nothing was muted (or the search names an author: itself).
+  mutedCount?: number;
   pulls: PullSummary[];
   // Refetches the first page, bypassing the browser cache, after a
   // mutation made the cached rows stale.
@@ -38,6 +47,9 @@ export interface DashboardPullsState {
   // screen can come from the cache with a next page, so whether more pages
   // exist says nothing about which request failed.
   retry(): void;
+  // Identifies this search (and token), for state that should reset when
+  // the search changes, like the list's batch selection.
+  searchKey: string;
   totalCount: number;
 }
 
@@ -54,11 +66,15 @@ function buildPullSearchParams(request: PullSearchRequest): URLSearchParams {
   if (request.repos.length > 0) {
     params.set('repos', request.repos.join(','));
   }
+  if (request.mutedAuthors != null && request.mutedAuthors.length > 0) {
+    params.set('mute', request.mutedAuthors.join(','));
+  }
   params.set('q', request.text.trim());
   return params;
 }
 
 interface CachedPulls {
+  mutedCount?: number;
   nextCursor?: string;
   pulls: PullSummary[];
   totalCount: number;
@@ -114,6 +130,7 @@ function initialSearchState(key: string): SearchState {
     key,
     loading: true,
     loadingMore: false,
+    mutedCount: cached?.mutedCount,
     nextCursor: cached?.nextCursor,
     pulls: cached?.pulls ?? [],
     totalCount: cached?.totalCount ?? 0,
@@ -161,6 +178,7 @@ export function useDashboardPulls(
           return;
         }
         const value: CachedPulls = {
+          mutedCount: page.mutedCount,
           nextCursor: page.nextCursor,
           pulls: page.pulls,
           totalCount: page.totalCount ?? page.pulls.length,
@@ -215,6 +233,8 @@ export function useDashboardPulls(
           // first copy.
           const seen = new Set(previous.pulls.map(pullKey));
           const value: CachedPulls = {
+            // Later pages don't recount; the first page's count stands.
+            mutedCount: previous.mutedCount,
             nextCursor: page.nextCursor,
             pulls: [
               ...previous.pulls,
@@ -248,6 +268,7 @@ export function useDashboardPulls(
     loading: state.loading,
     loadingMore: state.loadingMore,
     loadMore,
+    mutedCount: state.mutedCount,
     pulls: state.pulls,
     // Refetches the first page from the network after the viewer changed a
     // pull ('reload' also rewrites the browser's cached copy, so later
@@ -260,10 +281,7 @@ export function useDashboardPulls(
       state.failure?.request === 'more'
         ? loadMore()
         : setReloadVersion((version) => version + 1),
+    searchKey: cacheKey,
     totalCount: state.totalCount,
   };
-}
-
-export function pullKey(pull: PullSummary): string {
-  return `${pull.owner}/${pull.repo}#${pull.number}`;
 }

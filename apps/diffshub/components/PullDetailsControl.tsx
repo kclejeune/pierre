@@ -75,6 +75,7 @@ import {
   type PullMergeMethod,
   updateMergeQueue,
 } from '@/lib/pullMergeClient';
+import { planPullMerge, pullMergeBlockedReason } from '@/lib/pullMergePlan';
 import {
   type ConversationCounts,
   describeMergeHeadline,
@@ -696,15 +697,12 @@ function MergeCapabilitySection({
   mergeQueue: PullMergeQueueStatus | null;
   onMergeQueueChange(status: PullMergeQueueStatus | null): void;
 } & Omit<ComponentProps<typeof MergeControls>, 'capabilities'>) {
+  const plan = planPullMerge(capabilities, mergeQueue);
   const message = loading
     ? 'Checking merge permissions…'
-    : capabilities == null
-      ? 'Merge permissions could not be loaded. Open this pull request on GitHub to merge it.'
-      : !capabilities.canMerge
-        ? 'Your GitHub token does not have permission to merge this pull request.'
-        : mergeQueue == null && capabilities.methods.length === 0
-          ? 'This repository does not expose a direct merge method. Use GitHub for repository-specific merge rules.'
-          : null;
+    : plan.kind === 'blocked'
+      ? plan.message
+      : null;
   // (`capabilities == null` always has a message; the check narrows it.)
   if (message != null || capabilities == null) {
     return (
@@ -1321,13 +1319,7 @@ function ReviewerRow({ reviewer }: { reviewer: PullReviewer }) {
 // Why the pull can't be merged or queued now, or null when nothing blocks it.
 function useMergeBlockedReason(details: PullDetails): string | null {
   const appBlocked = useAppPermissionBlock('merge');
-  if (details.draft) {
-    return 'Draft pull requests cannot be merged.';
-  }
-  if (details.mergeable === false) {
-    return 'This pull request has conflicts with its base branch.';
-  }
-  return appBlocked;
+  return pullMergeBlockedReason(details) ?? appBlocked;
 }
 
 // Runs a merge or merge-queue request with the viewer's token, one at a time:

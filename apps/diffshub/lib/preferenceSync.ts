@@ -38,6 +38,7 @@ const SYNCED_PREFERENCES = {
   darkTheme: 'diffshub-dark-theme',
   displaySettings: 'diffshub.display-settings',
   lightTheme: 'diffshub-light-theme',
+  mutedAuthors: 'diffshub.muted-authors',
   pinnedRepos: 'diffshub.pinned-repos',
 } as const;
 

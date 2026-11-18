@@ -21,6 +21,7 @@ import {
   createJSONResponse,
   createPrivateJSONResponse,
 } from '@/lib/jsonResponse';
+import { isValidMutedAuthor, MAX_MUTED_AUTHORS } from '@/lib/mutedAuthors';
 import { isValidRepoName, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
 import { DEFAULT_QUERY_TEXT } from '@/lib/pullScopes';
 import { hasNarrowingQualifier } from '@/lib/pullSearchQuery';
@@ -31,7 +32,8 @@ import { emitLogLine } from '@/lib/serverLog';
 // Pull request lists for the /pulls dashboard: one GraphQL search per page,
 // built from the viewer's involvement terms (?involves=, or "anyone"), an
 // optional repository scope (?repos=), the query bar's GitHub search text
-// (?q=), and a page cursor (?cursor=) echoed back from the previous page.
+// (?q=), muted authors to leave out (?mute=), and a page cursor (?cursor=)
+// echoed back from the previous page.
 
 // GitHub rejects search text much longer than this, so fail fast with a
 // message the query bar can show.
@@ -99,6 +101,19 @@ async function handleGET(request: NextRequest) {
       { status: 400 }
     );
   }
+  const muteParam = params.get('mute') ?? '';
+  const mutedAuthors = muteParam === '' ? [] : muteParam.split(',');
+  if (
+    mutedAuthors.length > MAX_MUTED_AUTHORS ||
+    !mutedAuthors.every(isValidMutedAuthor)
+  ) {
+    return createJSONResponse(
+      {
+        error: `mute must list at most ${MAX_MUTED_AUTHORS} logins or app/ bot names.`,
+      },
+      { status: 400 }
+    );
+  }
   const cursorParam = params.get('cursor');
   const cursor =
     cursorParam == null ? undefined : decodePullsCursor(cursorParam);
@@ -117,7 +132,7 @@ async function handleGET(request: NextRequest) {
       { status: 401 }
     );
   }
-  const scope = { involves, repos, reviewRequests, text };
+  const scope = { involves, mutedAuthors, repos, reviewRequests, text };
   // GraphQL rather than REST search: one request returns the page along
   // with the viewer's involvement per pull.
   const searchMs: number[] = [];
@@ -138,6 +153,8 @@ async function handleGET(request: NextRequest) {
   try {
     let page = await fetchPage(cursor);
     let hiddenCount = page.hiddenCount;
+    // Only the first search counts muted pulls; keep it past skipped pages.
+    const { mutedCount } = page;
     // Read past pages whose every hit the GitHub App can't read, so the
     // viewer lands on readable rows; time-bounded since GHE searches are slow.
     const skipDeadline = Date.now() + UNREADABLE_SKIP_BUDGET_MS;
@@ -158,7 +175,7 @@ async function handleGET(request: NextRequest) {
         searchMs,
       });
     }
-    return createPrivateJSONResponse({ ...page, hiddenCount }, 30);
+    return createPrivateJSONResponse({ ...page, hiddenCount, mutedCount }, 30);
   } catch (error) {
     return commitErrorResponse(error);
   }

@@ -113,18 +113,21 @@ export function PullsDashboard() {
   // filters, and state tabs stay put while only the rows (and the preview)
   // scroll.
   const previewLayout = useMediaQuery(PREVIEW_LAYOUT_QUERY, false);
+  // Only the signed-in rail + list + preview need the full-width column; the
+  // signed-out card keeps the default column so it lines up with the navbar.
+  const signedIn = hydrated && hasToken;
 
   return (
     <DashboardShell
-      fillViewport={hydrated && hasToken && previewLayout}
+      fillViewport={signedIn && previewLayout}
       section="pulls"
       tokenState={tokenState}
-      width="full"
+      width={signedIn ? 'full' : 'wide'}
     >
       {!hydrated ? null : hasToken ? (
         <SignedInDashboard tokenVersion={tokenVersion} />
       ) : (
-        <div className={cn(SECTION_CARD_CLASS, 'max-w-3xl')}>
+        <div className={SECTION_CARD_CLASS}>
           <p className="text-muted-foreground border-b px-4 py-3 text-sm">
             Sign in with GitHub to search pull requests across your
             repositories, or narrow to one repository with{' '}

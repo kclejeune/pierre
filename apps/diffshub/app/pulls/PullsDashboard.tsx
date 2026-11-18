@@ -11,6 +11,7 @@ import {
   useState,
 } from 'react';
 
+import { revealScrollbarWhileScrolling } from '@/components/autoHideScrollbar';
 import { Button } from '@/components/Button';
 import { ButtonGroup, ButtonGroupItem } from '@/components/ButtonGroup';
 import { openCommandPaletteAtTop } from '@/components/CommandPalette';
@@ -90,9 +91,18 @@ export function PullsDashboard() {
   const tokenState = useGitHubToken();
   const { clearToken, hasToken, hydrated, setToken, tokenVersion } = tokenState;
   const modifier = useModifierKey();
+  // The desktop list + preview layout fills the viewport, so the search bar,
+  // filters, and state tabs stay put while only the rows (and the preview)
+  // scroll.
+  const previewLayout = useMediaQuery(PREVIEW_LAYOUT_QUERY, false);
 
   return (
-    <DashboardShell section="pulls" tokenState={tokenState} width="full">
+    <DashboardShell
+      fillViewport={hydrated && hasToken && previewLayout}
+      section="pulls"
+      tokenState={tokenState}
+      width="full"
+    >
       {!hydrated ? null : hasToken ? (
         <SignedInDashboard tokenVersion={tokenVersion} />
       ) : (
@@ -161,6 +171,14 @@ const PREVIEW_LAYOUT_QUERY = '(min-width: 64rem)';
 // page instead of under three rows of controls. Below it the rail would
 // squeeze the list and preview until titles and metric labels truncate.
 const RAIL_LAYOUT_QUERY = '(min-width: 96rem)';
+
+// The list column in the viewport-filling layouts. The list card takes the
+// height left under the search bar and filters and scrolls its own rows; when
+// a short window leaves it less than its minimum (many wrapped pins, say),
+// the whole column scrolls instead, so the rows and "Load more" stay
+// reachable even though the page itself never scrolls.
+const FILL_COLUMN_CLASS =
+  'cv-autohide-scrollbar flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto';
 
 function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   const modifier = useModifierKey();
@@ -254,7 +272,7 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
       )}
       title="Also count review requests sent to teams you're on"
     >
-      Include team requests
+      Team requests
       <Switch
         checked={page.reviewRequests === 'teams'}
         onCheckedChange={(checked) =>
@@ -279,6 +297,7 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
       </div>
     ) : (
       <PullList
+        fill={previewLayout}
         listVersion={listVersion}
         request={request}
         scope={page.scope}
@@ -300,14 +319,18 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
 
   // Columns: [rail] list, preview. The pane is always present in the wide
   // layouts (empty until a row is picked) so selecting a pull never reflows
-  // the list under the pointer. It grows at 0.8x the list's rate, from a
-  // floor that keeps the overview's metric bars legible.
+  // the list under the pointer. Two-line rows gain nothing past ~900px, so
+  // extra width goes to the preview: 0.8x the list's share on laptops, an
+  // even split with the rail, and 1.3x from 120rem, where the pane is wide
+  // enough for its description-plus-sidebar layout. The floor keeps the
+  // overview's metric bars legible.
   if (railLayout) {
     return (
-      <div className="grid grid-cols-[15rem_minmax(0,1fr)_minmax(26rem,0.8fr)] items-start gap-8">
+      <div className="grid min-h-0 flex-1 grid-cols-[15rem_minmax(0,1fr)_minmax(26rem,1fr)] grid-rows-[minmax(0,1fr)] gap-8 min-[120rem]:grid-cols-[15rem_minmax(0,1fr)_minmax(26rem,1.3fr)]">
         <aside
           aria-label="Pull request filters"
-          className="sticky top-4 space-y-5"
+          className="cv-autohide-scrollbar min-h-0 space-y-5 overflow-y-auto"
+          onScroll={revealScrollbarWhileScrolling}
         >
           <RailSection heading="Repositories">{scopeNav}</RailSection>
           <RailSection heading="Involvement">
@@ -315,7 +338,10 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
             {teamToggle}
           </RailSection>
         </aside>
-        <div className="min-w-0 space-y-3">
+        <div
+          className={FILL_COLUMN_CLASS}
+          onScroll={revealScrollbarWhileScrolling}
+        >
           {queryBar}
           {list}
         </div>
@@ -324,7 +350,10 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
     );
   }
   const stacked = (
-    <div className="min-w-0 space-y-3">
+    <div
+      className={previewLayout ? FILL_COLUMN_CLASS : 'min-w-0 space-y-3'}
+      onScroll={previewLayout ? revealScrollbarWhileScrolling : undefined}
+    >
       {queryBar}
       {scopeNav}
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-1">
@@ -336,7 +365,7 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   );
   if (previewLayout) {
     return (
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(24rem,0.8fr)] items-start gap-6">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(24rem,0.8fr)] grid-rows-[minmax(0,1fr)] gap-6">
         {stacked}
         {previewPane}
       </div>
@@ -500,7 +529,9 @@ function AudienceFilter({
           isSelected &&
             'bg-accent dark:bg-accent border-transparent font-medium shadow-none'
         )
-      : undefined;
+      : // Slightly tighter than the sm default so the team-requests switch
+        // fits on the same row at laptop widths.
+        'px-2.5';
   const selected: readonly PullInvolvement[] = value === 'anyone' ? [] : value;
   const toggle = (involvement: PullInvolvement) =>
     onChange(
@@ -609,6 +640,7 @@ function getEmptyCopy(request: PullSearchRequest, scope: PullScope): string {
 // search text (is:/sort: qualifiers), so the bar always shows the whole
 // search.
 function PullList({
+  fill,
   listVersion,
   onApplyText,
   onClosePreview,
@@ -618,6 +650,9 @@ function PullList({
   selectedKey,
   tokenVersion,
 }: {
+  // Fill the column's remaining height: the header and footer stay fixed
+  // and only the rows scroll (the desktop layout).
+  fill: boolean;
   // Bumped by the parent to refetch after a pull changed elsewhere.
   listVersion: number;
   onApplyText(text: string): void;
@@ -662,9 +697,14 @@ function PullList({
     <section
       aria-busy={loading}
       aria-label="Pull requests"
-      className={SECTION_CARD_CLASS}
+      // min-h-64 keeps the rows reachable on short windows: past it, the
+      // column scrolls instead of squeezing the list (FILL_COLUMN_CLASS).
+      className={cn(
+        SECTION_CARD_CLASS,
+        fill && 'flex min-h-64 flex-1 flex-col'
+      )}
     >
-      <div className="bg-muted/30 flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-2 py-1.5">
+      <div className="bg-muted/30 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-2 py-1.5">
         <div
           role="radiogroup"
           aria-label="Pull request state"
@@ -708,7 +748,7 @@ function PullList({
               className="text-muted-foreground ml-auto h-7"
             >
               {sortLabel}
-              <IconChevronSm className="size-3 rotate-90" />
+              <IconChevronSm className="size-3" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
@@ -731,38 +771,47 @@ function PullList({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <DashboardSectionState
-        emptyLabel={
-          totalCount > 0
-            ? getUnreadableCopy(totalCount, hasMore)
-            : getEmptyCopy(request, scope)
+      <div
+        className={
+          fill
+            ? 'cv-autohide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain'
+            : undefined
         }
-        error={pulls.length === 0 ? error : null}
-        isEmpty={pulls.length === 0}
-        loading={loading}
-        loadingLabel="Loading pull requests…"
-        skeleton={<SkeletonRows variant="pull" />}
-        onRetry={retry}
+        onScroll={fill ? revealScrollbarWhileScrolling : undefined}
       >
-        {pulls.map((pull) => (
-          <PullRequestRow
-            key={pullKey(pull)}
-            pull={pull}
-            selected={selectedKey === pullKey(pull)}
-            showRepo={showRepo}
-            onPreview={onPreview}
-          />
-        ))}
-      </DashboardSectionState>
-      {pulls.length > 0 && error != null && (
-        <div className="border-t">
-          <SectionError error={error} onRetry={retry} />
-        </div>
-      )}
+        <DashboardSectionState
+          emptyLabel={
+            totalCount > 0
+              ? getUnreadableCopy(totalCount, hasMore)
+              : getEmptyCopy(request, scope)
+          }
+          error={pulls.length === 0 ? error : null}
+          isEmpty={pulls.length === 0}
+          loading={loading}
+          loadingLabel="Loading pull requests…"
+          skeleton={<SkeletonRows variant="pull" />}
+          onRetry={retry}
+        >
+          {pulls.map((pull) => (
+            <PullRequestRow
+              key={pullKey(pull)}
+              pull={pull}
+              selected={selectedKey === pullKey(pull)}
+              showRepo={showRepo}
+              onPreview={onPreview}
+            />
+          ))}
+        </DashboardSectionState>
+        {pulls.length > 0 && error != null && (
+          <div className="border-t">
+            <SectionError error={error} onRetry={retry} />
+          </div>
+        )}
+      </div>
       {/* An empty page can still have more: its hits were all unreadable. */}
       {(pulls.length > 0 || hasMore) &&
         (hasMore || totalCount > pulls.length) && (
-          <div className="text-muted-foreground flex items-center justify-between gap-3 border-t px-3 py-2 text-xs">
+          <div className="text-muted-foreground flex shrink-0 items-center justify-between gap-3 border-t px-3 py-2 text-xs">
             <span className="tabular-nums">
               {pulls.length.toLocaleString()} of {totalCount.toLocaleString()}
             </span>

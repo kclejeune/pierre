@@ -387,22 +387,26 @@ export function PullDetailsControl({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="max-h-[min(85vh,60rem)] w-[560px] max-w-[92vw] overflow-y-auto p-3 md:w-[720px]"
+        // No padding on the scroller itself (see PullPreviewPane): the
+        // panel's sticky footer would otherwise stop short of the bottom.
+        className="max-h-[min(85vh,60rem)] w-[560px] max-w-[92vw] overflow-y-auto p-0 md:w-[720px]"
         style={dropdownThemeStyle}
       >
-        <PullDetailsPanel
-          diffStats={diffStats}
-          footerSurfaceClassName="bg-[var(--diffshub-popover-bg,var(--color-popover))]"
-          getGitHubToken={getGitHubToken}
-          model={model}
-          pullInfo={pullInfo}
-          pullRequest={pullRequest}
-          onDetailsEdited={onDetailsEdited}
-          onMerged={() => {
-            setOpen(false);
-            onMerged();
-          }}
-        />
+        <div className="p-3">
+          <PullDetailsPanel
+            diffStats={diffStats}
+            footerSurfaceClassName="bg-[var(--diffshub-popover-bg,var(--color-popover))]"
+            getGitHubToken={getGitHubToken}
+            model={model}
+            pullInfo={pullInfo}
+            pullRequest={pullRequest}
+            onDetailsEdited={onDetailsEdited}
+            onMerged={() => {
+              setOpen(false);
+              onMerged();
+            }}
+          />
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -443,8 +447,13 @@ export function PullDetailsPanel({
       Check runs aren&apos;t shown. {checkRunsBlocked}
     </p>
   );
+  const editing = model.editDraft != null;
   return (
-    <div className="flex flex-col gap-3">
+    // A size container: once the panel is wider than 48rem (the /pulls
+    // preview on large screens; never the 720px popover), labels and
+    // reviewers move into a sidebar beside the description, as on GitHub's
+    // PR page, instead of stretching across the full width.
+    <div className="@container flex flex-col gap-3">
       {model.editDraft != null ? (
         <PullEditForm
           details={model.details}
@@ -545,46 +554,64 @@ export function PullDetailsPanel({
         headline={model.headline}
         onToggleChecks={() => model.setChecksExpanded((current) => !current)}
       />
-      <PullLabels
-        key={`${pullRequest.owner}/${pullRequest.repo}#${pullRequest.number}`}
-        canEdit={model.permissions?.canLabel === true}
-        getGitHubToken={getGitHubToken}
-        labels={model.details.labels}
-        onLabelsChanged={(labels) => onDetailsEdited(pullRequest, { labels })}
-        pullRequest={pullRequest}
-      />
-      {(model.reviewers.length > 0 || model.reviewerVerdictsUnavailable) && (
-        <PanelSection heading="Reviewers">
-          {model.reviewers.length > 0 && (
-            <ul className="flex flex-col gap-1">
-              {model.reviewers.map((reviewer) => (
-                <ReviewerRow key={reviewer.login} reviewer={reviewer} />
-              ))}
-            </ul>
+      <div
+        className={cn(
+          'flex flex-col gap-3',
+          !editing &&
+            '@3xl:grid @3xl:grid-cols-[minmax(0,1fr)_17rem] @3xl:items-start @3xl:gap-x-6'
+        )}
+      >
+        <div className="flex min-w-0 flex-col gap-3 @3xl:col-start-2 @3xl:row-start-1">
+          <PullLabels
+            key={`${pullRequest.owner}/${pullRequest.repo}#${pullRequest.number}`}
+            canEdit={model.permissions?.canLabel === true}
+            getGitHubToken={getGitHubToken}
+            labels={model.details.labels}
+            onLabelsChanged={(labels) =>
+              onDetailsEdited(pullRequest, { labels })
+            }
+            pullRequest={pullRequest}
+          />
+          {(model.reviewers.length > 0 ||
+            model.reviewerVerdictsUnavailable) && (
+            <PanelSection heading="Reviewers">
+              {model.reviewers.length > 0 && (
+                <ul className="flex flex-col gap-1">
+                  {model.reviewers.map((reviewer) => (
+                    <ReviewerRow key={reviewer.login} reviewer={reviewer} />
+                  ))}
+                </ul>
+              )}
+              {model.reviewerVerdictsUnavailable && (
+                <p className="text-muted-foreground text-xs">
+                  Review verdicts could not be loaded; showing requested
+                  reviewers only.
+                </p>
+              )}
+            </PanelSection>
           )}
-          {model.reviewerVerdictsUnavailable && (
-            <p className="text-muted-foreground text-xs">
-              Review verdicts could not be loaded; showing requested reviewers
-              only.
-            </p>
-          )}
-        </PanelSection>
-      )}
-      {model.editDraft == null && (
-        <PanelSection heading="Description">
-          {model.details.body.trim() === '' ? (
-            <p className="text-muted-foreground text-xs">
-              No description provided.
-            </p>
-          ) : (
-            <div
-              className={`rounded-md border ${annotationBorderColor} px-3 py-2 text-[13px]`}
-            >
-              <MarkdownContent flavor="comment" markdown={model.details.body} />
-            </div>
-          )}
-        </PanelSection>
-      )}
+        </div>
+        {!editing && (
+          <div className="min-w-0 @3xl:col-start-1 @3xl:row-start-1">
+            <PanelSection heading="Description">
+              {model.details.body.trim() === '' ? (
+                <p className="text-muted-foreground text-xs">
+                  No description provided.
+                </p>
+              ) : (
+                <div
+                  className={`rounded-md border ${annotationBorderColor} px-3 py-2 text-[13px]`}
+                >
+                  <MarkdownContent
+                    flavor="comment"
+                    markdown={model.details.body}
+                  />
+                </div>
+              )}
+            </PanelSection>
+          </div>
+        )}
+      </div>
       {(model.showMergeControls || model.showStateActions) && (
         // Pinned to the panel's bottom edge so the actions stay in reach
         // while a long description scrolls; -mx/-mb span the panel's

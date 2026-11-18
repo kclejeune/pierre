@@ -83,7 +83,10 @@ export function PullRequestRow({
       className={cn(
         'focus-visible:ring-ring flex items-center gap-3 border-b p-3 transition-colors outline-none first:rounded-t-lg last:rounded-b-lg last:border-b-0 focus-visible:ring-2 focus-visible:ring-inset',
         selected
-          ? 'bg-accent shadow-[inset_2px_0_0_var(--color-ring)]'
+          ? // Full-contrast edge: the palette is monochrome, so the
+            // selection that ties this row to the preview pane is marked
+            // by contrast rather than an accent hue.
+            'bg-accent shadow-[inset_2px_0_0_var(--color-foreground)]'
           : 'hover:bg-accent/60'
       )}
     >

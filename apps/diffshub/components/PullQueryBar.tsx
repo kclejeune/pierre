@@ -165,7 +165,7 @@ function ScopeButton({
         scope={scope}
       />
       <ScopeLabel scope={scope} />
-      <IconChevronSm className="text-muted-foreground size-3 shrink-0 rotate-90" />
+      <IconChevronSm className="text-muted-foreground size-3 shrink-0" />
       <ShortcutHint
         className="text-muted-foreground hidden md:inline-flex"
         shortcutKey="k"

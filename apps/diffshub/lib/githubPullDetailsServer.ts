@@ -414,13 +414,20 @@ const PULL_MERGE_QUEUE_QUERY = `query ($owner: String!, $name: String!, $number:
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       id
+      mergeStateStatus
       ${MERGE_QUEUE_FIELDS}
     }
   }
 }`;
 
-// The pull's GraphQL node id (which the queue mutations take) and its
-// merge-queue standing, for the merge-queue route.
+// Merge states in which GitHub would merge the pull now (the set `gh pr
+// merge` treats as immediately mergeable): such a pull can join the queue
+// directly, while any other needs auto-merge to queue it later.
+const READY_MERGE_STATES = new Set(['CLEAN', 'HAS_HOOKS', 'UNSTABLE']);
+
+// The pull's GraphQL node id (which the queue mutations take), its
+// merge-queue standing, and whether it can be queued right away, for the
+// merge-queue route.
 export async function fetchPullMergeQueue(
   repo: GitRepoRef,
   pull: string,
@@ -428,6 +435,7 @@ export async function fetchPullMergeQueue(
   fetcher: PlainFetch = githubFetch
 ): Promise<{
   pullId: string | undefined;
+  readyToQueue: boolean;
   status: PullMergeQueueStatus | null;
 }> {
   const pullRequest = asRecord(
@@ -444,6 +452,9 @@ export async function fetchPullMergeQueue(
   );
   return {
     pullId: readStringPath(pullRequest, ['id']),
+    readyToQueue: READY_MERGE_STATES.has(
+      readStringPath(pullRequest, ['mergeStateStatus']) ?? ''
+    ),
     status: parsePullMergeQueueStatus(pullRequest),
   };
 }

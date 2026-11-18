@@ -393,9 +393,13 @@ export function PullDetailsControl({
                   headSha={headSha}
                   loading={supplementLoading}
                   mergeQueue={supplementalValue?.mergeQueue ?? null}
+                  // Applies only to the supplement the action started from: if
+                  // it reloaded meanwhile (say, a push moved the head), the
+                  // late response describes an old head and is dropped.
                   onMergeQueueChange={(mergeQueue) =>
                     setSupplement((current) =>
-                      current.kind === 'ready'
+                      current.kind === 'ready' &&
+                      current.value === supplementalValue
                         ? {
                             ...current,
                             value: { ...current.value, mergeQueue },

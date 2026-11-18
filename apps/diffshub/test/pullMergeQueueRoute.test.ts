@@ -64,11 +64,14 @@ describe('pull-merge-queue', () => {
 
   // Like `gh pr merge` on a queue branch: auto-merge with no method, pinned
   // to the reviewed head, then the pull's status read back from GitHub.
-  test('enqueue enables auto-merge pinned to the head sha', async () => {
-    const requests = stubQueue(NOT_QUEUED, {
-      ...NOT_QUEUED,
-      mergeQueueEntry: { position: 4, state: 'QUEUED' },
-    });
+  test('enqueue enables auto-merge for a pull still waiting', async () => {
+    const requests = stubQueue(
+      { ...NOT_QUEUED, mergeStateStatus: 'BLOCKED' },
+      {
+        ...NOT_QUEUED,
+        mergeQueueEntry: { position: 4, state: 'QUEUED' },
+      }
+    );
     const response = await POST(
       queueRequest({ action: 'enqueue', expectedHeadSha: 'abc' })
     );
@@ -83,6 +86,27 @@ describe('pull-merge-queue', () => {
     expect(others).toHaveLength(0);
     expect(mutation?.query).toContain('enablePullRequestAutoMerge');
     expect(mutation?.query).not.toContain('mergeMethod');
+    expect(mutation?.variables).toEqual({
+      expectedHeadOid: 'abc',
+      pullId: 'PR_7',
+    });
+  });
+
+  // A ready pull joins the queue directly: GitHub can refuse auto-merge for
+  // a pull that could merge now.
+  test('enqueue queues a ready pull directly', async () => {
+    const requests = stubQueue(
+      { ...NOT_QUEUED, mergeStateStatus: 'CLEAN' },
+      { ...NOT_QUEUED, mergeQueueEntry: { position: 1, state: 'QUEUED' } }
+    );
+    const response = await POST(
+      queueRequest({ action: 'enqueue', expectedHeadSha: 'abc' })
+    );
+    expect(response.status).toBe(200);
+    const [mutation, ...others] = mutationsIn(requests);
+    expect(others).toHaveLength(0);
+    expect(mutation?.query).toContain('enqueuePullRequest');
+    expect(mutation?.query).not.toContain('AutoMerge');
     expect(mutation?.variables).toEqual({
       expectedHeadOid: 'abc',
       pullId: 'PR_7',

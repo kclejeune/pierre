@@ -14,10 +14,16 @@ import type { MergeQueueAction } from '@/lib/pullMergeClient';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 
-// The mutation behind each action. 'enqueue' turns on auto-merge without a
-// method, as `gh pr merge` does on queue branches: GitHub queues the pull now
-// if its required checks pass, or once they do. 'dequeue' removes a queued
-// pull; 'cancel-auto-merge' drops a pending auto-merge before it's queued.
+// The mutation behind each action. 'enqueue' is GitHub's "Merge when ready":
+// a pull that could merge now joins the queue directly (ENQUEUE_NOW), and any
+// other gets auto-merge with no method (the queue sets it), which queues it
+// once its required checks and reviews pass. Auto-merge alone isn't enough
+// for a ready pull: GitHub can refuse it there, or where the repo disables
+// auto-merge. 'dequeue' removes a queued pull; 'cancel-auto-merge' drops a
+// pending auto-merge before it's queued.
+const ENQUEUE_NOW = `mutation ($pullId: ID!, $expectedHeadOid: GitObjectID) {
+  enqueuePullRequest(input: { pullRequestId: $pullId, expectedHeadOid: $expectedHeadOid }) { clientMutationId }
+}`;
 const QUEUE_MUTATIONS: Readonly<Record<MergeQueueAction, string>> = {
   enqueue: `mutation ($pullId: ID!, $expectedHeadOid: GitObjectID) {
     enablePullRequestAutoMerge(input: { pullRequestId: $pullId, expectedHeadOid: $expectedHeadOid }) { clientMutationId }
@@ -65,7 +71,11 @@ async function handlePOST(request: NextRequest) {
   }
 
   try {
-    const { pullId, status } = await fetchPullMergeQueue(ref, ref.pull, token);
+    const { pullId, readyToQueue, status } = await fetchPullMergeQueue(
+      ref,
+      ref.pull,
+      token
+    );
     if (pullId == null || status == null) {
       return createJSONResponse(
         { error: "This pull request's base branch has no merge queue." },
@@ -73,7 +83,9 @@ async function handlePOST(request: NextRequest) {
       );
     }
     await sendGitHubGraphQL(
-      QUEUE_MUTATIONS[action],
+      action === 'enqueue' && readyToQueue
+        ? ENQUEUE_NOW
+        : QUEUE_MUTATIONS[action],
       action === 'enqueue'
         ? { expectedHeadOid: expectedHeadSha, pullId }
         : { pullId },

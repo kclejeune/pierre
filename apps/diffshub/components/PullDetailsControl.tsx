@@ -113,44 +113,45 @@ const MERGE_METHOD_LABELS: Record<PullMergeMethod, string> = {
   squash: 'Squash',
 };
 
-// The header's pull-details control: a compact state chip (draft/open/merged
-// plus an aggregate CI dot) opening the pull's overview, laid out after
-// GitHub's PR overview: title, author/branches/diffstat line, a merge-status
-// card (headline, Checks / Comments / Approvals bars, merge button), labels,
-// reviewers with their verdicts, and the description. Also hosts the edit,
-// close/reopen, draft, and label controls.
-export function PullDetailsControl({
+type SupplementState =
+  | { kind: 'idle' | 'loading' }
+  | { kind: 'error'; message: string }
+  | { kind: 'ready'; value: PullDetailsSupplement };
+
+export type PullDetailsModel = NonNullable<
+  ReturnType<typeof usePullDetailsModel>
+>;
+
+// Everything the pull-details panel shows and edits for one pull: the
+// lazily loaded supplement (checks, review verdicts, viewer permissions,
+// merge options), the cells and headline derived from it, and the panel's
+// local edit/expand state. Kept in one hook so the header chip (CI dot,
+// unresolved count) and the panel body read the same state, and so the
+// /pulls preview pane can show the same panel without the chip. Null until
+// the pull's details have loaded.
+export function usePullDetailsModel({
   canWrite,
   conversations,
-  diffStats,
   getGitHubToken,
   githubTokenVersion,
-  onDetailsEdited,
-  onMerged,
   pullInfo,
   pullRequest,
-}: PullDetailsControlProps) {
-  const dropdownThemeStyle = useDropdownChromeStyle();
-  const [open, setOpen] = useState(false);
+}: {
+  canWrite: boolean;
+  conversations: ConversationCounts | null;
+  getGitHubToken(): string | undefined;
+  githubTokenVersion: number;
+  pullInfo: PullInfo | null;
+  pullRequest: PullRequestRef;
+}) {
   const [checksExpanded, setChecksExpanded] = useState(false);
-  // Without Checks: Read, GitHub withholds check runs and only commit
-  // statuses come back, so the list is partial; say so under it.
-  const checkRunsBlocked = useAppPermissionBlock('checkRuns');
-  const checkRunsNote = checkRunsBlocked != null && (
-    <p className="text-muted-foreground mt-1 text-xs">
-      Check runs aren&apos;t shown. {checkRunsBlocked}
-    </p>
-  );
   // Held here so an edit survives the dropdown closing, which unmounts the
   // form.
   const [editDraft, setEditDraft] = useState<PullEditDraft | null>(null);
-  const editing = editDraft != null;
   const supplementRequest = useRef<AbortController | null>(null);
-  const [supplement, setSupplement] = useState<
-    | { kind: 'idle' | 'loading' }
-    | { kind: 'error'; message: string }
-    | { kind: 'ready'; value: PullDetailsSupplement }
-  >({ kind: 'idle' });
+  const [supplement, setSupplement] = useState<SupplementState>({
+    kind: 'idle',
+  });
   // usePullInfo clears state whenever the pull changes, so a non-null
   // pullInfo always belongs to this pullRequest.
   const details = pullInfo?.details;
@@ -274,16 +275,68 @@ export function PullDetailsControl({
     details,
     reviewers: approvalsCell,
   });
-  const showMergeControls = details.state === 'open' && canWrite;
-  // Draft, close, and reopen share the merge controls' sticky footer.
-  const showStateActions = canEdit && details.state !== 'merged';
-  // Unresolved review conversations, the one overview number worth showing
-  // on the closed chip: it is what a reviewer acts on next. Only known once
-  // resolution has loaded (`counted`).
-  const unresolvedCount =
-    conversations?.kind === 'counted'
-      ? Math.max(0, conversations.total - conversations.resolved)
-      : 0;
+  return {
+    approvalsCell,
+    canEdit,
+    checks,
+    checksCell,
+    checksExpanded,
+    ciState,
+    commentsCell,
+    details,
+    editDraft,
+    headSha,
+    headline,
+    loadSupplement,
+    permissions,
+    reviewerVerdictsUnavailable,
+    reviewers,
+    setChecksExpanded,
+    setEditDraft,
+    setSupplement,
+    showMergeControls: details.state === 'open' && canWrite,
+    // Draft, close, and reopen share the merge controls' sticky footer.
+    showStateActions: canEdit && details.state !== 'merged',
+    supplement,
+    supplementLoading,
+    supplementalValue,
+    // Unresolved review conversations, the one overview number worth
+    // showing on the closed chip: it is what a reviewer acts on next. Only
+    // known once resolution has loaded (`counted`).
+    unresolvedCount:
+      conversations?.kind === 'counted'
+        ? Math.max(0, conversations.total - conversations.resolved)
+        : 0,
+  };
+}
+
+// The header's pull-details control: a compact state chip (draft/open/merged
+// plus an aggregate CI dot) opening the pull's overview in a popover (see
+// PullDetailsPanel).
+export function PullDetailsControl({
+  canWrite,
+  conversations,
+  diffStats,
+  getGitHubToken,
+  githubTokenVersion,
+  onDetailsEdited,
+  onMerged,
+  pullInfo,
+  pullRequest,
+}: PullDetailsControlProps) {
+  const dropdownThemeStyle = useDropdownChromeStyle();
+  const [open, setOpen] = useState(false);
+  const model = usePullDetailsModel({
+    canWrite,
+    conversations,
+    getGitHubToken,
+    githubTokenVersion,
+    pullInfo,
+    pullRequest,
+  });
+  if (model == null) {
+    return null;
+  }
   return (
     <DropdownMenu modal={false} open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
@@ -291,43 +344,43 @@ export function PullDetailsControl({
           type="button"
           variant="ghost"
           size="sm"
-          title={`#${pullRequest.number} ${details.title}`}
-          aria-label={`Pull request details: ${details.title}`}
+          title={`#${pullRequest.number} ${model.details.title}`}
+          aria-label={`Pull request details: ${model.details.title}`}
           className={cn(
             CHROME_ICON_BUTTON_CLASS,
             'w-auto max-w-80 min-w-0 gap-1.5 px-2'
           )}
         >
-          <PullStateBadge details={details} iconOnly />
+          <PullStateBadge details={model.details} iconOnly />
           {/* The title truncates harder as the header narrows and drops out
               below lg, where the URL beside the chip already names the pull
               and the state icon carries it. */}
           <span className="min-w-0 truncate max-lg:hidden lg:max-w-[18ch] xl:max-w-none">
-            {details.title}
+            {model.details.title}
           </span>
-          {editing && (
+          {model.editDraft != null && (
             <IconPencil
               aria-label="Unsaved edits"
               className="size-3 shrink-0 text-amber-500"
             />
           )}
-          {ciState != null && (
+          {model.ciState != null && (
             <IconCircleFill
-              aria-label={`Checks ${ciState}`}
-              className={cn('size-2', TONE_TEXT_CLASS[ciState])}
+              aria-label={`Checks ${model.ciState}`}
+              className={cn('size-2', TONE_TEXT_CLASS[model.ciState])}
             />
           )}
-          {unresolvedCount > 0 && (
+          {model.unresolvedCount > 0 && (
             <span
               aria-label={plural(
-                unresolvedCount,
+                model.unresolvedCount,
                 'unresolved conversation',
                 'unresolved conversations'
               )}
               className="text-muted-foreground flex shrink-0 items-center gap-0.5 text-[11px] tabular-nums"
             >
               <IconComment aria-hidden className="size-3" />
-              {unresolvedCount}
+              {model.unresolvedCount}
             </span>
           )}
         </Button>
@@ -337,201 +390,257 @@ export function PullDetailsControl({
         className="max-h-[min(85vh,60rem)] w-[560px] max-w-[92vw] overflow-y-auto p-3 md:w-[720px]"
         style={dropdownThemeStyle}
       >
-        <div className="flex flex-col gap-3">
-          {editDraft != null ? (
-            <PullEditForm
-              details={details}
-              draft={editDraft}
-              getGitHubToken={getGitHubToken}
-              onCancel={() => setEditDraft(null)}
-              onDraftChange={setEditDraft}
-              onSaved={(updated) => {
-                setEditDraft(null);
-                onDetailsEdited(pullRequest, withoutLabels(updated));
-              }}
-              pullRequest={pullRequest}
-            />
+        <PullDetailsPanel
+          diffStats={diffStats}
+          footerSurfaceClassName="bg-[var(--diffshub-popover-bg,var(--color-popover))]"
+          getGitHubToken={getGitHubToken}
+          model={model}
+          pullInfo={pullInfo}
+          pullRequest={pullRequest}
+          onDetailsEdited={onDetailsEdited}
+          onMerged={() => {
+            setOpen(false);
+            onMerged();
+          }}
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// The pull's overview, laid out after GitHub's PR overview: title,
+// author/branches/diffstat line, a merge-status card (headline, Checks /
+// Comments / Approvals bars), labels, reviewers with their verdicts, and the
+// description, with the merge and close/reopen/draft actions in a footer
+// pinned to the bottom of the scrolling container. Also hosts the
+// title/description editor. Expects a parent with 0.75rem (p-3) padding,
+// which the footer spans with negative margins; `footerSurfaceClassName` is
+// that parent's background so the footer hides what scrolls under it.
+export function PullDetailsPanel({
+  diffStats,
+  footerSurfaceClassName,
+  getGitHubToken,
+  model,
+  onDetailsEdited,
+  onMerged,
+  pullInfo,
+  pullRequest,
+}: {
+  diffStats: DiffsHubDiffStats | null;
+  footerSurfaceClassName: string;
+  getGitHubToken(): string | undefined;
+  model: PullDetailsModel;
+  onDetailsEdited(pull: PullRequestRef, fields: Partial<PullDetails>): void;
+  onMerged(): void;
+  pullInfo: PullInfo | null;
+  pullRequest: PullRequestRef;
+}) {
+  // Without Checks: Read, GitHub withholds check runs and only commit
+  // statuses come back, so the list is partial; say so under it.
+  const checkRunsBlocked = useAppPermissionBlock('checkRuns');
+  const checkRunsNote = checkRunsBlocked != null && (
+    <p className="text-muted-foreground mt-1 text-xs">
+      Check runs aren&apos;t shown. {checkRunsBlocked}
+    </p>
+  );
+  return (
+    <div className="flex flex-col gap-3">
+      {model.editDraft != null ? (
+        <PullEditForm
+          details={model.details}
+          draft={model.editDraft}
+          getGitHubToken={getGitHubToken}
+          onCancel={() => model.setEditDraft(null)}
+          onDraftChange={model.setEditDraft}
+          onSaved={(updated) => {
+            model.setEditDraft(null);
+            onDetailsEdited(pullRequest, withoutLabels(updated));
+          }}
+          pullRequest={pullRequest}
+        />
+      ) : (
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 text-sm font-medium">
+            {model.details.title}
+            <span className="text-muted-foreground font-normal">
+              {' '}
+              #{pullRequest.number}
+            </span>
+          </div>
+          <span className="flex shrink-0 items-center gap-1">
+            {model.canEdit && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                title="Edit title and description"
+                aria-label="Edit title and description"
+                onClick={() =>
+                  model.setEditDraft({
+                    body: model.details.body,
+                    title: model.details.title,
+                  })
+                }
+              >
+                <IconPencil className="size-3.5" />
+              </Button>
+            )}
+            <PullStateBadge details={model.details} />
+          </span>
+        </div>
+      )}
+      <PullOverviewMeta
+        details={model.details}
+        diffStats={diffStats}
+        pullInfo={pullInfo}
+      />
+      <MergeStatusCard
+        approvals={model.approvalsCell}
+        checks={model.checksCell}
+        checksDetail={
+          model.checks != null && model.checks.length > 0 ? (
+            <>
+              <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto">
+                {model.checks.map((check, index) => (
+                  <CheckRow key={`${check.name}-${index}`} check={check} />
+                ))}
+              </ul>
+              {checkRunsNote}
+            </>
           ) : (
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0 text-sm font-medium">
-                {details.title}
-                <span className="text-muted-foreground font-normal">
-                  {' '}
-                  #{pullRequest.number}
-                </span>
-              </div>
-              <span className="flex shrink-0 items-center gap-1">
-                {canEdit && (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <p
+                  className={cn(
+                    'text-xs',
+                    model.supplement.kind === 'error'
+                      ? 'text-destructive'
+                      : 'text-muted-foreground',
+                    model.checksCell.kind === 'loading' && 'animate-pulse'
+                  )}
+                >
+                  {model.checksCell.kind === 'unavailable'
+                    ? model.checksCell.reason
+                    : model.checksCell.kind === 'loading'
+                      ? 'Loading checks…'
+                      : 'No checks reported on the head commit.'}
+                </p>
+                {model.supplement.kind === 'error' && (
                   <Button
                     type="button"
                     variant="ghost"
-                    size="icon-sm"
-                    title="Edit title and description"
-                    aria-label="Edit title and description"
-                    onClick={() =>
-                      setEditDraft({ body: details.body, title: details.title })
-                    }
+                    size="xs"
+                    onClick={() => model.loadSupplement(true)}
                   >
-                    <IconPencil className="size-3.5" />
+                    Retry
                   </Button>
                 )}
-                <PullStateBadge details={details} />
-              </span>
-            </div>
+              </div>
+              {checkRunsNote}
+            </>
+          )
+        }
+        checksExpanded={model.checksExpanded}
+        comments={model.commentsCell}
+        headline={model.headline}
+        onToggleChecks={() => model.setChecksExpanded((current) => !current)}
+      />
+      <PullLabels
+        key={`${pullRequest.owner}/${pullRequest.repo}#${pullRequest.number}`}
+        canEdit={model.permissions?.canLabel === true}
+        getGitHubToken={getGitHubToken}
+        labels={model.details.labels}
+        onLabelsChanged={(labels) => onDetailsEdited(pullRequest, { labels })}
+        pullRequest={pullRequest}
+      />
+      {(model.reviewers.length > 0 || model.reviewerVerdictsUnavailable) && (
+        <PanelSection heading="Reviewers">
+          {model.reviewers.length > 0 && (
+            <ul className="flex flex-col gap-1">
+              {model.reviewers.map((reviewer) => (
+                <ReviewerRow key={reviewer.login} reviewer={reviewer} />
+              ))}
+            </ul>
           )}
-          <PullOverviewMeta
-            details={details}
-            diffStats={diffStats}
-            pullInfo={pullInfo}
-          />
-          <MergeStatusCard
-            approvals={approvalsCell}
-            checks={checksCell}
-            checksDetail={
-              checks != null && checks.length > 0 ? (
-                <>
-                  <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto">
-                    {checks.map((check, index) => (
-                      <CheckRow key={`${check.name}-${index}`} check={check} />
-                    ))}
-                  </ul>
-                  {checkRunsNote}
-                </>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between gap-2">
-                    <p
-                      className={cn(
-                        'text-xs',
-                        supplement.kind === 'error'
-                          ? 'text-destructive'
-                          : 'text-muted-foreground',
-                        checksCell.kind === 'loading' && 'animate-pulse'
-                      )}
-                    >
-                      {checksCell.kind === 'unavailable'
-                        ? checksCell.reason
-                        : checksCell.kind === 'loading'
-                          ? 'Loading checks…'
-                          : 'No checks reported on the head commit.'}
-                    </p>
-                    {supplement.kind === 'error' && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => loadSupplement(true)}
-                      >
-                        Retry
-                      </Button>
-                    )}
-                  </div>
-                  {checkRunsNote}
-                </>
-              )
-            }
-            checksExpanded={checksExpanded}
-            comments={commentsCell}
-            headline={headline}
-            onToggleChecks={() => setChecksExpanded((current) => !current)}
-          />
-          <PullLabels
-            key={`${pullRequest.owner}/${pullRequest.repo}#${pullRequest.number}`}
-            canEdit={permissions?.canLabel === true}
-            getGitHubToken={getGitHubToken}
-            labels={details.labels}
-            onLabelsChanged={(labels) =>
-              onDetailsEdited(pullRequest, { labels })
-            }
-            pullRequest={pullRequest}
-          />
-          {(reviewers.length > 0 || reviewerVerdictsUnavailable) && (
-            <PanelSection heading="Reviewers">
-              {reviewers.length > 0 && (
-                <ul className="flex flex-col gap-1">
-                  {reviewers.map((reviewer) => (
-                    <ReviewerRow key={reviewer.login} reviewer={reviewer} />
-                  ))}
-                </ul>
-              )}
-              {reviewerVerdictsUnavailable && (
-                <p className="text-muted-foreground text-xs">
-                  Review verdicts could not be loaded; showing requested
-                  reviewers only.
-                </p>
-              )}
-            </PanelSection>
+          {model.reviewerVerdictsUnavailable && (
+            <p className="text-muted-foreground text-xs">
+              Review verdicts could not be loaded; showing requested reviewers
+              only.
+            </p>
           )}
-          {!editing && (
-            <PanelSection heading="Description">
-              {details.body.trim() === '' ? (
-                <p className="text-muted-foreground text-xs">
-                  No description provided.
-                </p>
-              ) : (
-                <div
-                  className={`rounded-md border ${annotationBorderColor} px-3 py-2 text-[13px]`}
-                >
-                  <MarkdownContent flavor="comment" markdown={details.body} />
-                </div>
-              )}
-            </PanelSection>
-          )}
-          {(showMergeControls || showStateActions) && (
-            // Pinned to the panel's bottom edge so the actions stay in reach
-            // while a long description scrolls; -mx/-mb span the panel's
-            // padding, and the popover background hides what scrolls under.
+        </PanelSection>
+      )}
+      {model.editDraft == null && (
+        <PanelSection heading="Description">
+          {model.details.body.trim() === '' ? (
+            <p className="text-muted-foreground text-xs">
+              No description provided.
+            </p>
+          ) : (
             <div
-              className={`sticky bottom-0 -mx-3 -mb-3 flex flex-col gap-2 border-t ${annotationBorderColor} bg-[var(--diffshub-popover-bg,var(--color-popover))] px-3 py-2.5`}
+              className={`rounded-md border ${annotationBorderColor} px-3 py-2 text-[13px]`}
             >
-              {showMergeControls && (
-                <MergeCapabilitySection
-                  baseRef={pullInfo?.baseRef}
-                  capabilities={supplementalValue?.mergeCapabilities ?? null}
-                  details={details}
-                  getGitHubToken={getGitHubToken}
-                  headSha={headSha}
-                  loading={supplementLoading}
-                  mergeQueue={supplementalValue?.mergeQueue ?? null}
-                  // Applies only to the supplement the action started from: if
-                  // it reloaded meanwhile (say, a push moved the head), the
-                  // late response describes an old head and is dropped.
-                  onMergeQueueChange={(mergeQueue) =>
-                    setSupplement((current) =>
-                      current.kind === 'ready' &&
-                      current.value === supplementalValue
-                        ? {
-                            ...current,
-                            value: { ...current.value, mergeQueue },
-                          }
-                        : current
-                    )
-                  }
-                  onMerged={() => {
-                    // Marks the pull merged right away; the reloads that
-                    // follow confirm it.
-                    onDetailsEdited(pullRequest, { state: 'merged' });
-                    setOpen(false);
-                    onMerged();
-                  }}
-                  pullRequest={pullRequest}
-                />
-              )}
-              {showStateActions && (
-                <PullStateActions
-                  details={details}
-                  getGitHubToken={getGitHubToken}
-                  onUpdated={(updated) =>
-                    onDetailsEdited(pullRequest, withoutLabels(updated))
-                  }
-                  pullRequest={pullRequest}
-                />
-              )}
+              <MarkdownContent flavor="comment" markdown={model.details.body} />
             </div>
+          )}
+        </PanelSection>
+      )}
+      {(model.showMergeControls || model.showStateActions) && (
+        // Pinned to the panel's bottom edge so the actions stay in reach
+        // while a long description scrolls; -mx/-mb span the panel's
+        // padding, and the surface background hides what scrolls under.
+        <div
+          className={cn(
+            'sticky bottom-0 -mx-3 -mb-3 flex flex-col gap-2 border-t px-3 py-2.5',
+            annotationBorderColor,
+            footerSurfaceClassName
+          )}
+        >
+          {model.showMergeControls && (
+            <MergeCapabilitySection
+              baseRef={pullInfo?.baseRef}
+              capabilities={model.supplementalValue?.mergeCapabilities ?? null}
+              details={model.details}
+              getGitHubToken={getGitHubToken}
+              headSha={model.headSha}
+              loading={model.supplementLoading}
+              mergeQueue={model.supplementalValue?.mergeQueue ?? null}
+              // Applies only to the supplement the action started from: if
+              // it reloaded meanwhile (say, a push moved the head), the
+              // late response describes an old head and is dropped.
+              onMergeQueueChange={(mergeQueue) =>
+                model.setSupplement((current) =>
+                  current.kind === 'ready' &&
+                  current.value === model.supplementalValue
+                    ? {
+                        ...current,
+                        value: { ...current.value, mergeQueue },
+                      }
+                    : current
+                )
+              }
+              onMerged={() => {
+                // Marks the pull merged right away; the reloads that
+                // follow confirm it.
+                onDetailsEdited(pullRequest, { state: 'merged' });
+                onMerged();
+              }}
+              pullRequest={pullRequest}
+            />
+          )}
+          {model.showStateActions && (
+            <PullStateActions
+              details={model.details}
+              getGitHubToken={getGitHubToken}
+              onUpdated={(updated) =>
+                onDetailsEdited(pullRequest, withoutLabels(updated))
+              }
+              pullRequest={pullRequest}
+            />
           )}
         </div>
-      </DropdownMenuContent>
-    </DropdownMenu>
+      )}
+    </div>
   );
 }
 

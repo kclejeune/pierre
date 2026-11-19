@@ -7,6 +7,7 @@ import { memo, type MouseEvent, useEffect, useRef } from 'react';
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { LabelColorDot } from './LabelColorDot';
 import { TONE_TEXT_CLASS } from './PullOverview';
+import { type PullRowAction, PullRowActions } from './PullRowActions';
 import { PULL_STATE_DISPLAY } from './pullStateDisplay';
 import { RelativeTime } from './RelativeTime';
 import { cn } from '@/lib/cn';
@@ -69,6 +70,17 @@ interface PullRequestRowProps {
   // The author is muted but the list is showing muted pulls: the row dims so
   // people's pulls still stand out.
   muted?: boolean;
+  // Whether the row's author is on the muted list (true even when the row
+  // isn't dimmed, e.g. while the query names them with author:).
+  authorMuted?: boolean;
+  // The row's "⋯" actions menu (components/PullRowActions): approve, merge
+  // when ready, copy links, and mute, without previewing or checking the
+  // row. actionsBusy holds approve and merge while a batch runs; muteFull
+  // marks the muted list as full, which disables muting (unmuting still
+  // works).
+  actionsBusy?: boolean;
+  muteFull?: boolean;
+  onRowAction?(pull: PullSummary, action: PullRowAction): void;
   // Plain clicks preview the pull instead of navigating when set (the wide
   // /pulls layout); modified clicks still follow the link.
   onPreview?(pull: PullSummary): void;
@@ -106,16 +118,20 @@ function isModifiedClick(event: MouseEvent<HTMLAnchorElement>): boolean {
 // One dashboard pull row. The checkbox and group toggle sit beside the link
 // rather than inside it, so they never trigger its navigation.
 export const PullRequestRow = memo(function PullRequestRow({
+  actionsBusy = false,
+  authorMuted = false,
   checked = false,
   groupExpanded = false,
   groupKey,
   groupSize = 1,
   muted = false,
+  muteFull = false,
   nested = false,
   onOpen,
   onPrefetch,
   onPreview,
   onToggleChecked,
+  onRowAction,
   onToggleGroup,
   pull,
   selected = false,
@@ -181,90 +197,105 @@ export const PullRequestRow = memo(function PullRequestRow({
           onClick={(event) => onToggleChecked(pullKey(pull), event.shiftKey)}
         />
       )}
-      <Link
-        href={pull.viewerPath}
-        aria-current={selected ? 'true' : undefined}
-        data-pull-row=""
-        onPointerEnter={schedulePrefetch}
-        onPointerLeave={cancelPrefetch}
-        onClick={(event) => {
-          // A click within the hover delay already loads the pull.
-          cancelPrefetch();
-          if (onPreview != null && !isModifiedClick(event)) {
-            event.preventDefault();
-            onPreview(pull);
-            return;
-          }
-          onOpen(pull);
-        }}
-        // The ring is inset because section cards clip overflow.
-        className="focus-visible:ring-ring flex min-w-0 flex-1 items-start gap-3 px-3 py-2.5 outline-none focus-visible:ring-2 focus-visible:ring-inset"
-      >
-        <StateIcon
-          className={cn('mt-0.5 size-4 shrink-0', stateDisplay.className)}
-          aria-label={`${stateDisplay.label} pull request`}
-        />
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          {/* The repository leads the title, as on GitHub's cross-repo
+      {/* The link and the actions overlay share a box, so the overlay sits
+          over the link's time and avatar, clear of the group toggle. */}
+      <div className="relative flex min-w-0 flex-1">
+        <Link
+          href={pull.viewerPath}
+          aria-current={selected ? 'true' : undefined}
+          data-pull-row=""
+          onPointerEnter={schedulePrefetch}
+          onPointerLeave={cancelPrefetch}
+          onClick={(event) => {
+            // A click within the hover delay already loads the pull.
+            cancelPrefetch();
+            if (onPreview != null && !isModifiedClick(event)) {
+              event.preventDefault();
+              onPreview(pull);
+              return;
+            }
+            onOpen(pull);
+          }}
+          // The ring is inset because section cards clip overflow.
+          className="focus-visible:ring-ring flex min-w-0 flex-1 items-start gap-3 px-3 py-2.5 outline-none focus-visible:ring-2 focus-visible:ring-inset"
+        >
+          <StateIcon
+            className={cn('mt-0.5 size-4 shrink-0', stateDisplay.className)}
+            aria-label={`${stateDisplay.label} pull request`}
+          />
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            {/* The repository leads the title, as on GitHub's cross-repo
               list, so it never competes with the label chips for room. Long
               titles wrap to a second line: bot titles keep their most
               telling part ("[security]", the target version) at the end. */}
-          <span className="text-foreground line-clamp-2 text-sm font-medium break-words">
-            {showRepo && (
-              <span className="text-muted-foreground mr-1.5 font-normal">
-                {pull.owner}/{pull.repo}
-              </span>
-            )}
-            {pull.title}
-          </span>
-          {/* A size container: what fits on this line depends on the row's
+            <span className="text-foreground line-clamp-2 text-sm font-medium break-words">
+              {showRepo && (
+                <span className="text-muted-foreground mr-1.5 font-normal">
+                  {pull.owner}/{pull.repo}
+                </span>
+              )}
+              {pull.title}
+            </span>
+            {/* A size container: what fits on this line depends on the row's
               own width (the list narrows beside the preview pane, and group
               leads give room to their toggle), not the viewport's. */}
-          <div className="@container flex min-w-0 items-center gap-1.5 overflow-hidden">
-            <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
-              #{pull.number}
-            </span>
-            {/* CI and review state sit together after the number: the two
+            <div className="@container flex min-w-0 items-center gap-1.5 overflow-hidden">
+              <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                #{pull.number}
+              </span>
+              {/* CI and review state sit together after the number: the two
                 things that decide whether the pull can merge. They live
                 here rather than after the title so the title's two-line
                 clamp can never cut them off. */}
-            {pull.checks != null ? (
-              <ChecksGlyph checks={pull.checks} />
-            ) : (
-              statusPending && <ChecksPlaceholder />
-            )}
-            <ReviewDecisionText pull={pull} />
-            {pull.activity?.map((activity) => (
-              <span
-                key={activity}
-                className={cn(
-                  'shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] leading-none font-medium',
-                  ACTIVITY_CHIP_CLASSES[activity]
-                )}
-              >
-                {PULL_ACTIVITY_LABELS[activity]}
-              </span>
-            ))}
-            <RowLabels labels={pull.labels ?? []} />
+              {pull.checks != null ? (
+                <ChecksGlyph checks={pull.checks} />
+              ) : (
+                statusPending && <ChecksPlaceholder />
+              )}
+              <ReviewDecisionText pull={pull} />
+              {pull.activity?.map((activity) => (
+                <span
+                  key={activity}
+                  className={cn(
+                    'shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] leading-none font-medium',
+                    ACTIVITY_CHIP_CLASSES[activity]
+                  )}
+                >
+                  {PULL_ACTIVITY_LABELS[activity]}
+                </span>
+              ))}
+              <RowLabels labels={pull.labels ?? []} />
+            </div>
           </div>
-        </div>
-        <RelativeTime
-          className="text-muted-foreground mt-0.5 shrink-0 text-xs"
-          iso={pull.updatedAt}
-          titlePrefix="Updated "
-        />
-        {pull.authorLogin != null && (
-          <span title={`Opened by ${pull.authorLogin}`} className="flex">
-            <CommentAuthorAvatar
-              author={{
-                avatarUrl: pull.authorAvatarUrl ?? '',
-                login: pull.authorLogin,
-              }}
-              className="-mt-0.5 size-6"
+          <RelativeTime
+            className="text-muted-foreground mt-0.5 shrink-0 text-xs"
+            iso={pull.updatedAt}
+            titlePrefix="Updated "
+          />
+          {pull.authorLogin != null && (
+            <span title={`Opened by ${pull.authorLogin}`} className="flex">
+              <CommentAuthorAvatar
+                author={{
+                  avatarUrl: pull.authorAvatarUrl ?? '',
+                  login: pull.authorLogin,
+                }}
+                className="-mt-0.5 size-6"
+              />
+            </span>
+          )}
+        </Link>
+        {onRowAction != null && (
+          <div className="absolute top-2 right-2 z-20">
+            <PullRowActions
+              authorMuted={authorMuted}
+              busy={actionsBusy}
+              muteFull={muteFull}
+              pull={pull}
+              onAction={onRowAction}
             />
-          </span>
+          </div>
         )}
-      </Link>
+      </div>
       {groupKey != null && groupSize > 1 && onToggleGroup != null && (
         <GroupToggle
           expanded={groupExpanded}

@@ -21,11 +21,29 @@ const ACTION_COPY: Record<PullBatchAction, { done: string; running: string }> =
     merge: { done: 'Merged or queued', running: 'Merging' },
   };
 
+// Where a batch came from: the checked rows (the batch bar), or one row's
+// action menu, whose failure isn't carried back into the selection.
+export type PullBatchOrigin = 'row' | 'selection';
+
 // Toasts a finished batch: one success line, plus the first few failures
 // with GitHub's reasons (own pulls can't be approved, a branch moved, checks
-// are required, ...).
-function reportBatch(action: PullBatchAction, result: PullBatchResult) {
+// are required, ...). A single row's action names its pull instead.
+function reportBatch(
+  action: PullBatchAction,
+  result: PullBatchResult,
+  origin: PullBatchOrigin,
+  pulls: readonly PullSummary[]
+) {
   const { failures, succeeded } = result;
+  if (origin === 'row') {
+    const failure = failures[0];
+    if (failure == null) {
+      toast.success(`${ACTION_COPY[action].done} ${pullKey(pulls[0])}.`);
+    } else {
+      toast.error(`${pullKey(failure.pull)}: ${failure.message}`);
+    }
+    return;
+  }
   if (failures.length === 0) {
     toast.success(
       `${ACTION_COPY[action].done} ${plural(succeeded, 'pull request', 'pull requests')}.`
@@ -55,21 +73,34 @@ export interface PullBatchProgress {
 // Runs approve/merge batches for the /pulls list. Owned by the list rather
 // than the batch bar, so a batch keeps its progress (and the list keeps its
 // selection locked) however the bar mounts and unmounts while it runs; and
-// a second batch can't start until the first settles. `onFinished` gets the
-// pulls the batch failed on, and whether anything changed (so the list
-// refetches).
-export function usePullBatch(
-  onFinished: (failed: PullSummary[], changed: boolean) => void
-): {
+// a second batch can't start until the first settles. `onFinished` gets
+// what ran and where it came from, the pulls it failed on, and whether
+// anything changed (so the list refetches).
+export interface PullBatchOutcome {
+  action: PullBatchAction;
+  changed: boolean;
+  failed: PullSummary[];
+  origin: PullBatchOrigin;
+}
+
+export function usePullBatch(onFinished: (outcome: PullBatchOutcome) => void): {
   running: PullBatchProgress | null;
-  run(action: PullBatchAction, pulls: readonly PullSummary[]): void;
+  run(
+    action: PullBatchAction,
+    pulls: readonly PullSummary[],
+    origin?: PullBatchOrigin
+  ): void;
 } {
   const [running, setRunning] = useState<PullBatchProgress | null>(null);
   // Set synchronously, so two clicks in one frame can't both start a batch.
   const busy = useRef(false);
   const finished = useLatestValueRef(onFinished);
 
-  const run = (action: PullBatchAction, pulls: readonly PullSummary[]) => {
+  const run = (
+    action: PullBatchAction,
+    pulls: readonly PullSummary[],
+    origin: PullBatchOrigin = 'selection'
+  ) => {
     if (busy.current || pulls.length === 0) {
       return;
     }
@@ -85,11 +116,13 @@ export function usePullBatch(
       setRunning({ action, done, total })
     )
       .then((result) => {
-        reportBatch(action, result);
-        finished.current(
-          result.failures.map((failure) => failure.pull),
-          result.succeeded > 0
-        );
+        reportBatch(action, result, origin, pulls);
+        finished.current({
+          action,
+          changed: result.succeeded > 0,
+          failed: result.failures.map((failure) => failure.pull),
+          origin,
+        });
       })
       .finally(() => {
         busy.current = false;

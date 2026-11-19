@@ -114,6 +114,23 @@ export function pullKey(pull: {
   return `${pull.owner}/${pull.repo}#${pull.number}`;
 }
 
+// The app's diff path for a pull, e.g. /acme/widgets/pull/12.
+export function pullViewerPath(
+  owner: string,
+  repo: string,
+  number: number | string
+): string {
+  return `/${owner}/${repo}/pull/${number}`;
+}
+
+// The pull's page on the GitHub instance at `webURL`.
+export function githubPullURL(
+  webURL: string,
+  pull: Pick<PullSummary, 'number' | 'owner' | 'repo'>
+): string {
+  return `${webURL.replace(/\/$/, '')}${pullViewerPath(pull.owner, pull.repo, pull.number)}`;
+}
+
 // The pull as the pull-request API clients address it.
 export function pullRequestRef(
   pull: Pick<PullSummary, 'number' | 'owner' | 'repo'>
@@ -362,7 +379,7 @@ function buildPullSummary(fields: {
     repo,
     state: fields.state,
     updatedAt: fields.updatedAt,
-    viewerPath: `/${owner}/${repo}/pull/${number}`,
+    viewerPath: pullViewerPath(owner, repo, number),
   };
   if (typeof authorLogin === 'string' && authorLogin !== '') {
     summary.authorLogin = authorLogin;

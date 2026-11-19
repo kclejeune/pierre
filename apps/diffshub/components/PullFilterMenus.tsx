@@ -45,6 +45,8 @@ import {
 const MAX_LISTED_OPTIONS = 30;
 
 interface PullFilterMenusProps {
+  // Shows and edits the muted authors in the Author menu.
+  muting?: AuthorMuting;
   onApplyText(text: string): void;
   // The loaded rows: the Author and Label menus offer the names they carry
   // (and those of earlier lists; see useSeenPulls), since a cross-repo list
@@ -61,12 +63,13 @@ interface PullFilterMenusProps {
 // inline as their own dropdowns; on a narrow list (beside the preview pane)
 // they fold into one "Filters" menu with a submenu each.
 export function PullFilterMenus({
+  muting,
   onApplyText,
   pulls,
   text,
 }: PullFilterMenusProps) {
   const seen = useSeenPulls(pulls);
-  const filters = useFilterSections(seen, text, onApplyText);
+  const filters = useFilterSections(seen, text, onApplyText, muting);
   const count = filters.reduce((total, filter) => total + filter.active, 0);
   return (
     <>
@@ -206,7 +209,8 @@ interface FilterSection {
 function useFilterSections(
   pulls: readonly PullSummary[],
   text: string,
-  onApplyText: (text: string) => void
+  onApplyText: (text: string) => void,
+  muting: AuthorMuting | undefined
 ): FilterSection[] {
   const author = readPullQualifierFilter(text, 'author');
   const labels = readPullLabelFilters(text);
@@ -243,6 +247,7 @@ function useFilterSections(
       items: (
         <AuthorItems
           current={author}
+          muting={muting}
           pulls={pulls}
           onChoose={(next) =>
             onApplyText(writePullQualifierFilter(text, 'author', next))
@@ -368,25 +373,95 @@ function useAuthorOptions(pulls: readonly PullSummary[]): string[] {
   }, [pulls]);
 }
 
+// The Author menu's view of the muted list (components/useMutedAuthors).
+// Muting is a saved preference rather than a query term, so it stays out of
+// the search text; the menu only shows it and edits it.
+export interface AuthorMuting {
+  // The muted list is at MAX_MUTED_AUTHORS; muting more is disabled.
+  full: boolean;
+  muted: readonly string[];
+  onMute(authors: readonly string[]): void;
+  onUnmute(author: string): void;
+}
+
+// Author choices: a click shows only that author's pulls (or clears the
+// choice); with muting, Alt-click (or Alt+Enter) mutes or unmutes instead,
+// leaving the menu open like the Label menu's exclusions. Muted authors list
+// in their own section, struck through, since their pulls are left out.
 function AuthorItems({
   current,
+  muting,
   onChoose,
   pulls,
 }: {
   current: string | undefined;
+  muting?: AuthorMuting;
   onChoose(author: string | null): void;
   pulls: readonly PullSummary[];
 }) {
   const [query, setQuery] = useState('');
+  const modifier = useModifierKey();
+  const altKey = modifier === '⌘' ? '⌥' : 'Alt';
+  // Whether the pointer or key selecting an item held Alt (Radix's onSelect
+  // event doesn't carry modifier keys).
+  const muteRef = useRef(false);
+  const trackModifier = (event: { altKey: boolean }) => {
+    muteRef.current = event.altKey;
+  };
+  const muted = muting?.muted ?? [];
   const loaded = useAuthorOptions(pulls);
   const needle = query.trim().toLowerCase();
+  const matches = (name: string) => name.toLowerCase().includes(needle);
   const options = (
     current == null || includesName(loaded, current)
       ? loaded
       : [current, ...loaded]
   )
-    .filter((name) => name.toLowerCase().includes(needle))
+    .filter((name) => !includesName(muted, name) && matches(name))
     .slice(0, MAX_LISTED_OPTIONS);
+  const mutedOptions = muted.filter(matches);
+  const renderItem = (name: string, isMuted: boolean) => {
+    const chosen = name.toLowerCase() === current?.toLowerCase();
+    return (
+      <DropdownMenuItem
+        key={name}
+        selected={chosen}
+        className="gap-2"
+        title={isMuted ? `${mutedAuthorLabel(name)} is muted` : undefined}
+        onPointerDown={trackModifier}
+        onKeyDown={trackModifier}
+        onSelect={(event) => {
+          if (muting != null && muteRef.current) {
+            event.preventDefault();
+            if (isMuted) {
+              muting.onUnmute(name);
+            } else if (!muting.full) {
+              muting.onMute([name]);
+            }
+            return;
+          }
+          onChoose(chosen ? null : name);
+        }}
+      >
+        {isMuted && !chosen ? (
+          <IconMinus className="text-muted-foreground size-3.5" />
+        ) : (
+          <IconCheck className={cn('size-3.5', !chosen && 'invisible')} />
+        )}
+        <span
+          className={cn(
+            'truncate',
+            isMuted && !chosen && 'text-muted-foreground line-through'
+          )}
+        >
+          {mutedAuthorLabel(name)}
+        </span>
+        {name.startsWith('app/') && (
+          <span className="text-muted-foreground ml-auto text-xs">bot</span>
+        )}
+      </DropdownMenuItem>
+    );
+  };
   return (
     <>
       <MenuFilterInput
@@ -401,27 +476,30 @@ function AuthorItems({
           Any author
         </DropdownMenuItem>
       )}
-      {options.map((name) => {
-        const chosen = name.toLowerCase() === current?.toLowerCase();
-        return (
-          <DropdownMenuItem
-            key={name}
-            selected={chosen}
-            className="gap-2"
-            onSelect={() => onChoose(chosen ? null : name)}
-          >
-            <IconCheck className={cn('size-3.5', !chosen && 'invisible')} />
-            <span className="truncate">{mutedAuthorLabel(name)}</span>
-            {name.startsWith('app/') && (
-              <span className="text-muted-foreground ml-auto text-xs">bot</span>
-            )}
-          </DropdownMenuItem>
-        );
-      })}
-      {options.length === 0 && needle !== '' && (
+      {options.map((name) => renderItem(name, false))}
+      {mutedOptions.length > 0 && (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
+            Muted
+          </DropdownMenuLabel>
+          {mutedOptions.map((name) => renderItem(name, true))}
+        </>
+      )}
+      {options.length === 0 && mutedOptions.length === 0 && needle !== '' && (
         <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
           Press Enter to filter by {query.trim()}
         </DropdownMenuLabel>
+      )}
+      {muting != null && (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
+            {muting.full
+              ? `Muted list is full; ${altKey}-click a muted author to unmute`
+              : `${altKey}-click to mute or unmute an author`}
+          </DropdownMenuLabel>
+        </>
       )}
     </>
   );

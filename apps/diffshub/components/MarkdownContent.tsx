@@ -23,6 +23,7 @@ import {
   getServerGitHubTokenSnapshot,
   subscribeToGitHubToken,
 } from './githubSession';
+import { MarkdownCodeBlock } from './MarkdownCodeBlock';
 import { MermaidDiagram } from './MermaidDiagram';
 import { Button } from '@/components/Button';
 import { annotationBorderColor } from '@/lib/annotation';
@@ -143,7 +144,8 @@ function MarkdownLink({
   return <a {...rest} href={href} rel="noreferrer noopener" target="_blank" />;
 }
 
-// Mermaid fences render as diagrams, suggestion fences as suggested changes.
+// Mermaid fences render as diagrams, suggestion fences as suggested changes,
+// and other fences with a language as syntax-highlighted code.
 const DEFAULT_COMPONENTS: Components = {
   a: ({ node: _node, ...rest }) => <MarkdownLink {...rest} />,
   img: ({ node: _node, ...rest }) => <MarkdownImage {...rest} />,
@@ -154,6 +156,16 @@ const DEFAULT_COMPONENTS: Components = {
     }
     if (fence?.language === 'suggestion') {
       return <SuggestedChange code={fence.source} />;
+    }
+    if (fence != null) {
+      const { children: _children, ...preProps } = rest;
+      return (
+        <MarkdownCodeBlock
+          {...preProps}
+          language={fence.language}
+          source={fence.source}
+        />
+      );
     }
     return <pre {...rest} />;
   },

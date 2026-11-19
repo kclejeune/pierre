@@ -46,8 +46,8 @@ function mutationsIn(requests: RecordedRequest[]): GraphQLBody[] {
 function queueRequest(body: Record<string, unknown>): NextRequest {
   return new NextRequest('https://diffshub.test/api/pull-merge-queue', {
     body: JSON.stringify({
-      owner: 'mimosa',
-      repo: 'overlay',
+      owner: 'octolabs',
+      repo: 'gadgets',
       pull: '7',
       ...body,
     }),

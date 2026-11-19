@@ -10,7 +10,7 @@ import {
 
 const INSTALLATIONS = {
   installations: {
-    mimosa: { contents: 'read', pull_requests: 'write', statuses: 'read' },
+    octolabs: { contents: 'read', pull_requests: 'write', statuses: 'read' },
     acme: { contents: 'write', checks: 'read' },
   },
 } as const;
@@ -19,14 +19,14 @@ describe('describeMissingAppPermission', () => {
   test("names the installation's missing permission", () => {
     const message = describeMissingAppPermission(
       INSTALLATIONS,
-      'Mimosa',
+      'Octolabs',
       'commit'
     );
     expect(message).toContain('Contents: Read and write');
-    expect(message).toContain('in Mimosa');
+    expect(message).toContain('in Octolabs');
     expect(message).toContain('Ask an organization owner');
     expect(
-      describeMissingAppPermission(INSTALLATIONS, 'mimosa', 'checkRuns')
+      describeMissingAppPermission(INSTALLATIONS, 'octolabs', 'checkRuns')
     ).toContain('Checks: Read');
   });
 
@@ -45,7 +45,7 @@ describe('describeMissingAppPermission', () => {
 
   // GitHub's "Permissions required for GitHub Apps" (see APP_REQUIREMENTS).
   test('maps each control onto its documented permission', () => {
-    // mimosa grants Pull requests write but only Contents read.
+    // octolabs grants Pull requests write but only Contents read.
     for (const feature of [
       'edit',
       'requestReviews',
@@ -53,13 +53,13 @@ describe('describeMissingAppPermission', () => {
       'review',
     ] as const) {
       expect(
-        describeMissingAppPermission(INSTALLATIONS, 'mimosa', feature)
+        describeMissingAppPermission(INSTALLATIONS, 'octolabs', feature)
       ).toBeNull();
     }
     // Merging and draft toggles need Contents write as well.
     for (const feature of ['merge', 'draft'] as const) {
       expect(
-        describeMissingAppPermission(INSTALLATIONS, 'mimosa', feature)
+        describeMissingAppPermission(INSTALLATIONS, 'octolabs', feature)
       ).toContain('Contents: Read and write');
     }
     // acme grants Contents write but nothing on pull requests.
@@ -71,7 +71,7 @@ describe('describeMissingAppPermission', () => {
   // Labels go through the issues endpoints, listed under both permissions.
   test('accepts any one of several listed permissions', () => {
     expect(
-      describeMissingAppPermission(INSTALLATIONS, 'mimosa', 'label')
+      describeMissingAppPermission(INSTALLATIONS, 'octolabs', 'label')
     ).toBeNull();
     expect(
       describeMissingAppPermission(
@@ -92,9 +92,13 @@ describe('describeMissingAppPermission', () => {
       describeMissingAppPermission(INSTALLATIONS, 'elsewhere', 'commit')
     ).toBeNull();
     expect(
-      describeMissingAppPermission({ installations: null }, 'mimosa', 'commit')
+      describeMissingAppPermission(
+        { installations: null },
+        'octolabs',
+        'commit'
+      )
     ).toBeNull();
-    expect(describeMissingAppPermission(null, 'mimosa', 'commit')).toBeNull();
+    expect(describeMissingAppPermission(null, 'octolabs', 'commit')).toBeNull();
   });
 });
 
@@ -103,7 +107,7 @@ describe('readInstallations', () => {
     expect(
       readInstallations([
         {
-          account: { login: 'Mimosa' },
+          account: { login: 'Octolabs' },
           permissions: { contents: 'read', bogus: 'sometimes' },
         },
         {
@@ -113,7 +117,7 @@ describe('readInstallations', () => {
         },
         { permissions: { contents: 'write' } },
       ])
-    ).toEqual({ mimosa: { contents: 'read' } });
+    ).toEqual({ octolabs: { contents: 'read' } });
   });
 });
 
@@ -146,24 +150,24 @@ describe('GitHub App installation lookups', () => {
         return Response.json({
           installations: [
             {
-              account: { login: 'mimosa' },
+              account: { login: 'octolabs' },
               permissions: { contents: 'read', pull_requests: 'write' },
             },
           ],
         });
       }
-      if (path.endsWith('/repos/mimosa/overlay/pulls/7')) {
+      if (path.endsWith('/repos/octolabs/gadgets/pulls/7')) {
         return Response.json({
           state: 'open',
           base: {
             ref: 'main',
             sha: 'base',
-            repo: { full_name: 'mimosa/overlay' },
+            repo: { full_name: 'octolabs/gadgets' },
           },
           head: {
             ref: 'topic',
             sha: 'head',
-            repo: { full_name: 'mimosa/overlay' },
+            repo: { full_name: 'octolabs/gadgets' },
           },
         });
       }
@@ -171,7 +175,7 @@ describe('GitHub App installation lookups', () => {
     });
     const response = await commitPreflight(
       new NextRequest(
-        'https://diffshub.test/api/pull-commit?owner=mimosa&repo=overlay&pull=7',
+        'https://diffshub.test/api/pull-commit?owner=octolabs&repo=gadgets&pull=7',
         { headers: { Authorization: 'Bearer ghu_preflight' } }
       )
     );
@@ -184,7 +188,7 @@ describe('GitHub App installation lookups', () => {
     expect(body.canCommit).toBe(false);
     expect(body.reason).toBe('app-permission');
     expect(body.message).toContain(
-      'Contents: Read and write permission in mimosa'
+      'Contents: Read and write permission in octolabs'
     );
   });
 
@@ -195,7 +199,10 @@ describe('GitHub App installation lookups', () => {
       if (path.endsWith('/user/installations')) {
         return Response.json({
           installations: [
-            { account: { login: 'mimosa' }, permissions: { contents: 'read' } },
+            {
+              account: { login: 'octolabs' },
+              permissions: { contents: 'read' },
+            },
             {
               account: { login: 'forker' },
               permissions: { contents: 'write' },
@@ -203,30 +210,30 @@ describe('GitHub App installation lookups', () => {
           ],
         });
       }
-      if (path.endsWith('/repos/mimosa/overlay/pulls/8')) {
+      if (path.endsWith('/repos/octolabs/gadgets/pulls/8')) {
         return Response.json({
           state: 'open',
           maintainer_can_modify: false,
           base: {
             ref: 'main',
             sha: 'base',
-            repo: { full_name: 'mimosa/overlay' },
+            repo: { full_name: 'octolabs/gadgets' },
           },
           head: {
             ref: 'topic',
             sha: 'head',
-            repo: { full_name: 'forker/overlay' },
+            repo: { full_name: 'forker/gadgets' },
           },
         });
       }
-      if (path.endsWith('/repos/forker/overlay')) {
+      if (path.endsWith('/repos/forker/gadgets')) {
         return Response.json({ permissions: { push: true } });
       }
       return Response.json({ message: 'unexpected' }, { status: 500 });
     });
     const response = await commitPreflight(
       new NextRequest(
-        'https://diffshub.test/api/pull-commit?owner=mimosa&repo=overlay&pull=8',
+        'https://diffshub.test/api/pull-commit?owner=octolabs&repo=gadgets&pull=8',
         { headers: { Authorization: 'Bearer ghu_fork_preflight' } }
       )
     );

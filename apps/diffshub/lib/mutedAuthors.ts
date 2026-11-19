@@ -23,6 +23,11 @@ export function isValidMutedAuthor(author: string): boolean {
   return AUTHOR_PATTERN.test(author);
 }
 
+// A user login on its own (no app/ prefix), as reviewer requests take it.
+export function isValidGitHubLogin(login: string): boolean {
+  return !login.startsWith('app/') && AUTHOR_PATTERN.test(login);
+}
+
 // The author: qualifier value that finds a pull's author: bots (GitHub Apps)
 // search as app/<slug>, everyone else by login.
 export function authorSearchName(author: {

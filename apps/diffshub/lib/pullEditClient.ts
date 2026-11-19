@@ -1,5 +1,5 @@
 import { postPullJSON, type PullRequestRef } from './pullCommentsClient';
-import type { PullDetails, PullLabel } from './pullInfoClient';
+import type { PullDetails, PullLabel, PullReviewer } from './pullInfoClient';
 
 export interface PullEditChanges {
   body?: string;
@@ -34,4 +34,20 @@ export async function changePullLabel(
     label,
   });
   return (payload as { labels: PullLabel[] }).labels;
+}
+
+// Requests (add) or withdraws (remove) one user's review on the pull.
+// Resolves to the pull's pending review requests after the change, users and
+// teams, in the shape PullDetails.reviewers holds them.
+export async function changePullReviewer(
+  pull: PullRequestRef,
+  token: string,
+  action: 'add' | 'remove',
+  login: string
+): Promise<PullReviewer[]> {
+  const payload = await postPullJSON('/api/pull-reviewers', pull, token, {
+    action,
+    login,
+  });
+  return (payload as { reviewers: PullReviewer[] }).reviewers;
 }

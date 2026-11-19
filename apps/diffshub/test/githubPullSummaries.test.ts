@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from 'bun:test';
+import { beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { NextRequest } from 'next/server';
 
 import { GET } from '../app/api/github-pulls/route';
@@ -16,6 +16,7 @@ import {
   parseActivePullsPayload,
   parsePullInvolvements,
 } from '@/lib/githubPullSummaries';
+import { pullsPageCache } from '@/lib/pullsPageCache';
 
 // The query bar's default text.
 const OPEN = 'is:open';
@@ -140,8 +141,18 @@ describe('parseActivePullsPayload', () => {
         updatedAt: '2026-08-02T09:00:00Z',
         viewerPath: '/oven-sh/bun/pull/7',
         activity: [],
+        nodeId: 'PR_1',
       },
     ]);
+  });
+
+  test('reads the head commit so the preview can prefetch its details', () => {
+    const sha = 'a'.repeat(40);
+    const { pulls } = parseActivePullsPayload({
+      pulls: { issueCount: 1, nodes: [activeNode({ headRefOid: sha })] },
+      commented: { nodes: [] },
+    });
+    expect(pulls[0]?.headSha).toBe(sha);
   });
 
   test('derives viewer activity chips in display order', () => {
@@ -474,6 +485,8 @@ describe('parseActivePullsPayload page details', () => {
 });
 
 describe('GET /api/github-pulls', () => {
+  // Each test searches afresh, not from an earlier test's cached page.
+  beforeEach(() => pullsPageCache.clear());
   const list = (query: string) =>
     GET(new NextRequest(`https://diffshub.test/api/github-pulls?${query}`));
 
@@ -489,6 +502,118 @@ describe('GET /api/github-pulls', () => {
 
   // A page whose every hit the GitHub App can't read is read past, so the
   // dashboard never receives an empty page while readable rows follow.
+  test('answers a repeat search from the short-lived page cache', async () => {
+    let searches = 0;
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(((
+      _input: RequestInfo | URL,
+      init?: RequestInit
+    ) => {
+      const body = JSON.parse(init?.body as string) as { query: string };
+      if (body.query.includes('commented: search')) {
+        return Promise.resolve(
+          Response.json({ data: { commented: { nodes: [] } } })
+        );
+      }
+      searches += 1;
+      return Promise.resolve(
+        Response.json({
+          data: {
+            pulls: {
+              issueCount: 1,
+              pageInfo: { endCursor: null, hasNextPage: false },
+              nodes: [activeNode()],
+            },
+          },
+        })
+      );
+    }) as typeof fetch);
+    const search = (headers: Record<string, string> = {}) =>
+      GET(
+        new NextRequest('https://diffshub.test/api/github-pulls?q=is%3Aopen', {
+          headers: { Authorization: 'Bearer ghu_token', ...headers },
+        })
+      );
+    try {
+      expect((await search()).status).toBe(200);
+      expect(searches).toBe(1);
+      // A fresh cached page answers without searching again.
+      const repeat = (await (await search()).json()) as { stale?: boolean };
+      expect(searches).toBe(1);
+      expect(repeat.stale).toBeUndefined();
+      // fetch()'s cache: 'reload' sends no-cache, which searches afresh.
+      expect((await search({ 'Cache-Control': 'no-cache' })).status).toBe(200);
+      expect(searches).toBe(2);
+      // Past the fresh window, the cached page answers flagged stale and
+      // uncacheable, so the client refetches it with no-cache.
+      const realNow = Date.now;
+      Date.now = () => realNow() + 30_000;
+      try {
+        const old = await search();
+        expect(old.headers.get('Cache-Control')).toBe('private, max-age=0');
+        expect(((await old.json()) as { stale?: boolean }).stale).toBe(true);
+        expect(searches).toBe(2);
+      } finally {
+        Date.now = realNow;
+      }
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test('a stale cached later page searches afresh', async () => {
+    let searches = 0;
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(((
+      _input: RequestInfo | URL,
+      init?: RequestInit
+    ) => {
+      const body = JSON.parse(init?.body as string) as { query: string };
+      if (body.query.includes('commented: search')) {
+        return Promise.resolve(
+          Response.json({ data: { commented: { nodes: [] } } })
+        );
+      }
+      searches += 1;
+      return Promise.resolve(
+        Response.json({
+          data: {
+            pulls: {
+              issueCount: 1,
+              pageInfo: { endCursor: null, hasNextPage: false },
+              nodes: [activeNode()],
+            },
+          },
+        })
+      );
+    }) as typeof fetch);
+    const cursor = encodeURIComponent(
+      encodePullsCursor({ after: 'Y3Vyc29y', boundaryRows: 0 })
+    );
+    const loadMore = () =>
+      GET(
+        new NextRequest(
+          `https://diffshub.test/api/github-pulls?q=is%3Aopen&cursor=${cursor}`,
+          { headers: { Authorization: 'Bearer ghu_token' } }
+        )
+      );
+    try {
+      await loadMore();
+      expect(searches).toBe(1);
+      const realNow = Date.now;
+      Date.now = () => realNow() + 30_000;
+      try {
+        // Load-more pages are appended as they come, never revalidated, so
+        // one past the fresh window isn't served stale.
+        const again = (await (await loadMore()).json()) as { stale?: boolean };
+        expect(searches).toBe(2);
+        expect(again.stale).toBeUndefined();
+      } finally {
+        Date.now = realNow;
+      }
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   test('reads past pages with only unreadable hits', async () => {
     const afters: unknown[] = [];
     const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(((
@@ -496,8 +621,15 @@ describe('GET /api/github-pulls', () => {
       init?: RequestInit
     ) => {
       const body = JSON.parse(init?.body as string) as {
+        query: string;
         variables: { after?: string };
       };
+      // The commented subset goes out beside each page's search.
+      if (body.query.includes('commented: search')) {
+        return Promise.resolve(
+          Response.json({ data: { commented: { nodes: [] } } })
+        );
+      }
       afters.push(body.variables.after);
       const unreadable = body.variables.after == null;
       return Promise.resolve(

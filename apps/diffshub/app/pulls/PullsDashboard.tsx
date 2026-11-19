@@ -65,6 +65,7 @@ import { useMediaQuery } from '@/components/useMediaQuery';
 import { useMutedAuthors } from '@/components/useMutedAuthors';
 import { usePinnedRepos } from '@/components/usePinnedRepos';
 import { usePullSelection } from '@/components/usePullSelection';
+import { usePullStatuses } from '@/components/usePullStatuses';
 import { cn } from '@/lib/cn';
 import { GITHUB_APP_OWNER_FIX } from '@/lib/githubAppAccess';
 import {
@@ -85,6 +86,7 @@ import {
   mutedAuthorLabel,
 } from '@/lib/mutedAuthors';
 import { isEditableEventTarget } from '@/lib/platform';
+import { PrefetchGroup } from '@/lib/prefetchStore';
 import { buildPullRows, groupPulls } from '@/lib/pullGroups';
 import { savePullQueue } from '@/lib/pullQueue';
 import {
@@ -237,6 +239,12 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   // the list or the preview saves them as the diff view's queue
   // (lib/pullQueue), so the diff can step to the next pull.
   const queueRef = useRef<readonly PullSummary[]>([]);
+  // Whether the list is loading with no rows on screen yet, kept current by
+  // PullList. Hover and J/K prefetches wait it out, so the list search
+  // doesn't queue behind preview requests for the same token
+  // (lib/githubFetch); once rows show (cached, or a stale page being
+  // revalidated) the viewer can act on them, so prefetching resumes.
+  const listWaitingRef = useRef(false);
   const openDiff = useCallback((pull: PullSummary) => {
     recordRecentDiff({ path: pull.viewerPath, title: pull.title });
     savePullQueue(
@@ -253,6 +261,20 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   // delay skips rows a held J only passes through, and the pull the
   // preview just left is skipped, since the pane already loaded it.
   const lastPreviewKey = useRef<string | null>(null);
+  // One prefetch group per neighbor pull, so moving on cancels only the
+  // pulls that are neither a neighbor any more nor the one now previewed.
+  // Cancelling the previewed pull's group would abort the requests the
+  // pane is about to take (its details wait on its info's head commit).
+  const neighborPrefetches = useRef(new Map<string, PrefetchGroup>());
+  useEffect(() => {
+    const groups = neighborPrefetches.current;
+    return () => {
+      for (const group of groups.values()) {
+        group.cancel();
+      }
+      groups.clear();
+    };
+  }, []);
   useEffect(() => {
     const cameFrom = lastPreviewKey.current;
     lastPreviewKey.current = preview == null ? null : pullKey(preview);
@@ -260,14 +282,35 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
       return;
     }
     const timer = setTimeout(() => {
+      if (listWaitingRef.current) {
+        return;
+      }
       const rows = queueRef.current;
       const index = rows.findIndex((row) => pullKey(row) === pullKey(preview));
       if (index === -1) {
         return;
       }
-      for (const neighbor of [rows[index + 1], rows[index - 1]]) {
-        if (neighbor != null && pullKey(neighbor) !== cameFrom) {
-          prefetchPullPreview(neighbor);
+      // Settling on a new row abandons the old neighbors' requests that
+      // nothing took. Not done in the effect's cleanup, which runs before
+      // the preview pane's own effects take the pull it just moved to.
+      const neighbors = [rows[index + 1], rows[index - 1]].filter(
+        (neighbor): neighbor is PullSummary =>
+          neighbor != null && pullKey(neighbor) !== cameFrom
+      );
+      const keep = new Set([pullKey(preview), ...neighbors.map(pullKey)]);
+      const groups = neighborPrefetches.current;
+      for (const [key, group] of groups) {
+        if (!keep.has(key)) {
+          group.cancel();
+          groups.delete(key);
+        }
+      }
+      for (const neighbor of neighbors) {
+        const key = pullKey(neighbor);
+        if (!groups.has(key)) {
+          const group = new PrefetchGroup();
+          groups.set(key, group);
+          prefetchPullPreview(neighbor, group);
         }
       }
     }, NEIGHBOR_PREFETCH_DELAY_MS);
@@ -424,6 +467,7 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
         onOpen={openDiff}
         onPreview={previewLayout ? setPreview : undefined}
         onQuickLook={previewLayout ? openQuickLook : undefined}
+        listWaitingRef={listWaitingRef}
         queueRef={queueRef}
       />
     );
@@ -784,6 +828,7 @@ function PullList({
   onOpen,
   onPreview,
   onQuickLook,
+  listWaitingRef,
   queueRef,
   request,
   scope,
@@ -804,6 +849,8 @@ function PullList({
   onPreview?(pull: PullSummary): void;
   // Space on the previewed row opens the quick look (wide layout only).
   onQuickLook?(pull: PullSummary): void;
+  // Set while the list loads with no rows yet; prefetches skip until then.
+  listWaitingRef: RefObject<boolean>;
   // Receives the rows on screen, which openDiff saves as the diff view's
   // queue.
   queueRef: RefObject<readonly PullSummary[]>;
@@ -820,12 +867,47 @@ function PullList({
     loading,
     loadingMore,
     mutedCount,
-    pulls,
+    pulls: listedPulls,
     refresh,
     retry,
     searchKey,
     totalCount,
   } = useDashboardPulls(request, tokenVersion);
+  // The rows with their CI and review state, which load after the list
+  // (components/usePullStatuses); `statusPending` rows hold the glyph's place.
+  const { pending: statusPending, pulls } = usePullStatuses(
+    listedPulls,
+    tokenVersion
+  );
+  // The hovered row's prefetches (components/PullRequestRow waits for the
+  // pointer to rest first). Hovering another row aborts the requests the
+  // preview didn't take, so only the latest row's keep running, except
+  // when the last hovered row is the one now previewed: the pane is still
+  // taking its requests.
+  const hoverPrefetch = useRef<{ group: PrefetchGroup; key: string } | null>(
+    null
+  );
+  const selectedKeyRef = useLatestValueRef(selectedKey);
+  useEffect(() => () => hoverPrefetch.current?.group.cancel(), []);
+  const listWaiting = loading && listedPulls.length === 0;
+  useEffect(() => {
+    listWaitingRef.current = listWaiting;
+  }, [listWaitingRef, listWaiting]);
+  const prefetchHovered = useCallback(
+    (pull: PullSummary) => {
+      if (listWaitingRef.current) {
+        return;
+      }
+      const previous = hoverPrefetch.current;
+      if (previous != null && previous.key !== selectedKeyRef.current) {
+        previous.group.cancel();
+      }
+      const group = new PrefetchGroup();
+      hoverPrefetch.current = { group, key: pullKey(pull) };
+      prefetchPullPreview(pull, group);
+    },
+    [listWaitingRef, selectedKeyRef]
+  );
   const state = readPullStateFilter(text);
   const sort = readPullSort(text);
   const sortLabel =
@@ -1048,12 +1130,13 @@ function PullList({
               muted={muting.showMuted && mutedNames.has(authorKey(row.pull))}
               nested={!row.lead}
               pull={row.pull}
+              statusPending={statusPending.has(pullKey(row.pull))}
               selected={selectedKey === pullKey(row.pull)}
               selecting={selection.checked.length > 0}
               selectionLocked={batch.running != null}
               showRepo={showRepo}
               onOpen={onOpen}
-              onPrefetch={onPreview == null ? undefined : prefetchPullPreview}
+              onPrefetch={onPreview == null ? undefined : prefetchHovered}
               onPreview={onPreview}
               onToggleChecked={selection.toggleRow}
               onToggleGroup={toggleGroup}

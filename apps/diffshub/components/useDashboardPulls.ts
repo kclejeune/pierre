@@ -183,13 +183,20 @@ export function useDashboardPulls(
           totalCount: page.totalCount ?? page.pulls.length,
         };
         rememberPulls(cacheKey, value);
+        // A stale page from the route's short-lived cache paints now; the
+        // refetch behind it skips that cache and stays "loading" meanwhile.
+        const revalidate = page.stale === true && cache !== 'reload';
         setState({
           ...value,
           failure: null,
           key: cacheKey,
-          loading: false,
+          loading: revalidate,
           loadingMore: false,
         });
+        if (revalidate) {
+          bypassCacheRef.current = true;
+          setReloadVersion((version) => version + 1);
+        }
       })
       .catch((error: Error) => {
         if (!controller.signal.aborted) {

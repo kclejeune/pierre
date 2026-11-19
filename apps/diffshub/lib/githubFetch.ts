@@ -1,5 +1,7 @@
 import { createLimitedFetch } from './concurrencyLimit';
+import { readNonEmptyString } from './githubOAuthGrant';
 import { type PlainFetch } from './plainFetch';
+import { emitLogLine } from './serverLog';
 import { credentialCacheScope } from './serverLRU';
 
 // The fetch every server-side GitHub call goes through. It bounds how many
@@ -16,8 +18,36 @@ import { credentialCacheScope } from './serverLRU';
 
 // Concurrent GitHub requests one credential may have in flight. GHE's
 // secondary rate limit rejected bursts of several hundred concurrent
-// requests; 16 held across a 3,500-request tree walk without rejections.
-const GITHUB_REQUEST_CONCURRENCY = 16;
+// requests, and GitHub documents 100 concurrent requests as its ceiling; 16
+// held across a 3,500-request tree walk without rejections. The default
+// leaves room for a /pulls page (three searches, five status chunks, and
+// the preview's prefetches) without queueing. DIFFSHUB_GITHUB_CONCURRENCY
+// overrides it, within 1 to MAX_GITHUB_REQUEST_CONCURRENCY.
+const DEFAULT_GITHUB_REQUEST_CONCURRENCY = 32;
+const MAX_GITHUB_REQUEST_CONCURRENCY = 64;
+
+function readRequestConcurrency(): number {
+  const text = readNonEmptyString(process.env.DIFFSHUB_GITHUB_CONCURRENCY);
+  if (text == null) {
+    return DEFAULT_GITHUB_REQUEST_CONCURRENCY;
+  }
+  const value = Number(text);
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > MAX_GITHUB_REQUEST_CONCURRENCY
+  ) {
+    emitLogLine({
+      event: 'config_invalid',
+      level: 'warn',
+      message: `DIFFSHUB_GITHUB_CONCURRENCY must be an integer from 1 to ${MAX_GITHUB_REQUEST_CONCURRENCY}; using ${DEFAULT_GITHUB_REQUEST_CONCURRENCY}.`,
+    });
+    return DEFAULT_GITHUB_REQUEST_CONCURRENCY;
+  }
+  return value;
+}
+
+export const GITHUB_REQUEST_CONCURRENCY = readRequestConcurrency();
 
 interface CredentialQueue {
   fetch: PlainFetch;

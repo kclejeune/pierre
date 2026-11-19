@@ -83,6 +83,12 @@ export interface PullSummary {
   // The pull's overall review state under branch protection. Absent when
   // the base branch doesn't require reviews.
   reviewDecision?: PullReviewDecision;
+  // The head commit when the list loaded, so the preview's details
+  // supplement (keyed by head) can be prefetched alongside its pull info.
+  headSha?: string;
+  // GitHub's GraphQL node id, which the dashboard's follow-up status read
+  // (PULL_STATUSES_QUERY) addresses the pull by.
+  nodeId?: string;
 }
 
 export type PullChecksSummary = 'failure' | 'pending' | 'success';
@@ -99,9 +105,12 @@ export const PULL_REVIEW_DECISION_LABELS: Record<PullReviewDecision, string> = {
 };
 
 // A pull's identity across lists, caches, and selections: "owner/repo#12".
-export function pullKey(
-  pull: Pick<PullSummary, 'number' | 'owner' | 'repo'>
-): string {
+// Takes a list row or a route's PullRequestRef (whose number is a string).
+export function pullKey(pull: {
+  number: number | string;
+  owner: string;
+  repo: string;
+}): string {
   return `${pull.owner}/${pull.repo}#${pull.number}`;
 }
 
@@ -150,7 +159,7 @@ export function parsePullInvolvements(
 }
 
 // The involvements a normalized selection searches for.
-function effectivePullInvolvements(
+export function effectivePullInvolvements(
   involves: readonly PullInvolvement[]
 ): readonly PullInvolvement[] {
   return involves.length === 0 ? PULL_INVOLVEMENTS : involves;
@@ -367,17 +376,28 @@ function buildPullSummary(fields: {
   return summary;
 }
 
-// One GraphQL request for a page of the dashboard list: the pull page itself
-// plus a commenter:@me subset (ids only) that marks which rows the viewer
-// commented on, since no per-pull viewer field reports conversation comments.
-// The subset is the main search narrowed by the "commented" term, sorted the
-// same way, so every commented pull in the main page also lands in the
-// subset's page (see buildActivePullsVariables for later pages).
-// $withCommented skips the subset when it can't match anything. On the first
-// page of a search with muted authors, `unmuted` counts the same search
-// without their exclusions, so the list can say how many pulls muting hid.
-// ISSUE_ADVANCED opts into the search syntax that understands OR groups.
-export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: String!, $withCommented: Boolean!, $unmutedQuery: String!, $withUnmuted: Boolean!, $first: Int!, $commentedFirst: Int!, $after: String) {
+// A page of the dashboard list takes up to three GraphQL searches, sent as
+// concurrent requests (buildActivePullsRequests) rather than aliases of one
+// query, since GitHub resolves a query's aliases one after another:
+//
+// - ACTIVE_PULLS_QUERY, the pull page itself.
+// - COMMENTED_PULLS_QUERY, a commenter:@me subset (ids only) that marks which
+//   rows the viewer commented on, since no per-pull viewer field reports
+//   conversation comments. The subset is the main search narrowed by the
+//   "commented" term, sorted the same way, so every commented pull in the
+//   main page also lands in the subset's page (see buildActivePullsVariables
+//   for later pages). Skipped when it can't match anything.
+// - UNMUTED_COUNT_QUERY, on the first page of a search with muted authors:
+//   the same search without their exclusions, counted, so the list can say
+//   how many pulls muting hid.
+//
+// Each response's data sits under its own alias (pulls, commented,
+// unmuted), so merging the three objects gives parseActivePullsPayload the
+// shape one combined query would have returned. CI and review state are not
+// part of the page: they cost more than the search itself, so the dashboard
+// reads them afterwards (PULL_STATUSES_QUERY). ISSUE_ADVANCED opts into the
+// search syntax that understands OR groups.
+export const ACTIVE_PULLS_QUERY = `query ($query: String!, $first: Int!, $after: String) {
   pulls: search(query: $query, type: ISSUE_ADVANCED, first: $first, after: $after) {
     issueCount
     pageInfo { endCursor hasNextPage }
@@ -389,9 +409,8 @@ export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: Stri
         isDraft
         state
         updatedAt
+        headRefOid
         labels(first: 6) { nodes { name color } }
-        reviewDecision
-        commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
         author { __typename login avatarUrl }
         repository { name owner { login } }
         viewerDidAuthor
@@ -401,13 +420,81 @@ export const ACTIVE_PULLS_QUERY = `query ($query: String!, $commentedQuery: Stri
       }
     }
   }
-  commented: search(query: $commentedQuery, type: ISSUE_ADVANCED, first: $commentedFirst) @include(if: $withCommented) {
+}`;
+
+export const COMMENTED_PULLS_QUERY = `query ($commentedQuery: String!, $commentedFirst: Int!) {
+  commented: search(query: $commentedQuery, type: ISSUE_ADVANCED, first: $commentedFirst) {
     nodes { ... on PullRequest { id } }
   }
-  unmuted: search(query: $unmutedQuery, type: ISSUE_ADVANCED, first: 1) @include(if: $withUnmuted) {
+}`;
+
+export const UNMUTED_COUNT_QUERY = `query ($unmutedQuery: String!) {
+  unmuted: search(query: $unmutedQuery, type: ISSUE_ADVANCED, first: 1) {
     issueCount
   }
 }`;
+
+// One of a page's searches: the alias its data comes back under (which is
+// also where its tolerated null nodes sit), its query, and its variables.
+export interface ActivePullsRequest {
+  alias: 'commented' | 'pulls' | 'unmuted';
+  query: string;
+  variables: Record<string, unknown>;
+}
+
+// The searches one page of the list sends (see ACTIVE_PULLS_QUERY), each
+// with only the variables its query declares. The commented and unmuted
+// searches are left out when buildActivePullsVariables switches them off.
+export function buildActivePullsRequests(
+  scope: PullSearchScope,
+  cursor?: PullsPageCursor
+): ActivePullsRequest[] {
+  const variables = buildActivePullsVariables(scope, cursor);
+  const requests: ActivePullsRequest[] = [
+    {
+      alias: 'pulls',
+      query: ACTIVE_PULLS_QUERY,
+      variables: {
+        after: variables.after,
+        first: variables.first,
+        query: variables.query,
+      },
+    },
+  ];
+  if (variables.withCommented) {
+    requests.push({
+      alias: 'commented',
+      query: COMMENTED_PULLS_QUERY,
+      variables: {
+        commentedFirst: variables.commentedFirst,
+        commentedQuery: variables.commentedQuery,
+      },
+    });
+  }
+  if (variables.withUnmuted) {
+    requests.push({
+      alias: 'unmuted',
+      query: UNMUTED_COUNT_QUERY,
+      variables: { unmutedQuery: variables.unmutedQuery },
+    });
+  }
+  return requests;
+}
+
+// Joins the responses of a page's searches into one payload for
+// parseActivePullsPayload, taking from each response only its own alias.
+export function mergeActivePullsResponses(
+  responses: readonly { alias: ActivePullsRequest['alias']; data: unknown }[]
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  for (const { alias, data } of responses) {
+    const value = asRecord(data)?.[alias];
+    if (value !== undefined) {
+      merged[alias] = value;
+    }
+  }
+  return merged;
+}
 
 // Where the next page starts: GitHub's search cursor, the updatedAt of the
 // last readable row so far (which bounds the commented subset on the next
@@ -440,8 +527,7 @@ export function decodePullsCursor(value: string): PullsPageCursor | undefined {
       parsed.length === 3 &&
       typeof parsed[0] === 'string' &&
       (parsed[1] === null ||
-        (typeof parsed[1] === 'string' &&
-          /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(parsed[1]))) &&
+        (typeof parsed[1] === 'string' && isGitHubTimestamp(parsed[1]))) &&
       Number.isInteger(parsed[2]) &&
       parsed[2] >= 0 &&
       parsed[2] <= MAX_SEARCH_RESULTS
@@ -616,15 +702,88 @@ function parseGraphQLPullNode(
   if (labels.length > 0) {
     summary.labels = labels;
   }
+  if (typeof record.headRefOid === 'string' && record.headRefOid !== '') {
+    summary.headSha = record.headRefOid;
+  }
+  if (typeof record.id === 'string' && record.id !== '') {
+    summary.nodeId = record.id;
+  }
+  return summary;
+}
+
+// A pull's CI and review state, read after the list itself: the head
+// commit's combined check result and the branch-protection review decision.
+// Either is absent when GitHub reports none.
+export interface PullStatus {
+  checks?: PullChecksSummary;
+  reviewDecision?: PullReviewDecision;
+}
+
+// The page's CI and review state by node id. These two fields cost GitHub
+// more than the list search and every other row field together (about
+// 280ms a row when profiled), so the dashboard paints the rows first and
+// reads these in parallel chunks of PULL_STATUS_CHUNK_SIZE afterwards.
+export const PULL_STATUSES_QUERY = `query ($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on PullRequest {
+      id
+      reviewDecision
+      commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+    }
+  }
+}`;
+
+// How many pulls one status request reads. Smaller chunks run as more
+// concurrent requests; the route sends all of a call's chunks at once.
+export const PULL_STATUS_CHUNK_SIZE = 6;
+
+// The most ids one /api/pull-statuses call takes: a page of the list.
+export const MAX_PULL_STATUS_IDS = PULLS_PAGE_SIZE;
+
+// GraphQL node ids as GitHub issues them: "PR_kwDO..." on github.com, base64
+// ("MDExOlB1bGxSZXF1ZXN0MQ==") on older GHES.
+const NODE_ID_PATTERN = /^[A-Za-z0-9_+/=-]{1,128}$/;
+
+// A timestamp as GitHub's API reports one (updatedAt, createdAt): ISO 8601
+// in UTC, e.g. 2026-08-02T09:00:00Z.
+export function isGitHubTimestamp(value: string): boolean {
+  return value.length <= 40 && /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(value);
+}
+
+export function isValidNodeId(value: string): boolean {
+  return NODE_ID_PATTERN.test(value);
+}
+
+function readPullStatus(record: Record<string, unknown>): PullStatus {
+  const status: PullStatus = {};
   const checks = readChecksSummary(record);
   if (checks != null) {
-    summary.checks = checks;
+    status.checks = checks;
   }
   const reviewDecision = REVIEW_DECISIONS[String(record.reviewDecision)];
   if (reviewDecision != null) {
-    summary.reviewDecision = reviewDecision;
+    status.reviewDecision = reviewDecision;
   }
-  return summary;
+  return status;
+}
+
+// The statuses in a PULL_STATUSES_QUERY response, by node id. Null nodes
+// (pulls the token can't read) are left out, as are nodes without an id.
+export function parsePullStatusesPayload(
+  data: unknown
+): Record<string, PullStatus> {
+  const statuses: Record<string, PullStatus> = {};
+  const nodes = asRecord(data)?.nodes;
+  if (!Array.isArray(nodes)) {
+    return statuses;
+  }
+  for (const node of nodes) {
+    const record = asRecord(node);
+    if (record != null && typeof record.id === 'string') {
+      statuses[record.id] = readPullStatus(record);
+    }
+  }
+  return statuses;
 }
 
 const REVIEW_DECISIONS: Partial<Record<string, PullReviewDecision>> = {
@@ -687,6 +846,9 @@ export interface PullsPage {
   mutedCount?: number;
   // Present while GitHub reports another page.
   nextCursor?: string;
+  // Set when the route answered from its short-lived cache with a page past
+  // its fresh window; the client shows it and refetches with no-cache.
+  stale?: boolean;
 }
 
 // Reads ACTIVE_PULLS_QUERY's `data` into the page shape the dashboard

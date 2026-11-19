@@ -8,7 +8,6 @@ import {
   IconMerged,
   IconMinus,
   IconPencil,
-  IconPlus,
   IconX,
 } from '@pierre/icons';
 import {
@@ -22,14 +21,10 @@ import {
 } from 'react';
 import { toast } from 'sonner';
 
-import {
-  useAppPermissionBlock,
-  useRememberAppRefusal,
-} from './AppPermissionsContext';
+import { useAppPermissionBlock } from './AppPermissionsContext';
 import { Button } from './Button';
 import { ButtonGroup, ButtonGroupItem } from './ButtonGroup';
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
-import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,16 +36,33 @@ import { LabelColorDot } from './LabelColorDot';
 import { MarkdownContent } from './MarkdownContent';
 import { MarkdownEditor } from './MarkdownEditor';
 import {
+  PanelEmptyLine,
+  PanelPicker,
+  PanelPickerOption,
+  PanelPickerToggle,
+  usePanelPicker,
+} from './PanelPicker';
+import {
+  LabelChip,
+  PANEL_GRID_CLASS,
+  PANEL_MAIN_CLASS,
+  PANEL_SIDEBAR_CLASS,
+  PanelSection,
+} from './PanelSection';
+import {
   MergeStatusCard,
   PullOverviewMeta,
   TONE_TEXT_CLASS,
 } from './PullOverview';
+import { PullReviewers, type ReviewerVerdicts } from './PullReviewers';
 import { PULL_STATE_DISPLAY } from './pullStateDisplay';
 import { useDropdownChromeStyle } from './useDropdownChromeStyle';
+import { useLatestValueRef } from './useLatestValueRef';
 import { useRepoLabels } from './useRepoLabels';
 import { annotationBorderColor } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
-import { displayPullState } from '@/lib/githubPullSummaries';
+import { displayPullState, pullKey } from '@/lib/githubPullSummaries';
+import { pullChangeKey, subscribePullChanges } from '@/lib/pullChangeEvents';
 import type { PullRequestRef } from '@/lib/pullCommentsClient';
 import {
   changePullLabel,
@@ -67,7 +79,6 @@ import {
   type PullLabel,
   type PullMergeCapabilities,
   type PullMergeQueueStatus,
-  type PullReviewer,
 } from '@/lib/pullInfoClient';
 import {
   mergePullRequest,
@@ -112,10 +123,18 @@ interface PullDetailsControlProps {
   pullRequest: PullRequestRef;
 }
 
+// The method picker's options, and the merge button's label for each, as
+// GitHub names them, so the button says what it will do instead of
+// repeating "Merge" beside a "Merge" option.
 const MERGE_METHOD_LABELS: Record<PullMergeMethod, string> = {
-  merge: 'Merge',
+  merge: 'Merge commit',
   rebase: 'Rebase',
   squash: 'Squash',
+};
+const MERGE_ACTION_LABELS: Record<PullMergeMethod, string> = {
+  merge: 'Create merge commit',
+  rebase: 'Rebase and merge',
+  squash: 'Squash and merge',
 };
 
 type SupplementState =
@@ -150,6 +169,11 @@ export function usePullDetailsModel({
   pullRequest: PullRequestRef;
 }) {
   const [checksExpanded, setChecksExpanded] = useState(false);
+  // What the app's installation in the pull's org allows (documented
+  // requirements, lib/appPermissions), on top of the viewer's own rights.
+  const editBlocked = useAppPermissionBlock('edit');
+  const labelBlocked = useAppPermissionBlock('label');
+  const reviewersBlocked = useAppPermissionBlock('requestReviews');
   // Held here so an edit survives the dropdown closing, which unmounts the
   // form.
   const [editDraft, setEditDraft] = useState<PullEditDraft | null>(null);
@@ -182,11 +206,9 @@ export function usePullDetailsModel({
 
   const loadSupplement = useCallback(
     (force = false) => {
-      if (
-        headSha == null ||
-        (!force && supplement.kind !== 'idle') ||
-        supplement.kind === 'loading'
-      ) {
+      // A forced load (Retry, or a review or merge just landed) restarts a
+      // read already in flight, since that read may predate the change.
+      if (headSha == null || (!force && supplement.kind !== 'idle')) {
         return;
       }
       supplementRequest.current?.abort();
@@ -222,6 +244,18 @@ export function usePullDetailsModel({
     [getGitHubToken, headSha, pullRequest, supplement.kind]
   );
 
+  // A review or merge submitted anywhere on the page (lib/pullChangeEvents)
+  // reloads the verdicts and merge state, which don't move the head commit.
+  const reloadSupplement = useLatestValueRef(() => loadSupplement(true));
+  useEffect(() => {
+    const ownKey = pullChangeKey(pullRequest);
+    return subscribePullChanges((key) => {
+      if (key === ownKey) {
+        reloadSupplement.current();
+      }
+    });
+  }, [pullRequest, reloadSupplement]);
+
   // Load eagerly whenever nothing is loaded for the current head: the first
   // render (so the trigger's CI dot can appear without opening the panel),
   // and the reset to idle after a head-sha change (so an already-open panel
@@ -250,9 +284,22 @@ export function usePullDetailsModel({
     supplementalValue?.reviewers ?? null
   );
   const permissions = canWrite ? supplementalValue?.viewerPermissions : null;
-  const canEdit = permissions?.canUpdate === true;
+  const canEdit = permissions?.canUpdate === true && editBlocked == null;
   const supplementLoading =
     supplement.kind === 'idle' || supplement.kind === 'loading';
+  // The viewer's permissions arrive with the supplement. While they're
+  // unknown, controls that depend on them render as placeholders of the
+  // same size, so the panel doesn't shift when they resolve.
+  const permissionsLoading = canWrite && supplementLoading;
+  // A permission-gated control's state: 'loading' while the permissions
+  // are unknown, so it can hold its place.
+  const gate = (allowed: boolean | undefined): boolean | 'loading' =>
+    permissionsLoading ? 'loading' : allowed === true;
+  const reviewerVerdicts: ReviewerVerdicts = supplementLoading
+    ? 'loading'
+    : reviewerVerdictsUnavailable
+      ? 'unavailable'
+      : 'ready';
   const checksMetric = checks == null ? null : summarizeChecks(checks);
   // The trigger's CI dot: the checks tone, hidden when every check was
   // skipped or none ran.
@@ -283,6 +330,10 @@ export function usePullDetailsModel({
   return {
     approvalsCell,
     canEdit,
+    canLabel: gate(permissions?.canLabel === true && labelBlocked == null),
+    canRequestReviews: gate(
+      permissions?.canRequestReviews === true && reviewersBlocked == null
+    ),
     checks,
     checksCell,
     checksExpanded,
@@ -294,14 +345,18 @@ export function usePullDetailsModel({
     headline,
     loadSupplement,
     permissions,
-    reviewerVerdictsUnavailable,
+    permissionsLoading,
+    reviewerVerdicts,
     reviewers,
     setChecksExpanded,
     setEditDraft,
     setSupplement,
     showMergeControls: details.state === 'open' && canWrite,
     // Draft, close, and reopen share the merge controls' sticky footer.
-    showStateActions: canEdit && details.state !== 'merged',
+    // On the viewer's own rights: when the app's installation is what's
+    // missing, the buttons show disabled with the reason instead.
+    showStateActions:
+      permissions?.canUpdate === true && details.state !== 'merged',
     supplement,
     supplementLoading,
     supplementalValue,
@@ -498,11 +553,15 @@ export function PullDetailsPanel({
             </span>
           </div>
           <span className="flex shrink-0 items-center gap-1">
-            {model.canEdit && (
+            {(model.canEdit || model.permissionsLoading) && (
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-sm"
+                // Holds the pencil's place while permissions load, so the
+                // title doesn't rewrap when it appears.
+                className={cn(!model.canEdit && 'invisible')}
+                disabled={!model.canEdit}
                 title="Edit title and description"
                 aria-label="Edit title and description"
                 onClick={() =>
@@ -575,17 +634,11 @@ export function PullDetailsPanel({
         headline={model.headline}
         onToggleChecks={() => model.setChecksExpanded((current) => !current)}
       />
-      <div
-        className={cn(
-          'flex flex-col gap-3',
-          !editing &&
-            '@3xl:grid @3xl:grid-cols-[minmax(0,1fr)_17rem] @3xl:items-start @3xl:gap-x-6'
-        )}
-      >
-        <div className="flex min-w-0 flex-col gap-3 @3xl:col-start-2 @3xl:row-start-1">
+      <div className={cn('flex flex-col gap-3', !editing && PANEL_GRID_CLASS)}>
+        <div className={PANEL_SIDEBAR_CLASS}>
           <PullLabels
-            key={`${pullRequest.owner}/${pullRequest.repo}#${pullRequest.number}`}
-            canEdit={model.permissions?.canLabel === true}
+            key={pullKey(pullRequest)}
+            canEdit={model.canLabel}
             getGitHubToken={getGitHubToken}
             labels={model.details.labels}
             onLabelsChanged={(labels) =>
@@ -593,27 +646,22 @@ export function PullDetailsPanel({
             }
             pullRequest={pullRequest}
           />
-          {(model.reviewers.length > 0 ||
-            model.reviewerVerdictsUnavailable) && (
-            <PanelSection heading="Reviewers">
-              {model.reviewers.length > 0 && (
-                <ul className="flex flex-col gap-1">
-                  {model.reviewers.map((reviewer) => (
-                    <ReviewerRow key={reviewer.login} reviewer={reviewer} />
-                  ))}
-                </ul>
-              )}
-              {model.reviewerVerdictsUnavailable && (
-                <p className="text-muted-foreground text-xs">
-                  Review verdicts could not be loaded; showing requested
-                  reviewers only.
-                </p>
-              )}
-            </PanelSection>
-          )}
+          <PullReviewers
+            key={pullKey(pullRequest)}
+            authorLogin={model.details.authorLogin}
+            canEdit={model.canRequestReviews}
+            getGitHubToken={getGitHubToken}
+            onRequestedChanged={(reviewers) =>
+              onDetailsEdited(pullRequest, { reviewers })
+            }
+            pullRequest={pullRequest}
+            requested={model.details.reviewers}
+            reviewers={model.reviewers}
+            verdicts={model.reviewerVerdicts}
+          />
         </div>
         {!editing && (
-          <div className="min-w-0 @3xl:col-start-1 @3xl:row-start-1">
+          <div className={PANEL_MAIN_CLASS}>
             <PanelSection heading="Description">
               {model.details.body.trim() === '' ? (
                 <p className="text-muted-foreground text-xs">
@@ -750,7 +798,9 @@ function FooterActionRow({
   secondary?: ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2">
+    // min-h-8 is the action buttons' height, so the "Checking merge
+    // permissions…" line that stands in for them takes the same room.
+    <div className="flex min-h-8 flex-wrap items-center justify-between gap-2">
       {lead}
       <span className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
         {secondary}
@@ -919,7 +969,7 @@ function PullStateActions({
   const [pending, setPending] = useState<'draft' | 'state' | null>(null);
   const [confirmingClose, setConfirmingClose] = useState(false);
   const draftBlocked = useAppPermissionBlock('draft');
-  const rememberRefusal = useRememberAppRefusal();
+  const editBlocked = useAppPermissionBlock('edit');
 
   async function apply(
     kind: 'draft' | 'state',
@@ -936,9 +986,6 @@ function PullStateActions({
       toast.success(success);
     } catch (error) {
       toastError(error, 'Updating the pull request failed.');
-      if (kind === 'draft') {
-        rememberRefusal('draft', error);
-      }
     } finally {
       setPending(null);
     }
@@ -972,6 +1019,7 @@ function PullStateActions({
         type="button"
         variant="outline"
         size="sm"
+        blockedReason={editBlocked}
         disabled={pending != null}
         className={isOpen ? 'text-red-600 dark:text-red-400' : undefined}
         onClick={() => (isOpen ? setConfirmingClose(true) : toggleState())}
@@ -1017,160 +1065,118 @@ function PullLabels({
   onLabelsChanged,
   pullRequest,
 }: {
-  canEdit: boolean;
+  // 'loading' while the viewer's permissions are still unknown.
+  canEdit: boolean | 'loading';
   getGitHubToken(): string | undefined;
   labels: PullLabel[];
   onLabelsChanged(labels: PullLabel[]): void;
   pullRequest: PullRequestRef;
 }) {
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [filter, setFilter] = useState('');
-  const [pendingLabel, setPendingLabel] = useState<string | null>(null);
-  const repoLabels = useRepoLabels(pickerOpen ? pullRequest : null);
+  const picker = usePanelPicker(getGitHubToken);
+  const editable = canEdit === true;
+  const repoLabels = useRepoLabels(
+    picker.open && editable ? pullRequest : null
+  );
 
-  if (labels.length === 0 && !canEdit) {
-    return null;
-  }
-
-  async function toggle(label: string, action: 'add' | 'remove') {
-    const token = getGitHubToken();
-    if (token == null || token === '' || pendingLabel != null) {
-      return;
-    }
-    setPendingLabel(label);
-    try {
-      onLabelsChanged(await changePullLabel(pullRequest, token, action, label));
-    } catch (error) {
-      toastError(error, 'Updating labels failed.');
-    } finally {
-      setPendingLabel(null);
-    }
-  }
+  const toggle = (label: string, action: 'add' | 'remove') =>
+    void picker.run(
+      label,
+      async (token) =>
+        onLabelsChanged(
+          await changePullLabel(pullRequest, token, action, label)
+        ),
+      'Updating labels failed.'
+    );
 
   const applied = new Set(labels.map((label) => label.name));
-  const query = filter.trim().toLowerCase();
+  const query = picker.filter.trim().toLowerCase();
   const matches =
     repoLabels?.kind === 'ready'
       ? repoLabels.labels.filter((label) =>
           label.name.toLowerCase().includes(query)
         )
       : [];
-  // Opens the picker. With labels it's a quiet "Edit" in the heading; with
-  // none it's an outlined "Add labels" where the chips would be.
   const empty = labels.length === 0;
-  const pickerToggle = canEdit && (
-    <Button
-      type="button"
-      variant={empty ? 'outline' : 'ghost'}
-      size="xs"
-      aria-expanded={pickerOpen}
-      onClick={() => setPickerOpen(!pickerOpen)}
-    >
-      {pickerOpen ? (
-        'Done'
-      ) : empty ? (
-        <>
-          <IconPlus className="size-3" />
-          Add labels
-        </>
-      ) : (
-        'Edit'
-      )}
-    </Button>
-  );
+  const pickerToggle = editable ? (
+    <PanelPickerToggle
+      addLabel="Add labels"
+      empty={empty}
+      open={picker.open}
+      onToggle={picker.toggle}
+    />
+  ) : null;
   return (
     <PanelSection action={!empty && pickerToggle} heading="Labels">
       <div className="flex flex-wrap items-center gap-1">
         {labels.map((label) => (
-          <span
-            key={label.name}
-            className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] leading-4 font-medium"
-          >
-            <LabelColorDot color={label.color} />
-            {label.name}
-            {canEdit && (
+          <LabelChip key={label.name} label={label}>
+            {editable && (
               <button
                 type="button"
                 aria-label={`Remove label ${label.name}`}
-                disabled={pendingLabel != null}
+                disabled={picker.pending != null}
                 className="text-muted-foreground hover:text-foreground -mr-1 disabled:opacity-50"
-                onClick={() => void toggle(label.name, 'remove')}
+                onClick={() => toggle(label.name, 'remove')}
               >
                 <IconX className="size-3" />
               </button>
             )}
-          </span>
+          </LabelChip>
         ))}
-        {empty && pickerToggle}
-      </div>
-      {pickerOpen && (
-        <div
-          className={`flex flex-col gap-1 rounded-md border ${annotationBorderColor} p-1.5`}
-        >
-          <Input
-            inputSize="sm"
-            value={filter}
-            placeholder="Filter labels"
-            aria-label="Filter labels"
-            autoFocus
-            onChange={({ currentTarget }) => setFilter(currentTarget.value)}
-            // Block Radix typeahead. Enter toggles the top match.
-            onKeyDown={(keyEvent) => {
-              keyEvent.stopPropagation();
-              const top = matches[0];
-              if (keyEvent.key === 'Enter' && query !== '' && top != null) {
-                keyEvent.preventDefault();
-                void toggle(top.name, applied.has(top.name) ? 'remove' : 'add');
-                setFilter('');
-              }
-            }}
+        {empty && (
+          // Always rendered, as GitHub's sidebar shows "None yet".
+          <PanelEmptyLine
+            emptyText="None yet"
+            loading={canEdit === 'loading'}
+            loadingText="Loading labels…"
+            toggle={pickerToggle}
           />
-          {repoLabels == null ? (
-            <p className="text-muted-foreground animate-pulse px-1 text-xs">
-              Loading labels…
-            </p>
-          ) : repoLabels.kind === 'error' ? (
-            <p className="text-destructive px-1 text-xs">
-              {repoLabels.message}
-            </p>
-          ) : matches.length === 0 ? (
-            <p className="text-muted-foreground px-1 text-xs">
-              {query === ''
-                ? 'This repository has no labels.'
-                : `No labels match “${filter.trim()}”.`}
-            </p>
-          ) : (
-            <ul className="flex max-h-40 flex-col overflow-y-auto">
-              {matches.map((label) => {
-                const isApplied = applied.has(label.name);
-                return (
-                  <li key={label.name}>
-                    <button
-                      type="button"
-                      disabled={pendingLabel != null}
-                      className="flex w-full items-center gap-1.5 rounded-sm px-1.5 py-1 text-left text-xs hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] disabled:opacity-50"
-                      onClick={() =>
-                        void toggle(label.name, isApplied ? 'remove' : 'add')
-                      }
-                    >
-                      <IconCheck
-                        aria-hidden
-                        className={cn(
-                          'size-3 shrink-0',
-                          !isApplied && 'invisible'
-                        )}
-                      />
-                      <LabelColorDot color={label.color} />
-                      <span className="min-w-0 flex-1 truncate">
-                        {label.name}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
+        )}
+      </div>
+      {picker.open && editable && (
+        <PanelPicker
+          ariaLabel="Filter labels"
+          filter={picker.filter}
+          message={
+            repoLabels == null
+              ? { kind: 'loading', text: 'Loading labels…' }
+              : repoLabels.kind === 'error'
+                ? { kind: 'error', text: repoLabels.message }
+                : matches.length === 0
+                  ? {
+                      kind: 'note',
+                      text:
+                        query === ''
+                          ? 'This repository has no labels.'
+                          : `No labels match “${picker.filter.trim()}”.`,
+                    }
+                  : null
+          }
+          placeholder="Filter labels"
+          onEnter={() => {
+            const top = matches[0];
+            if (top == null) {
+              return false;
+            }
+            toggle(top.name, applied.has(top.name) ? 'remove' : 'add');
+            return true;
+          }}
+          onFilterChange={picker.setFilter}
+        >
+          {matches.map((label) => (
+            <PanelPickerOption
+              key={label.name}
+              checked={applied.has(label.name)}
+              disabled={picker.pending != null}
+              onSelect={() =>
+                toggle(label.name, applied.has(label.name) ? 'remove' : 'add')
+              }
+            >
+              <LabelColorDot color={label.color} />
+              <span className="min-w-0 flex-1 truncate">{label.name}</span>
+            </PanelPickerOption>
+          ))}
+        </PanelPicker>
       )}
     </PanelSection>
   );
@@ -1183,28 +1189,6 @@ function withoutLabels({
   ...fields
 }: PullDetails): Partial<PullDetails> {
   return fields;
-}
-
-// A titled block of the panel. `action` sits at the heading's right edge
-// (GitHub's sidebar puts each section's edit control there).
-function PanelSection({
-  action,
-  children,
-  heading,
-}: {
-  action?: ReactNode;
-  children: ReactNode;
-  heading: string;
-}) {
-  return (
-    <section className="flex flex-col gap-1.5">
-      <div className="flex min-h-5 items-center justify-between gap-2">
-        <h4 className="text-muted-foreground text-xs font-medium">{heading}</h4>
-        {action}
-      </div>
-      {children}
-    </section>
-  );
 }
 
 // Draft / Open / Merged / Closed, as the compact chip the trigger shows
@@ -1274,49 +1258,6 @@ function CheckRow({ check }: { check: PullCheck }) {
   );
 }
 
-function ReviewerRow({ reviewer }: { reviewer: PullReviewer }) {
-  const verdict =
-    reviewer.state === 'APPROVED'
-      ? {
-          className: TONE_TEXT_CLASS.success,
-          Icon: IconCheck,
-          label: 'Approved',
-        }
-      : reviewer.state === 'CHANGES_REQUESTED'
-        ? {
-            className: TONE_TEXT_CLASS.failure,
-            Icon: IconX,
-            label: 'Changes requested',
-          }
-        : reviewer.state === 'COMMENTED'
-          ? {
-              className: TONE_TEXT_CLASS.neutral,
-              Icon: IconMinus,
-              label: 'Commented',
-            }
-          : {
-              className: TONE_TEXT_CLASS.pending,
-              Icon: IconClockArrow,
-              label: 'Review pending',
-            };
-  return (
-    <li className="flex items-center gap-2">
-      <CommentAuthorAvatar
-        author={{ avatarUrl: reviewer.avatarUrl ?? '', login: reviewer.login }}
-        className="size-5 self-center"
-        lookupProfile={reviewer.team !== true}
-      />
-      <span className="min-w-0 flex-1 truncate text-xs">{reviewer.login}</span>
-      <span
-        className={cn('flex items-center gap-1 text-[11px]', verdict.className)}
-      >
-        <verdict.Icon className="size-3" />
-        {verdict.label}
-      </span>
-    </li>
-  );
-}
-
 // Why the pull can't be merged or queued now, or null when nothing blocks it.
 function useMergeBlockedReason(details: PullDetails): string | null {
   const appBlocked = useAppPermissionBlock('merge');
@@ -1334,7 +1275,6 @@ function useMergeAction(getGitHubToken: () => string | undefined): {
   ): Promise<void>;
 } {
   const [busy, setBusy] = useState(false);
-  const rememberRefusal = useRememberAppRefusal();
   async function run(
     request: (token: string) => Promise<void>,
     failureMessage: string
@@ -1348,7 +1288,6 @@ function useMergeAction(getGitHubToken: () => string | undefined): {
       await request(token);
     } catch (error) {
       toastError(error, failureMessage);
-      rememberRefusal('merge', error);
     } finally {
       setBusy(false);
     }
@@ -1552,7 +1491,12 @@ function MergeControls({
             onValueChange={(value) => setMethod(value as PullMergeMethod)}
           >
             {capabilities.methods.map((value) => (
-              <ButtonGroupItem key={value} value={value}>
+              <ButtonGroupItem
+                key={value}
+                value={value}
+                // Picking a method means nothing while merging is blocked.
+                disabled={blockedReason != null || isMerging}
+              >
                 {MERGE_METHOD_LABELS[value]}
               </ButtonGroupItem>
             ))}
@@ -1560,23 +1504,27 @@ function MergeControls({
         }
         secondary={secondaryActions}
         primary={
-          <Button
-            type="button"
-            variant="default"
-            size="sm"
-            disabled={blockedReason != null || isMerging || confirming}
-            className="bg-emerald-600 hover:bg-emerald-700"
-            onClick={() => setConfirming(true)}
-          >
-            <IconMerged className="size-3.5" />
-            {isMerging ? 'Merging…' : 'Merge'}
-          </Button>
+          // Why it's disabled, on hover (on a wrapper: a disabled button
+          // takes no pointer events); the same reason shows under the row.
+          <span className="flex" title={blockedReason ?? undefined}>
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              disabled={blockedReason != null || isMerging || confirming}
+              className="bg-emerald-600 hover:bg-emerald-700"
+              onClick={() => setConfirming(true)}
+            >
+              <IconMerged className="size-3.5" />
+              {isMerging ? 'Merging…' : MERGE_ACTION_LABELS[method]}
+            </Button>
+          </span>
         }
       />
       {confirming && (
         <div className="flex items-center justify-between gap-2 text-xs">
           <span>
-            {MERGE_METHOD_LABELS[method]} #{pullRequest.number} into{' '}
+            {MERGE_ACTION_LABELS[method]} #{pullRequest.number} into{' '}
             <BaseBranchLabel baseRef={baseRef} />?
           </span>
           <span className="flex gap-1.5">

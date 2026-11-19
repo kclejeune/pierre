@@ -71,7 +71,9 @@ export function isLoginRequired(): boolean {
 
 // The shared contract for boolean DIFFSHUB_* flags: 1/true forces on, 0/false
 // forces off, anything else (including unset) means "use the default".
-function parseBooleanEnv(value: string | undefined): boolean | undefined {
+export function parseBooleanEnv(
+  value: string | undefined
+): boolean | undefined {
   switch (value?.trim().toLowerCase()) {
     case '1':
     case 'true':

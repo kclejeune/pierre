@@ -78,13 +78,18 @@ interface PullRequestRowProps {
   pull: PullSummary;
   // The pull shown in the preview pane.
   selected?: boolean;
+  // The row's CI and review state is still loading (components/
+  // usePullStatuses): a placeholder holds the CI glyph's place meanwhile.
+  statusPending?: boolean;
   // Hide the owner/repo label inside sections already scoped to one repo.
   showRepo?: boolean;
 }
 
 // How long the pointer rests on a row before its preview data is
-// prefetched: long enough to skip rows the pointer only passes over.
-const HOVER_PREFETCH_DELAY_MS = 150;
+// prefetched: long enough to skip rows the pointer only passes over, which
+// includes the rows a slowing cursor lingers on just short of its target.
+// Each prefetch is three requests and several GitHub calls.
+const HOVER_PREFETCH_DELAY_MS = 250;
 
 // Whether a click asked the browser for something other than a plain
 // same-tab navigation (new tab/window, download, middle button).
@@ -117,6 +122,7 @@ export const PullRequestRow = memo(function PullRequestRow({
   selecting = false,
   selectionLocked = false,
   showRepo = true,
+  statusPending = false,
 }: PullRequestRowProps) {
   const stateDisplay = PULL_STATE_DISPLAY[pull.state];
   const StateIcon = stateDisplay.Icon;
@@ -222,7 +228,11 @@ export const PullRequestRow = memo(function PullRequestRow({
                 things that decide whether the pull can merge. They live
                 here rather than after the title so the title's two-line
                 clamp can never cut them off. */}
-            {pull.checks != null && <ChecksGlyph checks={pull.checks} />}
+            {pull.checks != null ? (
+              <ChecksGlyph checks={pull.checks} />
+            ) : (
+              statusPending && <ChecksPlaceholder />
+            )}
             <ReviewDecisionText pull={pull} />
             {pull.activity?.map((activity) => (
               <span
@@ -321,6 +331,12 @@ const CHECKS_GLYPHS: Record<
   },
 };
 
+// Every CI state's glyph takes the same width (the pending dot is smaller
+// than the other icons), so a status landing or changing doesn't move the
+// chips after it.
+const CHECKS_SLOT_CLASS =
+  'inline-flex w-3 shrink-0 items-center justify-center';
+
 // The head commit's CI result, in GitHub's list glyphs: a check, a cross,
 // or (still running) a small dot.
 function ChecksGlyph({ checks }: { checks: PullChecksSummary }) {
@@ -330,12 +346,26 @@ function ChecksGlyph({ checks }: { checks: PullChecksSummary }) {
       role="img"
       aria-label={label}
       title={label}
-      className={cn('inline-flex shrink-0 items-center', className)}
+      className={cn(CHECKS_SLOT_CLASS, className)}
     >
       <Icon
         aria-hidden
         className={checks === 'pending' ? 'size-2' : 'size-3'}
       />
+    </span>
+  );
+}
+
+// Holds the CI glyph's place while the row's status loads: a faint dot the
+// size of the pending glyph, so the row reads as "checking" rather than
+// jumping when the real glyph arrives.
+function ChecksPlaceholder() {
+  return (
+    <span
+      aria-hidden
+      className={cn(CHECKS_SLOT_CLASS, 'text-muted-foreground')}
+    >
+      <span className="size-2 animate-pulse rounded-full bg-current opacity-30" />
     </span>
   );
 }

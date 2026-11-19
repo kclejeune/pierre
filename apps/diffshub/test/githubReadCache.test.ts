@@ -7,6 +7,7 @@ import {
 } from '@/lib/githubCacheStore';
 import {
   countActiveGitHubCredentialQueues,
+  GITHUB_REQUEST_CONCURRENCY,
   githubFetch,
 } from '@/lib/githubFetch';
 import { createGitHubReads } from '@/lib/githubReadCache';
@@ -352,14 +353,14 @@ describe('githubFetch', () => {
       return new Response('ok');
     }) as typeof fetch;
     const burst = (auth: string) =>
-      Array.from({ length: 40 }, () =>
+      Array.from({ length: GITHUB_REQUEST_CONCURRENCY + 8 }, () =>
         githubFetch('https://api.github.com/x', {
           headers: { Authorization: auth },
         })
       );
     await Promise.all([...burst('Bearer a'), ...burst('Bearer b')]);
-    expect(peak.get('Bearer a')).toBe(16);
-    expect(peak.get('Bearer b')).toBe(16);
+    expect(peak.get('Bearer a')).toBe(GITHUB_REQUEST_CONCURRENCY);
+    expect(peak.get('Bearer b')).toBe(GITHUB_REQUEST_CONCURRENCY);
     // Idle credentials are not retained.
     expect(countActiveGitHubCredentialQueues()).toBe(0);
   });

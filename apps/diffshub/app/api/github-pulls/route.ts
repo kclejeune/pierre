@@ -1,18 +1,12 @@
-import { type NextRequest } from 'next/server';
+import { after, type NextRequest } from 'next/server';
 
-import {
-  ACCESS_FIELD_ERRORS,
-  commitErrorResponse,
-  type GraphQLErrorTolerance,
-  sendGitHubGraphQL,
-} from '@/lib/githubCommitServer';
+import { commitErrorResponse } from '@/lib/githubCommitServer';
 import { rejectTokenlessRequestWhenLoginRequired } from '@/lib/githubEnvironment';
-import { githubFetch } from '@/lib/githubFetch';
 import {
-  ACTIVE_PULLS_QUERY,
-  buildActivePullsVariables,
+  buildActivePullsRequests,
   decodePullsCursor,
   isReviewRequestScope,
+  mergeActivePullsResponses,
   parseActivePullsPayload,
   parsePullInvolvements,
   type PullAudience,
@@ -25,9 +19,19 @@ import { isValidMutedAuthor, MAX_MUTED_AUTHORS } from '@/lib/mutedAuthors';
 import { isValidRepoName, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
 import { DEFAULT_QUERY_TEXT } from '@/lib/pullScopes';
 import { hasNarrowingQualifier } from '@/lib/pullSearchQuery';
+import {
+  PULLS_PAGE_CACHE_FRESH_MS,
+  pullsPageCache,
+} from '@/lib/pullsPageCache';
+import {
+  isPullsProfilingEnabled,
+  profilePullsSearch,
+} from '@/lib/pullsSearchProfile';
+import { sendActivePullsSearch } from '@/lib/pullsSearchServer';
 import { withRequestLog } from '@/lib/requestLog';
 import { resolveBearerToken } from '@/lib/resolveBearerToken';
 import { emitLogLine } from '@/lib/serverLog';
+import { credentialCacheScope } from '@/lib/serverLRU';
 
 // Pull request lists for the /pulls dashboard: one GraphQL search per page,
 // built from the viewer's involvement terms (?involves=, or "anyone"), an
@@ -133,22 +137,53 @@ async function handleGET(request: NextRequest) {
     );
   }
   const scope = { involves, mutedAuthors, repos, reviewRequests, text };
-  // GraphQL rather than REST search: one request returns the page along
-  // with the viewer's involvement per pull.
+  // The short-lived page cache (see PULLS_PAGE_CACHE_FRESH_MS): a fresh hit
+  // answers outright, a stale one answers flagged `stale` (and uncacheable
+  // by the browser) so the client shows it and refetches with no-cache.
+  // fetch()'s cache: 'reload' sends Cache-Control: no-cache, which is how
+  // the dashboard's refresh after a mutation skips this cache.
+  const cacheKey = `${credentialCacheScope(token)}\n${request.nextUrl.search}`;
+  const bypassCache = (request.headers.get('cache-control') ?? '').includes(
+    'no-cache'
+  );
+  const cached = bypassCache ? undefined : pullsPageCache.peek(cacheKey);
+  const ageMs = cached == null ? 0 : Date.now() - cached.storedAt;
+  // A stale page is only served as a first page: the client revalidates
+  // those, but appends load-more pages as they come, so a stale later page
+  // would stay on screen. Later pages past the fresh window search afresh.
+  if (cached != null && (cursor == null || ageMs < PULLS_PAGE_CACHE_FRESH_MS)) {
+    emitLogLine({
+      ageMs,
+      event: 'github_pulls_cache_hit',
+      firstPage: cursor == null,
+      level: 'info',
+    });
+    return ageMs < PULLS_PAGE_CACHE_FRESH_MS
+      ? createPrivateJSONResponse(cached.body, 30)
+      : createPrivateJSONResponse({ ...cached.body, stale: true }, 0);
+  }
+  // GraphQL rather than REST search: the page comes back along with the
+  // viewer's involvement per pull. Its searches (lib/githubPullSummaries'
+  // buildActivePullsRequests) go out as concurrent requests; `searchMs`
+  // records each page's wall time and `requestMs` each search's own.
   const searchMs: number[] = [];
+  const requestMs: Record<string, number>[] = [];
   const fetchPage = async (pageCursor: typeof cursor) => {
     const startedAt = Date.now();
-    const data = await sendGitHubGraphQL(
-      ACTIVE_PULLS_QUERY,
-      buildActivePullsVariables(scope, pageCursor),
-      token,
-      // A superseded search (the client aborts on each change) stops the
-      // GitHub call too.
-      (url, init) => githubFetch(url, { ...init, signal: request.signal }),
-      { tolerate: ACTIVE_PULLS_TOLERANCE }
+    const timings: Record<string, number> = {};
+    const responses = await Promise.all(
+      buildActivePullsRequests(scope, pageCursor).map(async (search) => {
+        const data = await sendActivePullsSearch(search, token, request.signal);
+        timings[search.alias] = Date.now() - startedAt;
+        return { alias: search.alias, data };
+      })
     );
     searchMs.push(Date.now() - startedAt);
-    return parseActivePullsPayload(data, pageCursor);
+    requestMs.push(timings);
+    return parseActivePullsPayload(
+      mergeActivePullsResponses(responses),
+      pageCursor
+    );
   };
   try {
     let page = await fetchPage(cursor);
@@ -166,16 +201,29 @@ async function handleGET(request: NextRequest) {
       page = await fetchPage(decodePullsCursor(page.nextCursor));
       hiddenCount += page.hiddenCount;
     }
-    // Profiles requests that ran several searches or hid unreadable hits.
-    if (searchMs.length > 1 || hiddenCount > 0) {
-      emitLogLine({
-        event: 'github_pulls_search',
-        hiddenCount,
-        level: 'info',
-        searchMs,
-      });
+    // One line per request with each GitHub search's duration, keyed by
+    // which searches went out (the page, plus the commented subset and the
+    // muted-author count when they apply), to compare against
+    // handlerDurationMs.
+    emitLogLine({
+      event: 'github_pulls_search',
+      firstPage: cursor == null,
+      hiddenCount,
+      level: 'info',
+      mutedAuthors: mutedAuthors.length,
+      pulls: page.pulls.length,
+      repos: repos.length,
+      requestMs,
+      searchMs,
+    });
+    // DIFFSHUB_PULLS_PROFILE: time the query's variants (lib/pullsSearchProfile)
+    // after the response is sent, on first pages only.
+    if (cursor == null && isPullsProfilingEnabled()) {
+      after(() => profilePullsSearch(scope, token));
     }
-    return createPrivateJSONResponse({ ...page, hiddenCount, mutedCount }, 30);
+    const body = { ...page, hiddenCount, mutedCount };
+    pullsPageCache.set(cacheKey, { body, storedAt: Date.now() });
+    return createPrivateJSONResponse(body, 30);
   } catch (error) {
     return commitErrorResponse(error);
   }
@@ -184,17 +232,5 @@ async function handleGET(request: NextRequest) {
 // How long after the first page a request may keep reading past unreadable
 // pages before returning an empty page with a cursor.
 const UNREADABLE_SKIP_BUDGET_MS = 3000;
-
-// A GitHub App token searches every repo the user can see but reads only
-// those where the app is installed; each other hit is a null node with an
-// access error. Those rows are dropped rather than failing the page. The
-// paths are ACTIVE_PULLS_QUERY's search aliases.
-const ACTIVE_PULLS_TOLERANCE: GraphQLErrorTolerance = {
-  types: ACCESS_FIELD_ERRORS,
-  paths: [
-    ['pulls', 'nodes'],
-    ['commented', 'nodes'],
-  ],
-};
 
 export const GET = withRequestLog(handleGET);

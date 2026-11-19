@@ -10,8 +10,10 @@ import {
   parsePullMergeCapabilities,
   parsePullMergeQueueStatus,
   parsePullViewerPermissions,
+  parseReviewerCandidates,
   readPullEditRequest,
   readPullLabelChange,
+  readPullReviewerChange,
 } from '../githubPullDetailsServer';
 import type { PlainFetch } from '../plainFetch';
 import { mergePullReviewers } from '../pullInfoClient';
@@ -213,7 +215,7 @@ describe('parsePullViewerPermissions', () => {
           viewerPermission: 'TRIAGE',
         },
       })
-    ).toEqual({ canLabel: true, canUpdate: true });
+    ).toEqual({ canLabel: true, canRequestReviews: true, canUpdate: true });
     expect(
       parsePullViewerPermissions({
         repository: {
@@ -221,11 +223,82 @@ describe('parsePullViewerPermissions', () => {
           viewerPermission: 'READ',
         },
       })
-    ).toEqual({ canLabel: false, canUpdate: false });
+    ).toEqual({ canLabel: false, canRequestReviews: false, canUpdate: false });
     expect(parsePullViewerPermissions(null)).toEqual({
       canLabel: false,
+      canRequestReviews: false,
       canUpdate: false,
     });
+  });
+});
+
+describe('readPullReviewerChange', () => {
+  const pull = { owner: 'o', pull: '7', repo: 'r' };
+
+  test('accepts add and remove with a valid login', () => {
+    expect(
+      readPullReviewerChange({ ...pull, action: 'add', login: 'octo-cat' })
+    ).toEqual({ ...pull, action: 'add', login: 'octo-cat' });
+    expect(
+      readPullReviewerChange({ ...pull, action: 'remove', login: 'a1' })
+    ).toEqual({ ...pull, action: 'remove', login: 'a1' });
+    // GHE managed users carry underscores.
+    expect(
+      readPullReviewerChange({ ...pull, action: 'add', login: 'jane_acme' })
+    ).toEqual({ ...pull, action: 'add', login: 'jane_acme' });
+  });
+
+  test('rejects bad actions, logins, and refs', () => {
+    expect(
+      readPullReviewerChange({ ...pull, action: 'toggle', login: 'a' })
+    ).toBeNull();
+    for (const login of [
+      '',
+      '-a',
+      'a b',
+      'app/bot',
+      'org/team',
+      'x'.repeat(40),
+    ]) {
+      expect(
+        readPullReviewerChange({ ...pull, action: 'add', login })
+      ).toBeNull();
+    }
+    expect(
+      readPullReviewerChange({
+        owner: 'o',
+        repo: 'r',
+        action: 'add',
+        login: 'a',
+      })
+    ).toBeNull();
+  });
+});
+
+describe('parseReviewerCandidates', () => {
+  test('reads logins, names, and avatars, skipping nameless nodes', () => {
+    expect(
+      parseReviewerCandidates({
+        repository: {
+          assignableUsers: {
+            nodes: [
+              {
+                login: 'octocat',
+                name: 'The Octocat',
+                avatarUrl: 'https://a/1',
+              },
+              { login: 'hubot', name: '', avatarUrl: null },
+              { name: 'no login' },
+              null,
+            ],
+          },
+        },
+      })
+    ).toEqual([
+      { avatarUrl: 'https://a/1', login: 'octocat', name: 'The Octocat' },
+      { login: 'hubot' },
+    ]);
+    expect(parseReviewerCandidates(null)).toEqual([]);
   });
 });
 

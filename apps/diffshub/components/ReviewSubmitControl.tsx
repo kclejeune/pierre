@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 
+import { useAppPermissionBlock } from './AppPermissionsContext';
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
 import { MarkdownEditor } from './MarkdownEditor';
 import { useDropdownChromeStyle } from './useDropdownChromeStyle';
@@ -95,6 +96,9 @@ export function ReviewSubmitControl({
     }
   }
 
+  // The app's installation in the pull's org must allow reviews
+  // (lib/appPermissions); GitHub would refuse the submission otherwise.
+  const reviewBlocked = useAppPermissionBlock('review');
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
@@ -102,11 +106,11 @@ export function ReviewSubmitControl({
           type="button"
           variant="ghost"
           size="sm"
-          disabled={!canWrite}
+          disabled={!canWrite || reviewBlocked != null}
           title={
-            canWrite
-              ? 'Submit a review'
-              : 'Sign in with GitHub or save a token to review'
+            !canWrite
+              ? 'Sign in with GitHub or save a token to review'
+              : (reviewBlocked ?? 'Submit a review')
           }
           className={cn(CHROME_ICON_BUTTON_CLASS, 'w-auto gap-1.5 px-2')}
         >

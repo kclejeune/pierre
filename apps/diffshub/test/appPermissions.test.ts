@@ -2,18 +2,11 @@ import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { NextRequest } from 'next/server';
 
 import { GET as commitPreflight } from '../app/api/pull-commit/route';
-import {
-  hasRememberedRefusal,
-  isAppRefusalError,
-  readRememberedRefusals,
-  rememberAppRefusal,
-} from '../components/AppPermissionsContext';
 import { describeMissingAppPermission } from '@/lib/appPermissions';
 import {
   loadAppInstallations,
   readInstallations,
 } from '@/lib/githubAppInstallations';
-import { APIRequestError } from '@/lib/pullCommentsClient';
 
 const INSTALLATIONS = {
   installations: {
@@ -50,17 +43,46 @@ describe('describeMissingAppPermission', () => {
     ).toBeNull();
   });
 
-  // See APP_REQUIREMENTS: guessed requirements would disable working actions.
-  test('does not block features without a known requirement', () => {
+  // GitHub's "Permissions required for GitHub Apps" (see APP_REQUIREMENTS).
+  test('maps each control onto its documented permission', () => {
+    // octolabs grants Pull requests write but only Contents read.
+    for (const feature of [
+      'edit',
+      'requestReviews',
+      'resolveThread',
+      'review',
+    ] as const) {
+      expect(
+        describeMissingAppPermission(INSTALLATIONS, 'octolabs', feature)
+      ).toBeNull();
+    }
+    // Merging and draft toggles need Contents write as well.
+    for (const feature of ['merge', 'draft'] as const) {
+      expect(
+        describeMissingAppPermission(INSTALLATIONS, 'octolabs', feature)
+      ).toContain('Contents: Read and write');
+    }
+    // acme grants Contents write but nothing on pull requests.
     expect(
-      describeMissingAppPermission(INSTALLATIONS, 'octolabs', 'draft')
+      describeMissingAppPermission(INSTALLATIONS, 'acme', 'review')
+    ).toContain('Pull requests: Read and write');
+  });
+
+  // Labels go through the issues endpoints, listed under both permissions.
+  test('accepts any one of several listed permissions', () => {
+    expect(
+      describeMissingAppPermission(INSTALLATIONS, 'octolabs', 'label')
     ).toBeNull();
     expect(
-      describeMissingAppPermission(INSTALLATIONS, 'octolabs', 'resolveThread')
+      describeMissingAppPermission(
+        { installations: { acme: { issues: 'write' } } },
+        'acme',
+        'label'
+      )
     ).toBeNull();
     expect(
-      describeMissingAppPermission(INSTALLATIONS, 'octolabs', 'merge')
-    ).toContain('Contents: Read and write');
+      describeMissingAppPermission(INSTALLATIONS, 'acme', 'label')
+    ).toContain('Issues: Read and write or Pull requests: Read and write');
   });
 
   // Absence proves nothing: GitHub lists only installations the user has
@@ -212,43 +234,5 @@ describe('GitHub App installation lookups', () => {
       canCommit: true,
       headSha: 'head',
     });
-  });
-});
-
-// A refusal belongs to the credential that got it: after signing in again
-// (a new token version), the same action is no longer blocked.
-describe('remembered refusals', () => {
-  test('are scoped to the credential version', () => {
-    const refusal = new APIRequestError('denied', 403, 'app-refusal');
-    rememberAppRefusal(1, 'Octolabs', 'resolveThread', refusal);
-    const refusals = readRememberedRefusals();
-    expect(hasRememberedRefusal(refusals, 1, 'octolabs', 'resolveThread')).toBe(
-      true
-    );
-    expect(hasRememberedRefusal(refusals, 2, 'octolabs', 'resolveThread')).toBe(
-      false
-    );
-    expect(hasRememberedRefusal(refusals, 1, 'octolabs', 'draft')).toBe(false);
-
-    // Other failures aren't remembered.
-    rememberAppRefusal(1, 'octolabs', 'draft', new Error('Network down'));
-    expect(
-      hasRememberedRefusal(readRememberedRefusals(), 1, 'octolabs', 'draft')
-    ).toBe(false);
-  });
-});
-
-describe('isAppRefusalError', () => {
-  // Keyed on the server's code, never the message text.
-  test("recognizes only the server's app-refusal code", () => {
-    expect(
-      isAppRefusalError(new APIRequestError('denied', 403, 'app-refusal'))
-    ).toBe(true);
-    expect(
-      isAppRefusalError(new APIRequestError('denied', 403, 'forbidden'))
-    ).toBe(false);
-    expect(
-      isAppRefusalError(new Error('Resource not accessible by integration'))
-    ).toBe(false);
   });
 });

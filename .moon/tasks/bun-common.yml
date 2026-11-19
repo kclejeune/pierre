@@ -29,8 +29,10 @@ tasks:
   # Cross-package imports resolve through each dependency's published `dist`
   # (no TypeScript project references between packages), so typechecking a
   # project requires its workspace dependencies to be built first.
+  # tsrs (installed at the workspace root; see its catalog entry) reports the
+  # same errors as tsc.
   typecheck:
-    command: 'tsc --noEmit --pretty'
+    command: 'tsrs --noEmit --pretty'
     deps:
       - '^:build'
     inputs:

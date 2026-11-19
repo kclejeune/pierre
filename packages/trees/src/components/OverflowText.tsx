@@ -142,7 +142,12 @@ export const splitLeafPath: CustomSplitFn = (contents) => {
   return [contents.slice(0, splitIndex), contents.slice(splitIndex)];
 };
 
-export const splitByIndex: CustomSplitFn = (contents, { splitIndex } = {}) => {
+export const splitByIndex: CustomSplitFn = (
+  contents,
+  // Annotated: TypeScript 7.1 no longer infers the binding types of a
+  // destructured optional parameter from its `= {}` default.
+  { splitIndex }: MiddleTruncateFilteredProps = {}
+) => {
   if (typeof splitIndex !== 'number') {
     const centerIndex = Math.ceil(contents.length / 2);
     return [contents.slice(0, centerIndex), contents.slice(centerIndex)];
@@ -152,7 +157,7 @@ export const splitByIndex: CustomSplitFn = (contents, { splitIndex } = {}) => {
 
 export const splitLast: CustomSplitFn = (
   contents: string,
-  { splitOffset } = {}
+  { splitOffset }: MiddleTruncateFilteredProps = {}
 ) => {
   // fall back to center split if the offset is not valid
   if (
@@ -170,7 +175,7 @@ export const splitLast: CustomSplitFn = (
 
 export const splitFirst: CustomSplitFn = (
   contents: string,
-  { splitOffset } = {}
+  { splitOffset }: MiddleTruncateFilteredProps = {}
 ) => {
   // fall back to center split if the offset is not valid
   if (

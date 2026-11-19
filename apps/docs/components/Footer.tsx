@@ -19,7 +19,9 @@ export default function Footer() {
     <footer className="pt-12 pb-12">
       <div className="grid-cols- grid gap-3 md:grid-cols-6 md:justify-between">
         <div className="text-muted-foreground text-sm md:col-span-2">
-          &copy; {new Date().getFullYear()} The Pierre Computer Co.
+          &copy;{' '}
+          {/* oxlint-disable-next-line react/purity -- the copyright year only changes at New Year, so a re-render reading it again is harmless. */}
+          {new Date().getFullYear()} The Pierre Computer Co.
         </div>
         <div>
           <p className="mb-2 text-sm font-medium">Diffs</p>

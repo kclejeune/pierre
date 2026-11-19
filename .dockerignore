@@ -5,6 +5,11 @@
 node_modules
 **/node_modules
 **/.next
+# Host build outputs: moon rebuilds or restores them from its cache mount,
+# and copying them in would bust the source layer on every local build.
+**/dist
+**/.open-next
+**/*.tsbuildinfo
 .moon/cache
 .agents/ignore
 **/test-results

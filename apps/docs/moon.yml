@@ -36,7 +36,11 @@ tasks:
       - '!public/llms.txt'
       - '!public/llms-full.txt'
     outputs:
-      - '.next/diffs'
+      # The build, minus Turbopack's cache and any running `next dev` tree
+      # (which holds symlinks into node_modules that moon refuses to archive).
+      - '.next/diffs/**/*'
+      - '!.next/diffs/cache/**'
+      - '!.next/diffs/dev/**'
       - 'public/llms.txt'
       - 'public/llms-full.txt'
     options:
@@ -57,7 +61,11 @@ tasks:
       - '!public/llms.txt'
       - '!public/llms-full.txt'
     outputs:
-      - '.next/trees'
+      # The build, minus Turbopack's cache and any running `next dev` tree
+      # (which holds symlinks into node_modules that moon refuses to archive).
+      - '.next/trees/**/*'
+      - '!.next/trees/cache/**'
+      - '!.next/trees/dev/**'
       - 'public/llms.txt'
       - 'public/llms-full.txt'
     options:

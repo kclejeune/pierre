@@ -6,7 +6,7 @@ export default defineConfig([
     clean: false,
     unbundle: true,
     platform: 'neutral',
-    dts: { tsgo: true },
+    dts: { generator: 'tsgo' },
     deps: { neverBundle: [/^\.\/words\.wasm/] },
   },
   {
@@ -20,7 +20,7 @@ export default defineConfig([
     },
     clean: false,
     platform: 'neutral',
-    dts: { tsgo: true },
+    dts: { generator: 'tsgo' },
     deps: {
       neverBundle: [
         '@pierre/words',

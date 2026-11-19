@@ -22,7 +22,7 @@ const config: UserConfig[] = defineConfig([
     clean: true,
     dts: {
       sourcemap: true,
-      tsgo: true,
+      generator: 'tsgo',
     },
     unbundle: true,
     platform: 'neutral',
@@ -77,7 +77,7 @@ const config: UserConfig[] = defineConfig([
     outDir: 'dist/worker',
     tsconfig: './tsconfig.json',
     clean: false,
-    dts: { sourcemap: true, tsgo: true },
+    dts: { sourcemap: true, generator: 'tsgo' },
     platform: 'neutral',
   },
   {
@@ -92,7 +92,7 @@ const config: UserConfig[] = defineConfig([
     // The pool sends resolved themes and grammars; omit their main-thread catalogs.
     define: { __DIFFS_WORKER__: 'true' },
     minify: true,
-    dts: { sourcemap: true, tsgo: true },
+    dts: { sourcemap: true, generator: 'tsgo' },
     platform: 'neutral',
     format: 'esm',
     outputOptions: { codeSplitting: false },

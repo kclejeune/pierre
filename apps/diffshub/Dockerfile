@@ -11,7 +11,20 @@
 # Node pin mirrors .prototools. Debian (not alpine): moon bootstraps the
 # pinned toolchain from .prototools through proto, and the pinned bun ships
 # glibc binaries that cannot run on musl.
-FROM node:24.11.0-slim AS builder
+FROM node:24.11.0-slim AS base
+
+# Just the workspace manifests, at their repo paths. The context is read
+# through a bind mount rather than copied into a layer; this stage re-runs on
+# every source change, but its output only changes when a package.json does,
+# so the install layer in the builder stays cached across source-only edits.
+FROM base AS manifests
+RUN --mount=type=bind,target=/src \
+  mkdir /out \
+  && cd /src \
+  && find . -name package.json -not -path '*/node_modules/*' \
+    -exec cp --parents -t /out {} +
+
+FROM base AS builder
 
 # moon hashes task inputs through git, over a throwaway repo created below
 # (the real .git is excluded via .dockerignore).
@@ -34,6 +47,14 @@ WORKDIR /repo
 COPY pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm fetch
 
+# Install against the manifests alone (no workspace package has install
+# scripts or patches that need sources), so this layer is reused until a
+# package.json or the lockfile changes.
+COPY --from=manifests /out/ ./
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --offline
+
+# node_modules is in .dockerignore, so this cannot clobber the install above.
 COPY . .
 # moon resolves the workspace's default branch (main) and, in CI mode, HEAD~1.
 # Give the throwaway repo two commits so both revisions always exist.
@@ -42,9 +63,6 @@ RUN git init -q -b main \
   && git add -A \
   && git -c user.email=docker@build -c user.name=docker commit -qm build-context
 
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile --offline
-
 # No DIFFSHUB_* configuration enters the build: NEXT_OUTPUT=standalone both
 # selects standalone output and defers all page rendering to request time
 # (see RootLayout), so every setting is read from the runtime environment and
@@ -52,9 +70,12 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 ENV NEXT_OUTPUT=standalone \
     NEXT_TELEMETRY_DISABLED=1
 # This layer can never cache (it sits below COPY . .), so mount what it
-# re-derives: moon bootstraps the pinned bun toolchain into ~/.proto, and
-# Next.js keeps its compiler cache in .next/cache. Neither enters the image.
+# re-derives: moon bootstraps the pinned bun toolchain into ~/.proto, moon's
+# task cache lets workspace packages whose inputs did not change restore their
+# dist instead of rebuilding (highlights' wasm step alone is ~8s), and Next.js
+# keeps its Turbopack build cache in .next/cache. None of them enter the image.
 RUN --mount=type=cache,id=proto-tools,target=/root/.proto \
+    --mount=type=cache,id=moon-cache,target=/repo/.moon/cache \
     --mount=type=cache,id=next-cache,target=/repo/apps/diffshub/.next/cache \
     pnpm exec moon run diffshub:build
 

@@ -28,7 +28,7 @@ const config: UserConfig[] = defineConfig([
     clean: false,
     dts: {
       sourcemap: true,
-      tsgo: true,
+      generator: 'tsgo',
     },
     unbundle: true,
     platform: 'neutral',
@@ -45,7 +45,7 @@ const config: UserConfig[] = defineConfig([
     clean: false,
     dts: {
       sourcemap: true,
-      tsgo: true,
+      generator: 'tsgo',
     },
     platform: 'neutral',
     deps: { neverBundle: [tokenTypesPath] },

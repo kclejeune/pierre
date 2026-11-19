@@ -24,6 +24,11 @@
     "jsx": "react-jsx",
     "jsxImportSource": "react",
     "allowImportingTsExtensions": true,
+    // TypeScript 7.1 enforces isolatedDeclarations in this composite project
+    // unless it is turned off here. words is the one package not written for
+    // it yet (19 missing annotations, mostly in benchmark/); keep 7.0's
+    // behavior until they are added.
+    "isolatedDeclarations": false,
     "module": "ESNext"
   }
 }

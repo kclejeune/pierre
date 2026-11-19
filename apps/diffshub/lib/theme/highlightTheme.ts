@@ -1,6 +1,7 @@
 import {
   type DiffsTheme,
   registerCustomTheme,
+  resolveThemes,
   type ThemesType,
 } from '@pierre/diffs';
 import { cssVariables, toCSS } from '@pierre/highlights/themes';
@@ -48,4 +49,34 @@ export function highlightThemeStyle(theme: DiffsTheme): Record<string, string> {
   }
   styles.set(theme, style);
   return style;
+}
+
+const palettes = new Map<string, Promise<Record<string, string>>>();
+
+// The token palette for a light/dark theme-name pair: every custom property
+// highlightThemeStyle sets, as `light-dark(light, dark)` so one declaration
+// set follows the page's color scheme. Cached per pair, so every surface that
+// needs the same palette shares one theme resolve and one object; a failed
+// resolve is evicted so the next request retries.
+export function highlightPalette(
+  light: string,
+  dark: string
+): Promise<Record<string, string>> {
+  const key = `${light}\0${dark}`;
+  const cached = palettes.get(key);
+  if (cached != null) return cached;
+  const palette = resolveThemes([light, dark], 'highlights').then(
+    ([lightTheme, darkTheme]) => {
+      const lightStyle = highlightThemeStyle(lightTheme);
+      const darkStyle = highlightThemeStyle(darkTheme);
+      const next: Record<string, string> = {};
+      for (const key of Object.keys(lightStyle)) {
+        next[key] = `light-dark(${lightStyle[key]}, ${darkStyle[key]})`;
+      }
+      return next;
+    }
+  );
+  palette.catch(() => palettes.delete(key));
+  palettes.set(key, palette);
+  return palette;
 }

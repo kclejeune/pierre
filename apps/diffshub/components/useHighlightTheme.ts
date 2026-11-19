@@ -1,12 +1,9 @@
 'use client';
 
-import { canUseWASM, resolveThemes, type ThemesType } from '@pierre/diffs';
+import { canUseWASM, type ThemesType } from '@pierre/diffs';
 import { type CSSProperties, useEffect, useState } from 'react';
 
-import {
-  HIGHLIGHT_THEMES,
-  highlightThemeStyle,
-} from '@/lib/theme/highlightTheme';
+import { HIGHLIGHT_THEMES, highlightPalette } from '@/lib/theme/highlightTheme';
 
 export function useHighlightTheme(theme: ThemesType): {
   theme: ThemesType;
@@ -20,24 +17,14 @@ export function useHighlightTheme(theme: ThemesType): {
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    void (async () => {
-      try {
-        const [lightTheme, darkTheme] = await resolveThemes(
-          [light, dark],
-          'highlights'
-        );
-        if (cancelled) return;
-        const lightStyle = highlightThemeStyle(lightTheme);
-        const darkStyle = highlightThemeStyle(darkTheme);
-        const next: Record<string, string> = {};
-        for (const key of Object.keys(lightStyle)) {
-          next[key] = `light-dark(${lightStyle[key]}, ${darkStyle[key]})`;
-        }
-        setStyle(next);
-      } catch (error) {
+    highlightPalette(light, dark).then(
+      (palette) => {
+        if (!cancelled) setStyle(palette);
+      },
+      (error: unknown) => {
         console.error('Failed to load highlight palette', error);
       }
-    })();
+    );
     return () => {
       cancelled = true;
     };

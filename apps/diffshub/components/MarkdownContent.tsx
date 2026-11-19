@@ -2,6 +2,7 @@
 
 import { IconImage } from '@pierre/icons';
 import type { Element as HastElement } from 'hast';
+import { toString } from 'hast-util-to-string';
 import {
   createContext,
   memo,
@@ -157,11 +158,10 @@ const DEFAULT_COMPONENTS: Components = {
     if (fence?.language === 'suggestion') {
       return <SuggestedChange code={fence.source} />;
     }
-    if (fence != null) {
-      const { children: _children, ...preProps } = rest;
+    if (fence?.isPlainText === true) {
       return (
         <MarkdownCodeBlock
-          {...preProps}
+          {...rest}
           language={fence.language}
           source={fence.source}
         />
@@ -171,10 +171,13 @@ const DEFAULT_COMPONENTS: Components = {
   },
 };
 
-// A fenced code block's language and text, or null.
+// A fenced code block's language and full text, or null. isPlainText is false
+// for raw-HTML blocks whose <code> carries markup (`<pre><code
+// class="language-js">a <b>b</b></code></pre>`); those keep their markup rather
+// than being re-rendered from their text.
 function getFence(
   node: HastElement | undefined
-): { language: string; source: string } | null {
+): { isPlainText: boolean; language: string; source: string } | null {
   const code = node?.children.find(
     (child): child is HastElement =>
       child.type === 'element' && child.tagName === 'code'
@@ -189,10 +192,10 @@ function getFence(
   if (code == null || languageClass == null) {
     return null;
   }
-  const text = code.children[0];
   return {
+    isPlainText: code.children.every((child) => child.type === 'text'),
     language: languageClass.slice('language-'.length),
-    source: text?.type === 'text' ? text.value : '',
+    source: toString(code),
   };
 }
 

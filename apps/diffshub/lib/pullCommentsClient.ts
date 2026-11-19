@@ -1,5 +1,6 @@
 import type { SelectedLineRange } from '@pierre/diffs';
 
+import { notifyPullChanged } from './pullChangeEvents';
 import {
   type CommentAnchor,
   type GitHubCommentAnchor,
@@ -157,6 +158,8 @@ export async function submitPullReview(
       review: true,
     }),
   });
+  // Views showing this pull's verdicts (the details panel) reload them.
+  notifyPullChanged(pull);
 }
 
 // PR-level conversation writes: GitHub issue comments on the pull request,

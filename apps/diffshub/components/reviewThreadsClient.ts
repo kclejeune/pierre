@@ -1,7 +1,12 @@
 'use client';
 
 import { readStoredGitHubToken } from './githubSession';
-import { prefetchOnce, takeOrLoad } from '@/lib/prefetchStore';
+import {
+  type PrefetchGroup,
+  prefetchOnce,
+  takeOrLoad,
+} from '@/lib/prefetchStore';
+import { pullChangeKey } from '@/lib/pullChangeEvents';
 import {
   buildHeaders,
   pullParams,
@@ -68,11 +73,15 @@ export async function fetchReviewThreadStates(
 // Map.
 export function prefetchReviewThreadStates(
   pull: PullRequestRef,
-  token: string
+  token: string,
+  group?: PrefetchGroup
 ): void {
   const url = reviewThreadsURL(pull);
-  prefetchOnce(url, token, () =>
-    requestJSON(url, { headers: buildHeaders(token) })
+  void prefetchOnce(
+    url,
+    token,
+    (signal) => requestJSON(url, { headers: buildHeaders(token), signal }),
+    { group, tag: pullChangeKey(pull) }
   );
 }
 

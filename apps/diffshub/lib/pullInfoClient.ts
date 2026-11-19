@@ -1,5 +1,11 @@
 import type { PullRefs } from './githubCommitServer';
-import { prefetchOnce, takeOrLoad } from './prefetchStore';
+import {
+  discardPrefetch,
+  type PrefetchGroup,
+  prefetchOnce,
+  takeOrLoad,
+} from './prefetchStore';
+import { pullChangeKey } from './pullChangeEvents';
 import {
   buildHeaders,
   pullParams,
@@ -21,6 +27,13 @@ export type PullReviewerState =
   | 'CHANGES_REQUESTED'
   | 'COMMENTED'
   | 'PENDING';
+
+// A user the reviewer picker offers (see /api/pull-reviewers).
+export interface ReviewerCandidate {
+  avatarUrl?: string;
+  login: string;
+  name?: string;
+}
 
 export interface PullReviewer {
   avatarUrl?: string;
@@ -61,6 +74,8 @@ export interface PullMergeCapabilities {
 // canLabel needs triage access or above.
 export interface PullViewerPermissions {
   canLabel: boolean;
+  // Request or remove reviewers; triage access or above, like canLabel.
+  canRequestReviews: boolean;
   canUpdate: boolean;
 }
 
@@ -114,12 +129,40 @@ export async function fetchPullInfo(
   if (waitMergeable) {
     params.set('waitMergeable', '1');
   }
-  const payload = await requestJSON(`/api/pull-info?${params}`, {
-    cache,
-    headers: buildHeaders(token),
-    signal,
-  });
-  return payload as PullInfo;
+  const url = `/api/pull-info?${params}`;
+  const load = async () =>
+    (await requestJSON(url, {
+      cache,
+      headers: buildHeaders(token),
+      signal,
+    })) as PullInfo;
+  // Only the plain read can use a prefetch (lib/prefetchStore). 'reload' and
+  // 'no-store' callers want a fresh answer, so any prefetch held for the
+  // URL is dropped: it predates their read (an edit's refresh) and a later
+  // plain read would otherwise take it. The mergeability re-read has its
+  // own URL.
+  if (cache === 'default') {
+    return takeOrLoad(url, token, load);
+  }
+  discardPrefetch(url, token);
+  return load();
+}
+
+// Starts fetchPullInfo's plain read ahead of need (see lib/prefetchStore).
+// The response also lands in the browser cache (/api/pull-info is
+// HTTP-cacheable), so a second read soon after still skips GitHub.
+export function prefetchPullInfo(
+  pull: PullRequestRef,
+  token: string | undefined,
+  group?: PrefetchGroup
+): Promise<PullInfo> {
+  const url = `/api/pull-info?${pullParams(pull)}`;
+  return prefetchOnce(
+    url,
+    token,
+    (signal) => requestJSON(url, { headers: buildHeaders(token), signal }),
+    { group, tag: pullChangeKey(pull) }
+  ) as Promise<PullInfo>;
 }
 
 // `accessOnly` asks for merge capabilities and permissions alone; checks and
@@ -147,11 +190,15 @@ export async function fetchPullDetailsSupplement(
 export function prefetchPullDetailsSupplement(
   pull: PullRequestRef,
   headSha: string,
-  token: string | undefined
+  token: string | undefined,
+  group?: PrefetchGroup
 ): void {
   const url = pullDetailsURL(pull, headSha, false);
-  prefetchOnce(url, token, () =>
-    requestJSON(url, { headers: buildHeaders(token) })
+  void prefetchOnce(
+    url,
+    token,
+    (signal) => requestJSON(url, { headers: buildHeaders(token), signal }),
+    { group, tag: pullChangeKey(pull) }
   );
 }
 

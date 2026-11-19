@@ -529,10 +529,14 @@ export async function sendGitHubGraphQL(
       errors.every((error) => isToleratedError(error, tolerate))
     )
   ) {
-    const forbidden = readStringPath(errors[0], ['type']) === 'FORBIDDEN';
+    const errorType = readStringPath(errors[0], ['type']);
+    const forbidden = errorType === 'FORBIDDEN';
+    const errorPath = asRecord(errors[0])?.path;
     logUpstreamFailure({
       credential: 'viewer',
       error: readStringPath(errors[0], ['message']) ?? 'GraphQL errors[]',
+      graphqlPath: Array.isArray(errorPath) ? errorPath.join('.') : undefined,
+      graphqlType: errorType,
       route: getCurrentRouteLabel('unknown'),
       upstreamURL: createGitHubGraphQLURL(getGitHubEnvironment()),
     });

@@ -2,6 +2,7 @@ import type { AppPermissionLevel, AppPermissions } from './appPermissions';
 import { GitHubCommitError } from './githubCommitServer';
 import { githubFetch } from './githubFetch';
 import { fetchAllGitHubPages } from './githubPagination';
+import { emitLogLine } from './serverLog';
 import { createAsyncLRU, credentialCacheScope } from './serverLRU';
 import { asRecord } from './untypedJson';
 
@@ -49,7 +50,16 @@ export function loadAppInstallations(
         }
         throw error;
       }
-      return readInstallations(items);
+      const installations = readInstallations(items);
+      // Each org's installation permissions (no secrets: GitHub's permission
+      // names and levels), logged once per load rather than per request, so
+      // an operator can see what blocks a control.
+      emitLogLine({
+        event: 'github_app_installations',
+        installations,
+        level: 'info',
+      });
+      return installations;
     }
   );
 }

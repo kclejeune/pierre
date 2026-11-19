@@ -14,7 +14,16 @@ import { revealScrollbarWhileScrolling } from './autoHideScrollbar';
 import { Button } from './Button';
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
 import { readStoredGitHubToken } from './githubSession';
+import {
+  LabelChip,
+  PANEL_GRID_CLASS,
+  PANEL_MAIN_CLASS,
+  PANEL_SIDEBAR_CLASS,
+  PanelSection,
+  PanelSectionSlot,
+} from './PanelSection';
 import { PullDetailsPanel, usePullDetailsModel } from './PullDetailsControl';
+import { MergeStatusCard } from './PullOverview';
 import {
   fetchReviewThreadStates,
   prefetchReviewThreadStates,
@@ -32,10 +41,11 @@ import {
   MAX_MUTED_AUTHORS,
   mutedAuthorLabel,
 } from '@/lib/mutedAuthors';
+import type { PrefetchGroup } from '@/lib/prefetchStore';
 import type { PullRequestRef } from '@/lib/pullCommentsClient';
 import {
-  fetchPullInfo,
   prefetchPullDetailsSupplement,
+  prefetchPullInfo,
 } from '@/lib/pullInfoClient';
 import type { ConversationCounts } from '@/lib/pullOverview';
 
@@ -49,23 +59,33 @@ function getStoredToken(): string | undefined {
   return token === '' ? undefined : token;
 }
 
-// Starts the requests the preview pane makes for `pull` (its info, then the
+// Starts the requests the preview pane makes for `pull` (its info, the
 // details supplement for its head, and its review thread states), so
-// selecting it shows the details without waiting on GitHub. The pane's
-// fetchers pick the responses up from lib/prefetchStore; errors are left for
+// selecting it shows the details without waiting on GitHub. The three start
+// together when the list row carries the head commit; a row without one
+// (an older cached list) waits for the info to name it. The pane's fetchers
+// pick the responses up from lib/prefetchStore; `group` lets the caller
+// abort the ones nobody took when the pointer moves on. Errors are left for
 // the pane's own fetch to retry and report.
-export function prefetchPullPreview(pull: PullSummary) {
+export function prefetchPullPreview(pull: PullSummary, group?: PrefetchGroup) {
   const pullRequest = pullRequestRef(pull);
   const token = getStoredToken();
-  // A plain fetchPullInfo read warms the browser cache (/api/pull-info is
-  // HTTP-cacheable), and its head names the supplement to prefetch.
-  fetchPullInfo(pullRequest, token)
-    .then((info) =>
-      prefetchPullDetailsSupplement(pullRequest, info.headSha, token)
-    )
+  const info = prefetchPullInfo(pullRequest, token, group);
+  if (pull.headSha != null) {
+    prefetchPullDetailsSupplement(pullRequest, pull.headSha, token, group);
+  }
+  // The row's head can trail the pull's (a push since the list loaded);
+  // the pane reads the supplement for the info's head, so prefetch that one
+  // too when they differ.
+  info
+    .then(({ headSha }) => {
+      if (headSha !== pull.headSha) {
+        prefetchPullDetailsSupplement(pullRequest, headSha, token, group);
+      }
+    })
     .catch(() => undefined);
   if (token != null) {
-    prefetchReviewThreadStates(pullRequest, token);
+    prefetchReviewThreadStates(pullRequest, token, group);
   }
 }
 
@@ -285,7 +305,10 @@ function LoadedPreview({
                   fields.state != null ||
                   fields.draft != null ||
                   fields.title != null ||
-                  fields.labels != null
+                  fields.labels != null ||
+                  // Requesting or removing a review (the viewer's own, say)
+                  // can move the pull in or out of review-requested lists.
+                  fields.reviewers != null
                 ) {
                   onPullChanged();
                 }
@@ -306,7 +329,7 @@ function LoadedPreview({
               </Button>
             </div>
           ) : (
-            <PreviewSkeleton title={pull.title} />
+            <PreviewSkeleton pull={pull} />
           )}
         </div>
       </div>
@@ -359,15 +382,66 @@ function MuteAuthorButton({
   );
 }
 
-// Placeholder shaped like the panel, titled with the row's own title so the
-// pane reads as the right pull while the details load.
-function PreviewSkeleton({ title }: { title: string }) {
+// Placeholder laid out like PullDetailsPanel (same container, title row,
+// merge status card, and Labels / Reviewers / Description sections in the
+// same grid), so the panel replaces it without the content jumping. Shows
+// what the list row already knows: the title and labels.
+function PreviewSkeleton({ pull }: { pull: PullSummary }) {
+  const loadingCell = { kind: 'loading' } as const;
   return (
-    <div aria-busy="true" className="flex flex-col gap-3">
-      <p className="text-sm font-medium">{title}</p>
-      <div className="bg-muted h-3 w-2/3 animate-pulse rounded" />
-      <div className="bg-muted/60 h-28 animate-pulse rounded-md" />
-      <div className="bg-muted/60 h-40 animate-pulse rounded-md" />
+    <div aria-busy="true" className="@container flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 text-sm font-medium">
+          {pull.title}
+          <span className="text-muted-foreground font-normal">
+            {' '}
+            #{pull.number}
+          </span>
+        </div>
+        <span className="bg-muted h-5.5 w-16 shrink-0 animate-pulse rounded-full" />
+      </div>
+      <div className="bg-muted h-4 w-2/3 animate-pulse rounded" />
+      <MergeStatusCard
+        approvals={loadingCell}
+        checks={loadingCell}
+        checksExpanded={false}
+        comments={loadingCell}
+        headline={{
+          detail: 'Checks, conversations, and approvals are loading.',
+          title: 'Loading merge status…',
+          tone: 'neutral',
+        }}
+        onToggleChecks={() => undefined}
+      />
+      <div className={cn('flex flex-col gap-3', PANEL_GRID_CLASS)}>
+        <div className={PANEL_SIDEBAR_CLASS}>
+          <PanelSection heading="Labels">
+            <div className="flex flex-wrap items-center gap-1">
+              {pull.labels != null && pull.labels.length > 0 ? (
+                pull.labels.map((label) => (
+                  <LabelChip key={label.name} label={label} />
+                ))
+              ) : (
+                <PanelSectionSlot>
+                  <span className="bg-muted h-3 w-16 animate-pulse rounded" />
+                </PanelSectionSlot>
+              )}
+            </div>
+          </PanelSection>
+          <PanelSection heading="Reviewers">
+            <PanelSectionSlot>
+              <p className="text-muted-foreground animate-pulse text-xs">
+                Loading reviewers…
+              </p>
+            </PanelSectionSlot>
+          </PanelSection>
+        </div>
+        <div className={PANEL_MAIN_CLASS}>
+          <PanelSection heading="Description">
+            <div className="bg-muted/60 h-24 animate-pulse rounded-md" />
+          </PanelSection>
+        </div>
+      </div>
     </div>
   );
 }

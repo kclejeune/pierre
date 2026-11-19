@@ -41,6 +41,11 @@ services:
       DIFFSHUB_GITHUB_CACHE_MAX_BYTES: ${DIFFSHUB_GITHUB_CACHE_MAX_BYTES:-}
       DIFFSHUB_GITHUB_CACHE_MAX_ENTRY_BYTES: ${DIFFSHUB_GITHUB_CACHE_MAX_ENTRY_BYTES:-}
       DIFFSHUB_GITHUB_CACHE_MAX_ENTRIES: ${DIFFSHUB_GITHUB_CACHE_MAX_ENTRIES:-}
+      # 1 re-times each first-page /pulls search in several query variants
+      # and logs github_pulls_profile lines; diagnostic only (extra searches).
+      DIFFSHUB_PULLS_PROFILE: ${DIFFSHUB_PULLS_PROFILE:-}
+      # Concurrent GitHub requests per viewer token (default 32, max 64).
+      DIFFSHUB_GITHUB_CONCURRENCY: ${DIFFSHUB_GITHUB_CONCURRENCY:-}
     ports:
       - 127.0.0.1:${DIFFSHUB_PORT:-3692}:3000
     depends_on:

@@ -14,6 +14,7 @@ import { encodeURLSegment } from './githubDiffSource';
 import { githubFetch } from './githubFetch';
 import { fetchAllGitHubPages } from './githubPagination';
 import { createJSONResponse } from './jsonResponse';
+import { isValidGitHubLogin } from './mutedAuthors';
 import type { PlainFetch } from './plainFetch';
 import type { PullCommitSummary } from './pullCommitsList';
 import type {
@@ -26,6 +27,7 @@ import type {
   PullReviewer,
   PullReviewerState,
   PullViewerPermissions,
+  ReviewerCandidate,
 } from './pullInfoClient';
 import { parseLabels } from './pullLabels';
 import { asRecord } from './untypedJson';
@@ -176,6 +178,84 @@ export function readPullLabelChange(body: unknown): PullLabelChange | null {
     return null;
   }
   return { ...ref, action, label };
+}
+
+export interface PullReviewerChange extends PullBodyRef {
+  action: 'add' | 'remove';
+  login: string;
+}
+
+// A /api/pull-reviewers POST body: the pull, add or remove, and one user
+// login. Null when any part is missing or the login isn't a valid one.
+export function readPullReviewerChange(
+  body: unknown
+): PullReviewerChange | null {
+  const record = asRecord(body);
+  const ref = readPullBodyRef(record);
+  const action = record?.action;
+  const login = record?.login;
+  if (
+    ref == null ||
+    (action !== 'add' && action !== 'remove') ||
+    typeof login !== 'string' ||
+    !isValidGitHubLogin(login)
+  ) {
+    return null;
+  }
+  return { ...ref, action, login };
+}
+
+// Users the reviewer picker offers: the repository's assignable users
+// matching `query` (login or name), which is GitHub's closest public
+// listing to "people who can review here". Bots are left out.
+const REVIEWER_CANDIDATES_QUERY = `query ($owner: String!, $name: String!, $query: String!) {
+  repository(owner: $owner, name: $name) {
+    assignableUsers(first: 20, query: $query) {
+      nodes { login name avatarUrl }
+    }
+  }
+}`;
+
+export async function fetchReviewerCandidates(
+  repo: GitRepoRef,
+  query: string,
+  token: string,
+  fetcher: PlainFetch = githubFetch
+): Promise<ReviewerCandidate[]> {
+  const data = await sendGitHubGraphQL(
+    REVIEWER_CANDIDATES_QUERY,
+    { name: repo.repo, owner: repo.owner, query },
+    token,
+    fetcher
+  );
+  return parseReviewerCandidates(data);
+}
+
+export function parseReviewerCandidates(data: unknown): ReviewerCandidate[] {
+  const nodes = asRecord(
+    asRecord(asRecord(data)?.repository)?.assignableUsers
+  )?.nodes;
+  if (!Array.isArray(nodes)) {
+    return [];
+  }
+  const candidates: ReviewerCandidate[] = [];
+  for (const node of nodes) {
+    const login = readStringPath(node, ['login']);
+    if (login == null) {
+      continue;
+    }
+    const candidate: ReviewerCandidate = { login };
+    const avatarUrl = readStringPath(node, ['avatarUrl']);
+    if (avatarUrl != null) {
+      candidate.avatarUrl = avatarUrl;
+    }
+    const name = readStringPath(node, ['name']);
+    if (name != null && name !== '') {
+      candidate.name = name;
+    }
+    candidates.push(candidate);
+  }
+  return candidates;
 }
 
 // Folds a reviews listing (chronological) into the latest standing verdict
@@ -459,7 +539,8 @@ export async function fetchPullMergeQueue(
   };
 }
 
-const LABEL_PERMISSIONS = new Set(['ADMIN', 'MAINTAIN', 'TRIAGE', 'WRITE']);
+// Triage access or above: enough to label a pull and request reviewers.
+const TRIAGE_PERMISSIONS = new Set(['ADMIN', 'MAINTAIN', 'TRIAGE', 'WRITE']);
 
 // GitHub's own answer to what the viewer may change on this pull, rather than
 // re-deriving its author-or-push-access rules on the client.
@@ -467,10 +548,12 @@ export function parsePullViewerPermissions(
   data: unknown
 ): PullViewerPermissions {
   const repository = asRecord(asRecord(data)?.repository);
+  const triage = TRIAGE_PERMISSIONS.has(
+    readStringPath(repository, ['viewerPermission']) ?? ''
+  );
   return {
-    canLabel: LABEL_PERMISSIONS.has(
-      readStringPath(repository, ['viewerPermission']) ?? ''
-    ),
+    canLabel: triage,
+    canRequestReviews: triage,
     canUpdate: asRecord(repository?.pullRequest)?.viewerCanUpdate === true,
   };
 }

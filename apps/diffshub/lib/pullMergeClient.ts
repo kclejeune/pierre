@@ -1,3 +1,4 @@
+import { notifyPullChanged } from './pullChangeEvents';
 import { postPullJSON, type PullRequestRef } from './pullCommentsClient';
 import type { PullMergeQueueStatus } from './pullInfoClient';
 
@@ -19,10 +20,14 @@ export async function mergePullRequest(
   method: PullMergeMethod,
   expectedHeadSha?: string
 ): Promise<PullMergeResult> {
-  return (await postPullJSON('/api/pull-merge', pull, token, {
+  const result = (await postPullJSON('/api/pull-merge', pull, token, {
     expectedHeadSha,
     method,
   })) as PullMergeResult;
+  if (result.merged) {
+    notifyPullChanged(pull);
+  }
+  return result;
 }
 
 export type MergeQueueAction = 'cancel-auto-merge' | 'dequeue' | 'enqueue';

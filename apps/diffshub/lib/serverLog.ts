@@ -76,6 +76,11 @@ export interface UpstreamFailure {
   error?: unknown;
   // Upstream response, for a request that completed with a failing status.
   response?: Response;
+  // GraphQL failures arrive as a 200 with errors[]: GitHub's error type
+  // (e.g. FORBIDDEN, NOT_FOUND) and the failing field's path, which say
+  // more than the message alone. Neither carries secrets.
+  graphqlPath?: string;
+  graphqlType?: string;
   // The API route that made the request, e.g. 'github-web-asset'.
   route: string;
   upstreamURL: string;
@@ -84,6 +89,8 @@ export interface UpstreamFailure {
 export function logUpstreamFailure({
   credential,
   error,
+  graphqlPath,
+  graphqlType,
   response,
   route,
   upstreamURL,
@@ -109,6 +116,12 @@ export function logUpstreamFailure({
   }
   if (error != null) {
     record.error = formatError(error);
+  }
+  if (graphqlType != null) {
+    record.graphqlType = graphqlType;
+  }
+  if (graphqlPath != null) {
+    record.graphqlPath = graphqlPath;
   }
   emitLogLine(record);
 }

@@ -88,7 +88,8 @@ export function usePullBatch(onFinished: (outcome: PullBatchOutcome) => void): {
   run(
     action: PullBatchAction,
     pulls: readonly PullSummary[],
-    origin?: PullBatchOrigin
+    origin?: PullBatchOrigin,
+    expectedHeadSha?: string
   ): void;
 } {
   const [running, setRunning] = useState<PullBatchProgress | null>(null);
@@ -99,7 +100,8 @@ export function usePullBatch(onFinished: (outcome: PullBatchOutcome) => void): {
   const run = (
     action: PullBatchAction,
     pulls: readonly PullSummary[],
-    origin: PullBatchOrigin = 'selection'
+    origin: PullBatchOrigin = 'selection',
+    expectedHeadSha?: string
   ) => {
     if (busy.current || pulls.length === 0) {
       return;
@@ -112,8 +114,12 @@ export function usePullBatch(onFinished: (outcome: PullBatchOutcome) => void): {
     busy.current = true;
     const total = pulls.length;
     setRunning({ action, done: 0, total });
-    void runPullBatch(pulls, action, token, (done) =>
-      setRunning({ action, done, total })
+    void runPullBatch(
+      pulls,
+      action,
+      token,
+      (done) => setRunning({ action, done, total }),
+      expectedHeadSha
     )
       .then((result) => {
         reportBatch(action, result, origin, pulls);

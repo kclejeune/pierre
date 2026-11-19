@@ -1,7 +1,8 @@
 'use client';
 
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { usePathname, useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
 import { Button } from './Button';
@@ -10,27 +11,36 @@ import { isEditableEventTarget } from '@/lib/platform';
 import {
   findQueuePosition,
   loadPullQueue,
+  type PullQueue,
   type PullQueueItem,
+  readPullQueueId,
+  withPullQueue,
 } from '@/lib/pullQueue';
 import { recordRecentDiff } from '@/lib/recentDiffs';
 
 // The diff header's "3 / 12" stepper through the /pulls list the viewer came
-// from (lib/pullQueue): previous and next pull, also on [ and ]. Renders
-// nothing unless the open pull is in that list, so diffs reached any other
-// way keep their header as it was.
+// from (lib/pullQueue): previous and next pull, also on [ and ], and the
+// count links back to that list with its filters. Renders nothing unless the
+// URL's ?queue= names a saved list holding the open pull, so diffs reached
+// any other way keep their header as it was.
 export function PullQueueStepper() {
   const pathname = usePathname();
   const router = useRouter();
+  // Re-read whenever the URL changes, including a same-path navigation that
+  // drops ?queue= (opening this pull again from recents or the palette).
+  // The header wraps this in a Suspense boundary for useSearchParams.
+  const search = useSearchParams().toString();
+  // Commit and compare views opened from a pull name it in ?fromPull=.
+  const fromPull = new URLSearchParams(search).get('fromPull');
   // Read after mount: the queue lives in localStorage.
-  const [items, setItems] = useState<PullQueueItem[]>([]);
-  // Commit and compare views opened from a pull name it in ?fromPull=; read
-  // with the queue after mount rather than through useSearchParams, which
-  // would need a Suspense boundary around the whole header.
-  const [fromPull, setFromPull] = useState<string | null>(null);
+  const [queue, setQueue] = useState<(PullQueue & { id: string }) | null>(null);
   useEffect(() => {
-    setItems(loadPullQueue());
-    setFromPull(new URLSearchParams(window.location.search).get('fromPull'));
-  }, [pathname]);
+    const id = readPullQueueId(search);
+    const loaded = id != null ? loadPullQueue(id) : null;
+    setQueue(id != null && loaded != null ? { id, ...loaded } : null);
+  }, [search]);
+  const items = queue?.items ?? [];
+  const queueId = queue?.id;
   const position = findQueuePosition(items, pathname, fromPull);
   const previous = position > 0 ? items[position - 1] : undefined;
   const next =
@@ -43,9 +53,9 @@ export function PullQueueStepper() {
   const go = useCallback(
     (target: PullQueueItem) => {
       recordRecentDiff(target);
-      router.push(target.path);
+      router.push(withPullQueue(target.path, queueId));
     },
-    [router]
+    [queueId, router]
   );
 
   useEffect(() => {
@@ -74,7 +84,7 @@ export function PullQueueStepper() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [go, next, position, previous]);
 
-  if (position === -1) {
+  if (position === -1 || queue == null) {
     return null;
   }
   return (
@@ -99,9 +109,13 @@ export function PullQueueStepper() {
       >
         <ChevronLeft className="size-3.5" />
       </Button>
-      <span title="Position in the /pulls list this diff was opened from">
+      <Link
+        className="hover:text-foreground rounded px-0.5 hover:underline"
+        href={queue.listPath}
+        title="Back to the /pulls list this diff was opened from"
+      >
         {position + 1} / {items.length}
-      </span>
+      </Link>
       <Button
         type="button"
         variant="ghost"

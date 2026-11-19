@@ -6,7 +6,7 @@
 
 import { includesName } from './nameList';
 import type { PullRequestRef } from './pullCommentsClient';
-import type { PullLabel } from './pullInfoClient';
+import type { PullDetails, PullLabel } from './pullInfoClient';
 import { parseLabels } from './pullLabels';
 import {
   DEFAULT_PULL_SORT,
@@ -136,6 +136,31 @@ export function pullRequestRef(
   pull: Pick<PullSummary, 'number' | 'owner' | 'repo'>
 ): PullRequestRef {
   return { number: String(pull.number), owner: pull.owner, repo: pull.repo };
+}
+
+// The summary the /pulls rows carry, for a pull known only by its ref and
+// details (the review page), so the shared pull actions menu
+// (components/PullRowActions) works there too. Fields the details don't
+// carry (checks, labels, activity) stay absent, which the menu doesn't read.
+export function pullSummaryFromDetails(
+  ref: PullRequestRef,
+  details: PullDetails
+): PullSummary {
+  const number = Number(ref.number);
+  return {
+    authorAvatarUrl: details.authorAvatarUrl,
+    // The REST details name apps by their "[bot]" login (dependabot[bot]),
+    // a suffix no user login can carry; muting needs the app/ form.
+    authorIsBot: /\[bot\]$/i.test(details.authorLogin ?? '') || undefined,
+    authorLogin: details.authorLogin,
+    number,
+    owner: ref.owner,
+    repo: ref.repo,
+    state: displayPullState(details.state, details.draft),
+    title: details.title,
+    updatedAt: details.createdAt ?? '',
+    viewerPath: pullViewerPath(ref.owner, ref.repo, number),
+  };
 }
 
 // "anyone" drops the involvement terms entirely: every pull matching the rest

@@ -6,6 +6,7 @@ import { ReviewUI } from '@/components/ReviewUI';
 import { describeDiffTarget } from '@/lib/describeDiffTarget';
 import { getGitHubEnvironment } from '@/lib/githubEnvironment';
 import { parsePullReturnPath } from '@/lib/pullCommitsList';
+import { isPullQueueId, withPullQueue } from '@/lib/pullQueue';
 import { resolveDiffshubViewerRoute } from '@/lib/resolveDiffshubViewerRoute';
 import { SITE_DESCRIPTION, SITE_NAME, SITE_ORIGIN } from '@/lib/site';
 
@@ -14,11 +15,28 @@ interface ViewByPathProps {
   searchParams: Promise<{
     domain?: string | string[];
     fromPull?: string | string[];
+    queue?: string | string[];
   }>;
 }
 
-function readRequestedDomain(domain: string | string[] | undefined) {
-  return Array.isArray(domain) ? domain[0] : domain;
+// The first value of a search parameter Next hands over as a string or
+// an array.
+function firstParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+// The "back to the pull" link of a commit view opened from a pull. When
+// that pull was opened from a /pulls list, the link keeps the list's
+// ?queue=, so the pull's header still steps through it.
+function returnToPullPath(
+  fromPull: string | string[] | undefined,
+  queue: string | string[] | undefined
+): string | undefined {
+  const path = parsePullReturnPath(firstParam(fromPull));
+  const queueId = firstParam(queue);
+  return path == null
+    ? undefined
+    : withPullQueue(path, isPullQueueId(queueId) ? queueId : null);
 }
 
 // Viewer pages are deliberately excluded from search results: they render
@@ -32,7 +50,7 @@ export async function generateMetadata({
 }: ViewByPathProps): Promise<Metadata> {
   const { path } = await params;
   const { domain } = await searchParams;
-  const route = resolveDiffshubViewerRoute(path, readRequestedDomain(domain));
+  const route = resolveDiffshubViewerRoute(path, firstParam(domain));
 
   if (route.kind !== 'render') {
     return { title: SITE_NAME, robots: { index: false, follow: false } };
@@ -73,10 +91,10 @@ export async function DiffsHubViewByPathPage({
   searchParams,
 }: ViewByPathProps) {
   const { path } = await params;
-  const { domain, fromPull } = await searchParams;
+  const { domain, fromPull, queue } = await searchParams;
   const route = resolveDiffshubViewerRoute(
     path,
-    readRequestedDomain(domain),
+    firstParam(domain),
     getGitHubEnvironment().webURL
   );
 
@@ -105,9 +123,7 @@ export async function DiffsHubViewByPathPage({
         domain={route.domain}
         initialUrl={route.url}
         path={route.upstreamPath}
-        returnToPullPath={parsePullReturnPath(
-          Array.isArray(fromPull) ? fromPull[0] : fromPull
-        )}
+        returnToPullPath={returnToPullPath(fromPull, queue)}
       />
     </div>
   );

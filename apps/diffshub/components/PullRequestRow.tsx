@@ -7,6 +7,7 @@ import { memo, type MouseEvent, useEffect, useRef } from 'react';
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { LabelColorDot } from './LabelColorDot';
 import { TONE_TEXT_CLASS } from './PullOverview';
+import { useQueuedPullPath } from './PullQueueLinkContext';
 import { type PullRowAction, PullRowActions } from './PullRowActions';
 import { PULL_STATE_DISPLAY } from './pullStateDisplay';
 import { RelativeTime } from './RelativeTime';
@@ -140,6 +141,7 @@ export const PullRequestRow = memo(function PullRequestRow({
   showRepo = true,
   statusPending = false,
 }: PullRequestRowProps) {
+  const href = useQueuedPullPath(pull.viewerPath);
   const stateDisplay = PULL_STATE_DISPLAY[pull.state];
   const StateIcon = stateDisplay.Icon;
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -201,7 +203,7 @@ export const PullRequestRow = memo(function PullRequestRow({
           over the link's time and avatar, clear of the group toggle. */}
       <div className="relative flex min-w-0 flex-1">
         <Link
-          href={pull.viewerPath}
+          href={href}
           aria-current={selected ? 'true' : undefined}
           data-pull-row=""
           onPointerEnter={schedulePrefetch}
@@ -216,6 +218,11 @@ export const PullRequestRow = memo(function PullRequestRow({
             }
             onOpen(pull);
           }}
+          // Middle-click and the context menu's "Open in new tab" skip
+          // onClick; both still open the diff from this list, so the list is
+          // saved as its queue the same way.
+          onAuxClick={(event) => event.button === 1 && onOpen(pull)}
+          onContextMenu={() => onOpen(pull)}
           // The ring is inset because section cards clip overflow.
           className="focus-visible:ring-ring flex min-w-0 flex-1 items-start gap-3 px-3 py-2.5 outline-none focus-visible:ring-2 focus-visible:ring-inset"
         >

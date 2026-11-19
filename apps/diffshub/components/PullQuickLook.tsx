@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from './Dialog';
 import { TONE_TEXT_CLASS } from './PullOverview';
+import { useQueuedPullPath } from './PullQueueLinkContext';
 import { PULL_STATE_DISPLAY } from './pullStateDisplay';
 import { themeController } from './themeController';
 import { ThemedCodeView } from './ThemedCodeView';
@@ -64,6 +65,7 @@ export function PullQuickLook({
   position,
   pull,
 }: PullQuickLookProps) {
+  const queuedPath = useQueuedPullPath(pull.viewerPath);
   // J/K (and [ / ]) step while the dialog is open; the list's own keyboard
   // handler stands aside whenever a dialog is up.
   useEffect(() => {
@@ -194,7 +196,7 @@ export function PullQuickLook({
             variant="outline"
           >
             <a
-              href={pull.viewerPath}
+              href={queuedPath}
               rel="noopener"
               target="_blank"
               title="Open the full review in a new tab"

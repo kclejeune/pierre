@@ -3,6 +3,8 @@
 // rubber stamp. Each pull is handled the way its details panel would, pinned
 // to the head commit read just before acting, so a branch that moves
 // mid-batch fails that pull instead of approving or merging unseen commits.
+// The review page passes the head of the diff on screen as `expectedHeadSha`,
+// so a push after the page loaded fails the action the same way.
 
 import { pullRequestRef, type PullSummary } from './githubPullSummaries';
 import type { PullRequestRef } from './pullCommentsClient';
@@ -28,21 +30,40 @@ export interface PullBatchResult {
 const BATCH_CONCURRENCY = 3;
 
 // The pull as GitHub has it now. 'no-store': the head must be current, not
-// the browser's cached copy.
-function readPull(ref: PullRequestRef, token: string) {
-  return fetchPullInfo(ref, token, undefined, 'no-store');
+// the browser's cached copy. Throws when the head isn't `expectedHeadSha`
+// (the commit the viewer is looking at), when one is given.
+async function readPull(
+  ref: PullRequestRef,
+  token: string,
+  expectedHeadSha: string | undefined
+) {
+  const info = await fetchPullInfo(ref, token, undefined, 'no-store');
+  if (expectedHeadSha != null && info.headSha !== expectedHeadSha) {
+    throw new Error(
+      'New commits were pushed since this diff loaded. Reload to review them first.'
+    );
+  }
+  return info;
 }
 
-async function approvePull(ref: PullRequestRef, token: string): Promise<void> {
-  const { headSha } = await readPull(ref, token);
+async function approvePull(
+  ref: PullRequestRef,
+  token: string,
+  expectedHeadSha: string | undefined
+): Promise<void> {
+  const { headSha } = await readPull(ref, token, expectedHeadSha);
   await submitPullReview(ref, token, 'APPROVE', '', [], headSha);
 }
 
 // "Merge when ready", decided by the same plan as the details panel's merge
 // footer (lib/pullMergePlan): join the merge queue where the base branch has
 // one, otherwise merge with the repository's default method.
-async function mergePull(ref: PullRequestRef, token: string): Promise<void> {
-  const { details, headSha } = await readPull(ref, token);
+async function mergePull(
+  ref: PullRequestRef,
+  token: string,
+  expectedHeadSha: string | undefined
+): Promise<void> {
+  const { details, headSha } = await readPull(ref, token, expectedHeadSha);
   const blocked = details == null ? null : pullMergeBlockedReason(details);
   if (blocked != null) {
     throw new Error(blocked);
@@ -79,17 +100,23 @@ async function mergePull(ref: PullRequestRef, token: string): Promise<void> {
 
 const ACTIONS: Record<
   PullBatchAction,
-  (ref: PullRequestRef, token: string) => Promise<void>
+  (
+    ref: PullRequestRef,
+    token: string,
+    expectedHeadSha: string | undefined
+  ) => Promise<void>
 > = { approve: approvePull, merge: mergePull };
 
 // Runs `action` on every pull, BATCH_CONCURRENCY at a time, collecting
 // per-pull failures rather than stopping at the first. `onSettled` fires as
-// each pull finishes, for a progress count.
+// each pull finishes, for a progress count. `expectedHeadSha` is for a
+// single pull whose diff is on screen (see readPull).
 export async function runPullBatch(
   pulls: readonly PullSummary[],
   action: PullBatchAction,
   token: string,
-  onSettled?: (done: number) => void
+  onSettled?: (done: number) => void,
+  expectedHeadSha?: string
 ): Promise<PullBatchResult> {
   const run = ACTIONS[action];
   const failures: PullBatchFailure[] = [];
@@ -100,7 +127,7 @@ export async function runPullBatch(
     while (next < pulls.length) {
       const pull = pulls[next++];
       try {
-        await run(pullRequestRef(pull), token);
+        await run(pullRequestRef(pull), token, expectedHeadSha);
         succeeded++;
       } catch (error) {
         failures.push({

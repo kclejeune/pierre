@@ -7,6 +7,7 @@ import {
   parsePullInvolvements,
   type PullAudience,
   type PullInvolvement,
+  pullKey,
   type ReviewRequestScope,
 } from './githubPullSummaries';
 import { isValidRepoName } from './pinnedRepos';
@@ -205,4 +206,37 @@ export function buildPullsRepoPath(repo: string): string {
     }
   );
   return `${url.pathname}${url.search}`;
+}
+
+// The pull previewed beside the list, as ?pull=owner/repo/123, so a refresh
+// (or a shared link) reopens the same preview. Kept out of PullsPageState:
+// selecting a row must not refetch the list or add a history entry.
+const PREVIEW_PARAM = 'pull';
+
+// The previewed pull's key (pullKey's owner/repo#number form) from a /pulls
+// search string, or null when absent or malformed.
+export function readPreviewPullKey(search: string): string | null {
+  const value = new URLSearchParams(search).get(PREVIEW_PARAM);
+  const match = value?.match(/^(([^/]+)\/([^/]+))\/(\d+)$/);
+  if (match == null || !isValidRepoName(match[1])) {
+    return null;
+  }
+  return pullKey({ number: match[4], owner: match[2], repo: match[3] });
+}
+
+// Writes (or, for null, removes) the previewed pull on `url`'s params.
+export function writePreviewPull(
+  url: URL,
+  pull: { number: number; owner: string; repo: string } | null
+): URL {
+  const next = new URL(url);
+  if (pull == null) {
+    next.searchParams.delete(PREVIEW_PARAM);
+  } else {
+    next.searchParams.set(
+      PREVIEW_PARAM,
+      `${pull.owner}/${pull.repo}/${pull.number}`
+    );
+  }
+  return next;
 }

@@ -95,10 +95,12 @@ import {
   defaultAudience,
   type PullScope,
   type PullsPageState,
+  readPreviewPullKey,
   readPullsPageState,
   resolveAudience,
   scopeRepos,
   scopesEqual,
+  writePreviewPull,
   writePullsPageState,
 } from '@/lib/pullScopes';
 import {
@@ -195,6 +197,70 @@ function usePullsPageState() {
   return [state, update] as const;
 }
 
+// The pull shown in the preview pane, mirrored into ?pull= so a refresh
+// reopens it. Kept as the row's summary (not just its key) so the pane stays
+// put while the list refetches or filters change around it; that summary is
+// why a reload can't restore the preview on its own. Instead the key read
+// from the URL waits for the list: the returned restore callback (fed every
+// fetched pull, including ones folded into a collapsed group) previews the
+// matching pull once it appears. If the list finishes loading without it
+// (say it was on a later page) the pane stays closed and the URL is left
+// for the next selection to replace. Back and Forward restore the key their
+// entry names the same way. Any explicit selection, including closing the
+// pane, supersedes a pending restore.
+function usePersistedPreview() {
+  const [preview, setPreviewState] = useState<PullSummary | null>(null);
+  const pendingKey = useRef(readPreviewPullKey(window.location.search));
+  // The fetched pulls last fed to `restorePreview`, so a history entry can
+  // restore its preview from the list already on screen.
+  const lastPulls = useRef<readonly PullSummary[]>([]);
+  const setPreview = useCallback((pull: PullSummary | null) => {
+    pendingKey.current = null;
+    setPreviewState(pull);
+    window.history.replaceState(
+      window.history.state,
+      '',
+      writePreviewPull(new URL(window.location.href), pull)
+    );
+  }, []);
+  // Previews the pending key's pull if `pulls` has it; the URL already
+  // names it, so only the state changes.
+  const matchPending = useCallback((pulls: readonly PullSummary[]) => {
+    const key = pendingKey.current;
+    const match =
+      key == null ? undefined : pulls.find((pull) => pullKey(pull) === key);
+    if (match != null) {
+      pendingKey.current = null;
+      setPreviewState(match);
+    }
+    return match != null;
+  }, []);
+  const restorePreview = useCallback(
+    (pulls: readonly PullSummary[], loading: boolean) => {
+      lastPulls.current = pulls;
+      if (!matchPending(pulls) && !loading) {
+        pendingKey.current = null;
+      }
+    },
+    [matchPending]
+  );
+  useEffect(() => {
+    const onPopState = () => {
+      const key = readPreviewPullKey(window.location.search);
+      setPreviewState((current) =>
+        current != null && pullKey(current) === key ? current : null
+      );
+      pendingKey.current = key;
+      // The entry's list may already be on screen; otherwise its rows
+      // restore the preview once they load.
+      matchPending(lastPulls.current);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [matchPending]);
+  return [preview, setPreview, restorePreview] as const;
+}
+
 // Matches Tailwind's `lg` breakpoint (laptops and up): from here a row click
 // previews the pull in a pane beside the list instead of navigating.
 const PREVIEW_LAYOUT_QUERY = '(min-width: 64rem)';
@@ -222,10 +288,7 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   const previewLayout = useMediaQuery(PREVIEW_LAYOUT_QUERY, false);
   const railLayout = useMediaQuery(RAIL_LAYOUT_QUERY, false);
   const orientation = railLayout ? 'vertical' : 'horizontal';
-  // The pull shown in the preview pane. Kept as the row's summary (not just
-  // its key) so the pane stays put while the list refetches or filters
-  // change around it.
-  const [preview, setPreview] = useState<PullSummary | null>(null);
+  const [preview, setPreview, restorePreview] = usePersistedPreview();
   // The quick look (components/PullQuickLook) over the list, showing the
   // previewed pull's diff: its place among the list's rows, or null while
   // closed. index -1 means the pull isn't among the rows on screen.
@@ -469,6 +532,7 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
         onQuickLook={previewLayout ? openQuickLook : undefined}
         listWaitingRef={listWaitingRef}
         queueRef={queueRef}
+        onRowsChange={restorePreview}
       />
     );
   // The quick look renders with the preview pane: both exist only in the
@@ -828,6 +892,7 @@ function PullList({
   onOpen,
   onPreview,
   onQuickLook,
+  onRowsChange,
   listWaitingRef,
   queueRef,
   request,
@@ -849,6 +914,10 @@ function PullList({
   onPreview?(pull: PullSummary): void;
   // Space on the previewed row opens the quick look (wide layout only).
   onQuickLook?(pull: PullSummary): void;
+  // Told every fetched pull (rows plus those folded into collapsed groups)
+  // and whether the search is still loading, each time either changes, so
+  // the parent can restore the previewed pull after a reload.
+  onRowsChange(fetched: readonly PullSummary[], loading: boolean): void;
   // Set while the list loads with no rows yet; prefetches skip until then.
   listWaitingRef: RefObject<boolean>;
   // Receives the rows on screen, which openDiff saves as the diff view's
@@ -942,6 +1011,9 @@ function PullList({
   useEffect(() => {
     queueRef.current = visible;
   }, [queueRef, visible]);
+  useEffect(() => {
+    onRowsChange(pulls, loading);
+  }, [onRowsChange, pulls, loading]);
   // The search a running batch started from: its failures return to the
   // selection only if the list still shows that search.
   const batchSearch = useRef<string | null>(null);

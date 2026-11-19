@@ -637,7 +637,7 @@ export function PullDetailsPanel({
       <div className={cn('flex flex-col gap-3', !editing && PANEL_GRID_CLASS)}>
         <div className={PANEL_SIDEBAR_CLASS}>
           <PullLabels
-            key={pullKey(pullRequest)}
+            key={`labels:${pullKey(pullRequest)}`}
             canEdit={model.canLabel}
             getGitHubToken={getGitHubToken}
             labels={model.details.labels}
@@ -647,7 +647,7 @@ export function PullDetailsPanel({
             pullRequest={pullRequest}
           />
           <PullReviewers
-            key={pullKey(pullRequest)}
+            key={`reviewers:${pullKey(pullRequest)}`}
             authorLogin={model.details.authorLogin}
             canEdit={model.canRequestReviews}
             getGitHubToken={getGitHubToken}
@@ -1429,7 +1429,8 @@ function MergeQueueControls({
   );
 }
 
-// The merge affordance: method picker plus a two-step confirm. The merge is
+// The merge affordance: method picker (when the repo allows more than one
+// method) plus a two-step confirm. The merge is
 // pinned to the head sha the viewer loaded, so a branch that moved since
 // fails with a stale-head error instead of merging unseen commits.
 function MergeControls({
@@ -1485,22 +1486,27 @@ function MergeControls({
     <div className="flex flex-col gap-2">
       <FooterActionRow
         lead={
-          <ButtonGroup
-            size="sm"
-            value={method}
-            onValueChange={(value) => setMethod(value as PullMergeMethod)}
-          >
-            {capabilities.methods.map((value) => (
-              <ButtonGroupItem
-                key={value}
-                value={value}
-                // Picking a method means nothing while merging is blocked.
-                disabled={blockedReason != null || isMerging}
-              >
-                {MERGE_METHOD_LABELS[value]}
-              </ButtonGroupItem>
-            ))}
-          </ButtonGroup>
+          // A single allowed method needs no picker: the merge button's
+          // label already names it, and a one-option group beside it reads
+          // as a second, duplicate button.
+          capabilities.methods.length > 1 && (
+            <ButtonGroup
+              size="sm"
+              value={method}
+              onValueChange={(value) => setMethod(value as PullMergeMethod)}
+            >
+              {capabilities.methods.map((value) => (
+                <ButtonGroupItem
+                  key={value}
+                  value={value}
+                  // Picking a method means nothing while merging is blocked.
+                  disabled={blockedReason != null || isMerging}
+                >
+                  {MERGE_METHOD_LABELS[value]}
+                </ButtonGroupItem>
+              ))}
+            </ButtonGroup>
+          )
         }
         secondary={secondaryActions}
         primary={

@@ -92,7 +92,11 @@ describe('describeMissingAppPermission', () => {
       describeMissingAppPermission(INSTALLATIONS, 'elsewhere', 'commit')
     ).toBeNull();
     expect(
-      describeMissingAppPermission({ installations: null }, 'octolabs', 'commit')
+      describeMissingAppPermission(
+        { installations: null },
+        'octolabs',
+        'commit'
+      )
     ).toBeNull();
     expect(describeMissingAppPermission(null, 'octolabs', 'commit')).toBeNull();
   });
@@ -195,7 +199,10 @@ describe('GitHub App installation lookups', () => {
       if (path.endsWith('/user/installations')) {
         return Response.json({
           installations: [
-            { account: { login: 'octolabs' }, permissions: { contents: 'read' } },
+            {
+              account: { login: 'octolabs' },
+              permissions: { contents: 'read' },
+            },
             {
               account: { login: 'forker' },
               permissions: { contents: 'write' },

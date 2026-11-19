@@ -31,6 +31,7 @@ import {
 import { usePullInfo } from './usePullInfo';
 import { cn } from '@/lib/cn';
 import {
+  githubPullURL,
   pullKey,
   pullRequestRef,
   type PullSummary,
@@ -227,7 +228,7 @@ function LoadedPreview({
     pullInfo,
     pullRequest,
   });
-  const githubHref = `${webURL.replace(/\/$/, '')}/${pull.owner}/${pull.repo}/pull/${pull.number}`;
+  const githubHref = githubPullURL(webURL, pull);
 
   return (
     <aside aria-label={`Preview of ${pull.title}`} className={PANE_CLASS}>
@@ -338,8 +339,8 @@ function LoadedPreview({
 }
 
 // Mutes the pull's author on the dashboard (lib/mutedAuthors), dropping
-// their pulls from the list. Hidden once they're muted; the list header's
-// Muted menu unmutes.
+// their pulls from the list. Hidden once they're muted; the Author filter
+// (or the row's actions menu) unmutes.
 function MuteAuthorButton({
   muted,
   onMute,
@@ -364,7 +365,7 @@ function MuteAuthorButton({
       className="flex"
       title={
         full
-          ? `You've muted ${MAX_MUTED_AUTHORS} authors, the most the list can hide. Unmute one from the Muted menu first.`
+          ? `You've muted ${MAX_MUTED_AUTHORS} authors, the most the list can hide. Unmute one from the Author filter first.`
           : `${label}: hide their pull requests from this list`
       }
     >

@@ -24,6 +24,7 @@ import {
 } from './PanelSection';
 import { PullDetailsPanel, usePullDetailsModel } from './PullDetailsControl';
 import { MergeStatusCard } from './PullOverview';
+import { useQueuedPullPath } from './PullQueueLinkContext';
 import {
   fetchReviewThreadStates,
   prefetchReviewThreadStates,
@@ -200,6 +201,7 @@ function LoadedPreview({
   pull: PullSummary;
   tokenVersion: number;
 }) {
+  const queuedPath = useQueuedPullPath(pull.viewerPath);
   const { webURL } = useGitHubEnvironment();
   // Keyed on the ref's fields, not the summary object a refetch replaces.
   const { number, owner, repo } = pull;
@@ -251,7 +253,7 @@ function LoadedPreview({
         </Button>
         <Button asChild className="h-7 px-2.5" size="xs" variant="outline">
           <a
-            href={pull.viewerPath}
+            href={queuedPath}
             rel="noopener"
             target="_blank"
             title="Open the diff in a new tab (Enter)"

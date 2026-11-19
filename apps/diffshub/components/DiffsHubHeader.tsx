@@ -28,6 +28,7 @@ import {
   type CSSProperties,
   memo,
   type ReactNode,
+  Suspense,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -242,7 +243,9 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
       )}
       {/* Steps through the /pulls list this diff was opened from; renders
           nothing for diffs reached any other way. */}
-      <PullQueueStepper />
+      <Suspense fallback={null}>
+        <PullQueueStepper />
+      </Suspense>
       {/* Narrow widths give way in order: the head/base pills truncate first,
           then the left group clips rather than painting under the actions on
           the right (the URL row itself never collapses). */}

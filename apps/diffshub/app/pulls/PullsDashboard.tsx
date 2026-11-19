@@ -4,6 +4,7 @@ import { IconCheck, IconChevronSm, IconEyeSlash, IconPin } from '@pierre/icons';
 import {
   type ReactNode,
   type RefObject,
+  use,
   useCallback,
   useEffect,
   useMemo,
@@ -46,6 +47,7 @@ import {
   PullPreviewPane,
 } from '@/components/PullPreviewPane';
 import { PullQueryBar } from '@/components/PullQueryBar';
+import { PullQueueIdContext } from '@/components/PullQueueLinkContext';
 import { PullQuickLook } from '@/components/PullQuickLook';
 import { PullRequestRow } from '@/components/PullRequestRow';
 import { muteWithUndo, type PullRowAction } from '@/components/PullRowActions';
@@ -86,7 +88,12 @@ import {
 import { isEditableEventTarget } from '@/lib/platform';
 import { PrefetchGroup } from '@/lib/prefetchStore';
 import { buildPullRows, groupPulls } from '@/lib/pullGroups';
-import { type PullQueueItem, savePullQueue } from '@/lib/pullQueue';
+import {
+  pullQueueId,
+  type PullQueueItem,
+  savePullQueue,
+  withPullQueue,
+} from '@/lib/pullQueue';
 import {
   audienceAnyoneAllowed,
   DEFAULT_QUERY_TEXT,
@@ -295,20 +302,36 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   } | null>(null);
   // Bumped when the preview pane changed a pull, so the list refetches.
   const [listVersion, setListVersion] = useState(0);
-  // The list's rows on screen, kept current by PullList. Opening a diff from
-  // the list or the preview saves them as the diff view's queue
-  // (lib/pullQueue), so the diff can step to the next pull.
+  // The list's rows on screen, kept current by PullList (J/K, the quick
+  // look, and opening a diff read them at event time).
   const queueRef = useRef<readonly PullSummary[]>([]);
+  // The id of those rows as the diff view's queue (lib/pullQueue). It goes
+  // on every diff link from this list as ?queue= (PullQueueIdContext), and
+  // opening a diff saves the rows under it, with the /pulls URL they came
+  // from, so the diff can step through them and lead back to these filters.
+  // State only changes when the rows do, so a refetch that returns the same
+  // rows doesn't re-render them.
+  const [queueId, setQueueId] = useState(() => pullQueueId([]));
+  const queueIdRef = useLatestValueRef(queueId);
   // Whether the list is loading with no rows on screen yet, kept current by
   // PullList. Hover and J/K prefetches wait it out, so the list search
   // doesn't queue behind preview requests for the same token
   // (lib/githubFetch); once rows show (cached, or a stale page being
   // revalidated) the viewer can act on them, so prefetching resumes.
   const listWaitingRef = useRef(false);
-  const openDiff = useCallback((pull: PullSummary) => {
-    recordRecentDiff({ path: pull.viewerPath, title: pull.title });
-    savePullQueue(toQueueItems(queueRef.current));
-  }, []);
+  const openDiff = useCallback(
+    (pull: PullSummary) => {
+      recordRecentDiff({ path: pull.viewerPath, title: pull.title });
+      // The way back previews the pull that was opened.
+      const list = writePreviewPull(new URL(window.location.href), pull);
+      // Saved under the id the rows' links already carry.
+      savePullQueue(queueIdRef.current, {
+        items: toQueueItems(queueRef.current),
+        listPath: `${list.pathname}${list.search}`,
+      });
+    },
+    [queueIdRef]
+  );
   const onRowsChange = useCallback(
     (
       rows: readonly PullSummary[],
@@ -316,6 +339,12 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
       loading: boolean
     ) => {
       queueRef.current = rows;
+      // The list's filters (its URL without the previewed pull) are part of
+      // the id, so a different filter showing the same rows gets its own.
+      const list = writePreviewPull(new URL(window.location.href), null);
+      setQueueId(
+        pullQueueId(toQueueItems(rows), `${list.pathname}${list.search}`)
+      );
       restorePreview(fetched, loading);
     },
     [restorePreview]
@@ -503,7 +532,7 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
     </label>
   );
   const list = (
-    <>
+    <PullQueueIdContext value={queueId}>
       {page.scope.kind === 'pinned' && pinned.length === 0 ? (
         <div className={cn(SECTION_CARD_CLASS, 'px-4 py-6 text-sm')}>
           <p className="font-medium">No pinned repositories yet.</p>
@@ -541,12 +570,12 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
           onRowsChange={onRowsChange}
         />
       )}
-    </>
+    </PullQueueIdContext>
   );
   // The quick look renders with the preview pane: both exist only in the
   // wide layout, and the dialog portals over the whole page anyway.
   const previewPane = previewLayout && (
-    <>
+    <PullQueueIdContext value={queueId}>
       <PullPreviewPane
         muted={mutedAuthors.muted}
         pull={preview}
@@ -566,7 +595,7 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
           onStep={stepQuickLook}
         />
       )}
-    </>
+    </PullQueueIdContext>
   );
 
   // Columns: [rail] list, preview. The pane is always present in the wide
@@ -1045,10 +1074,15 @@ function PullList({
   // memoized rows don't re-render whenever `muting` or the batch rebuilds.
   const mutingRef = useLatestValueRef(muting);
   const batchRef = useLatestValueRef(batch);
+  const onOpenRef = useLatestValueRef(onOpen);
   const onRowAction = useCallback(
     (pull: PullSummary, action: PullRowAction) => {
       if (action === 'approve' || action === 'merge') {
         batchRef.current.run(action, [pull], 'row');
+        return;
+      }
+      if (action === 'open') {
+        onOpenRef.current(pull);
         return;
       }
       const author = authorSearchName(pull);
@@ -1064,7 +1098,7 @@ function PullList({
         mutingRef.current.onUnmute(name)
       );
     },
-    [batchRef, mutingRef]
+    [batchRef, mutingRef, onOpenRef]
   );
   const selection = usePullSelection(
     pulls,
@@ -1311,9 +1345,12 @@ function usePreviewKeyboard(
     onToggleChecked(key: string, shiftKey: boolean): void;
   }
 ) {
+  // Diffs opened with Enter carry the list's ?queue=, like the row links.
+  const queueId = use(PullQueueIdContext);
   const latest = useLatestValueRef({
     ...handlers,
     pulls,
+    queueId,
     selectedKey,
   });
   const enabled = handlers.onPreview != null;
@@ -1339,6 +1376,7 @@ function usePreviewKeyboard(
         onQuickLook,
         onToggleChecked,
         pulls,
+        queueId,
         selectedKey,
       } = latest.current;
       const index = pulls.findIndex((pull) => pullKey(pull) === selectedKey);
@@ -1406,7 +1444,11 @@ function usePreviewKeyboard(
           onOpen(pull);
           // A new tab, like the preview's Open diff button, so the list
           // stays where it was as a queue to come back to.
-          window.open(pull.viewerPath, '_blank', 'noopener');
+          window.open(
+            withPullQueue(pull.viewerPath, queueId),
+            '_blank',
+            'noopener'
+          );
           return;
         }
       }

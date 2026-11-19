@@ -102,6 +102,47 @@ describe('runPullBatch', () => {
     }
   });
 
+  test('refuses when the head moved past the commit on screen', async () => {
+    const routes = mockRoutes({});
+    try {
+      const approve = await runPullBatch(
+        [pull('a')],
+        'approve',
+        'ghu_token',
+        undefined,
+        'sha-old'
+      );
+      const merge = await runPullBatch(
+        [pull('a')],
+        'merge',
+        'ghu_token',
+        undefined,
+        'sha-old'
+      );
+      expect(approve.succeeded).toBe(0);
+      expect(approve.failures[0]?.message).toContain('New commits');
+      expect(merge.succeeded).toBe(0);
+      expect(
+        routes.calls.some(
+          (call) =>
+            call.path === '/api/pull-comments' ||
+            call.path === '/api/pull-merge'
+        )
+      ).toBe(false);
+      // The head it expects goes through.
+      const pinned = await runPullBatch(
+        [pull('a')],
+        'approve',
+        'ghu_token',
+        undefined,
+        'sha-a'
+      );
+      expect(pinned.succeeded).toBe(1);
+    } finally {
+      routes.restore();
+    }
+  });
+
   test('queues where there is a merge queue, merges with the default method elsewhere', async () => {
     const routes = mockRoutes({ queued: ['q'] });
     try {

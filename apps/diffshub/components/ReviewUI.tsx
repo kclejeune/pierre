@@ -42,6 +42,7 @@ import {
   PullConflictResolver,
 } from './PullConflictResolver';
 import { PullDetailsControl } from './PullDetailsControl';
+import { ReviewPullActions } from './ReviewPullActions';
 import { ReviewSubmitControl } from './ReviewSubmitControl';
 import { SidebarResizeHandle } from './SidebarResizeHandle';
 import { ThemeSourceProvider } from './ThemeSourceProvider';
@@ -672,6 +673,10 @@ function ReviewUIInner({
   // Bumped after a review submission so the thread hook refetches and injects
   // the newly created GitHub threads (and the review summary in discussion).
   const [threadsRefreshTick, setThreadsRefreshTick] = useState(0);
+  const refreshThreads = useCallback(
+    () => setThreadsRefreshTick((tick) => tick + 1),
+    []
+  );
   const reviewThreadsLoad = usePullReviewThreads({
     loadState,
     onDiscussionLoaded: setDiscussion,
@@ -1062,6 +1067,25 @@ function ReviewUIInner({
                       githubTokenVersion={githubTokenVersion}
                       pullRequest={pullRequest}
                     />
+                    {pullInfo?.details != null && hasGitHubToken && (
+                      <>
+                        <span
+                          aria-hidden
+                          className={CHROME_SEGMENT_DIVIDER_CLASS}
+                        />
+                        <ReviewPullActions
+                          className={cn(
+                            CHROME_SEGMENT_ITEM_CLASS,
+                            'h-full px-1.5'
+                          )}
+                          details={pullInfo.details}
+                          headSha={pullHeadSha}
+                          pullRequest={pullRequest}
+                          onApproved={refreshThreads}
+                          onMerged={retryLoad}
+                        />
+                      </>
+                    )}
                   </span>
                   {showConflicts && (
                     <PullConflictControl

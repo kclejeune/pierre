@@ -20,6 +20,7 @@ import {
   DropdownMenuTrigger,
 } from './DropdownMenu';
 import { useGitHubEnvironment } from './GitHubEnvironmentProvider';
+import { useQueuedPullPath } from './PullQueueLinkContext';
 import { useDropdownChromeStyle } from './useDropdownChromeStyle';
 import { cn } from '@/lib/cn';
 import { copyToClipboard } from '@/lib/copyToClipboard';
@@ -40,9 +41,11 @@ export function muteWithUndo(
   });
 }
 
-// What a row's menu asks the list to do. Copying and opening links happen in
-// the menu itself; these need the list's batch runner or muted list.
-export type PullRowAction = 'approve' | 'merge' | 'mute' | 'unmute';
+// What a row's menu asks the list to do. Copying links happens in the menu
+// itself; these need the list's batch runner or muted list, and 'open' (the
+// new-tab item, which the link itself performs) lets the list record the
+// open and save itself as the diff's queue.
+export type PullRowAction = 'approve' | 'merge' | 'mute' | 'open' | 'unmute';
 
 interface PullRowActionsProps {
   // The row's author is on the muted list.
@@ -124,6 +127,7 @@ function PullRowActionsMenu({
   const dropdownStyle = useDropdownChromeStyle();
   const { webURL } = useGitHubEnvironment();
   const [confirmingMerge, setConfirmingMerge] = useState(false);
+  const queuedPath = useQueuedPullPath(pull.viewerPath);
   const author = authorSearchName(pull);
   const open = pull.state === 'open' || pull.state === 'draft';
   const githubHref = githubPullURL(webURL, pull);
@@ -184,7 +188,12 @@ function PullRowActionsMenu({
       </DropdownMenuItem>
       {variant === 'row' && (
         <DropdownMenuItem asChild className="gap-2">
-          <a href={pull.viewerPath} rel="noopener" target="_blank">
+          <a
+            href={queuedPath}
+            rel="noopener"
+            target="_blank"
+            onClick={() => onAction(pull, 'open')}
+          >
             <IconArrowUpRight className="size-3.5" />
             Open in new tab
           </a>

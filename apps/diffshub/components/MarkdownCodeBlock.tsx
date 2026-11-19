@@ -1,67 +1,98 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { startTransition, useEffect, useMemo, useState } from 'react';
 
-import { useDiffThemeProps } from './useDiffThemeProps';
-import { useHighlightTheme } from './useHighlightTheme';
+import { themeController } from './themeController';
 import {
-  getLoadedHighlights,
-  loadHighlights,
-  tokenizeFence,
-  tokenStyle,
+  CODE_PALETTE_ATTRIBUTE,
+  getLoadedHighlighter,
+  highlightFence,
+  installCodePalette,
+  loadHighlighter,
 } from '@/lib/markdownCodeHighlight';
+import { highlightPalette } from '@/lib/theme/highlightTheme';
 
-interface MarkdownCodeBlockProps extends React.HTMLAttributes<HTMLPreElement> {
+interface MarkdownCodeBlockProps extends Omit<
+  React.HTMLAttributes<HTMLPreElement>,
+  'children'
+> {
   language: string;
   source: string;
 }
 
+let paletteSubscribed = false;
+let paletteKey = '';
+
+// Keeps the code palette stylesheet rule on the app's current light/dark
+// theme pair. Reads the theme controller directly rather than a
+// ThemeSourceProvider so markdown gets colors on every page, including ones
+// that mount no provider (the /pulls dashboard). Called by each highlighted
+// block on mount, so pages without code fences never resolve the palette,
+// and a failed resolve is retried by the next block instead of sticking.
+function syncPalette(): void {
+  if (!paletteSubscribed) {
+    paletteSubscribed = true;
+    themeController.subscribe(syncPalette);
+  }
+  const { lightThemeName, darkThemeName } = themeController.getState();
+  const key = `${lightThemeName}\0${darkThemeName}`;
+  if (key === paletteKey) return;
+  paletteKey = key;
+  highlightPalette(lightThemeName, darkThemeName).then(
+    (palette) => {
+      // A newer selection may have landed while this one resolved.
+      if (key === paletteKey) installCodePalette(palette);
+    },
+    (error: unknown) => {
+      console.error('Failed to load markdown code palette', error);
+      if (key === paletteKey) paletteKey = '';
+    }
+  );
+}
+
 // A fenced code block in rendered markdown, syntax highlighted with
-// @pierre/highlights in the active diff theme. Renders the plain source until
-// the highlighter has loaded (and permanently for unsupported languages), so
-// the block's text and layout are the same either way. The theme's token
-// palette is applied on the <pre> itself because markdown also renders
-// outside the diff views that otherwise provide it (pull descriptions, the
-// browse blob view).
+// @pierre/highlights through the page's shared highlighter. Renders the plain
+// source until the highlighter has loaded (and permanently without
+// WebAssembly or past the size cap), so the block's text and layout are the
+// same either way. Highlighting after the first load runs as a
+// transition, so a page full of fenced comments doesn't block input.
 export function MarkdownCodeBlock({
   language,
   source,
-  style,
   ...rest
 }: MarkdownCodeBlockProps) {
-  const [highlights, setHighlights] = useState(getLoadedHighlights);
+  const [highlighter, setHighlighter] = useState(getLoadedHighlighter);
   useEffect(() => {
-    if (highlights != null) return;
-    let cancelled = false;
-    void loadHighlights().then((module) => {
-      if (!cancelled && module != null) setHighlights(module);
+    if (highlighter != null) return;
+    void loadHighlighter().then((loaded) => {
+      if (loaded != null) startTransition(() => setHighlighter(loaded));
     });
-    return () => {
-      cancelled = true;
-    };
-  }, [highlights]);
-  const lines = useMemo(
+  }, [highlighter]);
+  const html = useMemo(
     () =>
-      highlights == null ? null : tokenizeFence(highlights, source, language),
-    [highlights, source, language]
+      highlighter == null
+        ? null
+        : highlightFence(highlighter, source, language),
+    [highlighter, source, language]
   );
-  const palette = useHighlightTheme(useDiffThemeProps().theme).style;
+  useEffect(() => {
+    if (html != null) syncPalette();
+  }, [html]);
+  const languageClass = `language-${language}`;
+  if (html == null) {
+    return (
+      <pre {...rest}>
+        <code className={languageClass}>{source}</code>
+      </pre>
+    );
+  }
   return (
-    <pre {...rest} style={lines == null ? style : { ...palette, ...style }}>
-      <code className={`language-${language}`}>
-        {lines == null
-          ? source
-          : lines.map((line, lineIndex) => (
-              <Fragment key={lineIndex}>
-                {lineIndex > 0 && '\n'}
-                {line.map((token, tokenIndex) => (
-                  <span key={tokenIndex} style={tokenStyle(token)}>
-                    {token.content}
-                  </span>
-                ))}
-              </Fragment>
-            ))}
-      </code>
+    <pre {...rest} {...{ [CODE_PALETTE_ATTRIBUTE]: '' }}>
+      <code
+        className={languageClass}
+        // highlightFence returns highlighter-escaped token markup.
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
     </pre>
   );
 }

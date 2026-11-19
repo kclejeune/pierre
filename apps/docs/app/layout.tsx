@@ -14,6 +14,7 @@ import localFont from 'next/font/local';
 
 import './globals.css';
 import { AppEditProvider } from '@/components/AppEditProvider';
+import { PipesScreensaver } from '@/components/PipesScreensaver';
 import { PreloadHighlighter } from '@/components/PreloadHighlighter';
 import { ScrollbarGutterVariables } from '@/components/ScrollbarGutterVariables';
 import { ThemeProvider } from '@/components/theme-provider';
@@ -256,6 +257,7 @@ export default function RootLayout({
           ></div>
         </ThemeProvider>
         <PreloadHighlighter />
+        <PipesScreensaver />
         {/* Vercel sets VERCEL=1 at build time; skip the scripts on other hosts
             (e.g. Cloudflare Workers) where they would only 404. */}
         {process.env.VERCEL === '1' && (

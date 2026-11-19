@@ -1,0 +1,2018 @@
+{
+  "browser": {
+    "date": "2026-11-16T15:46:55.627Z",
+    "commit": "f318c3545a3cbc5207bc444de896e440a18448a1",
+    "dirty": true,
+    "bun": "1.4.0",
+    "platform": "darwin/arm64",
+    "cpu": "Apple M4 Pro",
+    "memoryBytes": 51539607552,
+    "chrome": "134.0.6998.35",
+    "versions": {
+      "react": "19.2.7",
+      "streamdown": "2.7.1",
+      "@streamdown/code": "2.0.0",
+      "@playwright/test": "1.51.1",
+      "shiki": "4.4.1"
+    },
+    "settings": {
+      "intervalMs": 40,
+      "charactersPerUpdate": 256,
+      "viewport": {
+        "width": 1280,
+        "height": 960
+      },
+      "runs": 3
+    },
+    "rows": [
+      {
+        "fixture": "tiny.md",
+        "mode": "plain",
+        "characters": 1357,
+        "bytes": 1359,
+        "updates": 6,
+        "words": {
+          "runs": 3,
+          "updateTotalMs": 5.3,
+          "updateMedianMs": 0.75,
+          "updateP95Ms": 1.2,
+          "frameP95Ms": 9,
+          "heapBytes": 384440,
+          "elements": 67,
+          "highlightedFences": 0
+        },
+        "streamdown": {
+          "runs": 3,
+          "updateTotalMs": 28.9,
+          "updateMedianMs": 4,
+          "updateP95Ms": 9.1,
+          "frameP95Ms": 9.2,
+          "heapBytes": 2092824,
+          "elements": 76,
+          "highlightedFences": 0
+        }
+      },
+      {
+        "fixture": "tiny.md",
+        "mode": "highlight",
+        "characters": 1357,
+        "bytes": 1359,
+        "updates": 6,
+        "words": {
+          "runs": 3,
+          "updateTotalMs": 5.7,
+          "updateMedianMs": 0.8500000000000001,
+          "updateP95Ms": 1.6,
+          "frameP95Ms": 9.1,
+          "heapBytes": 413400,
+          "elements": 90,
+          "highlightedFences": 1
+        },
+        "streamdown": {
+          "runs": 3,
+          "updateTotalMs": 28.7,
+          "updateMedianMs": 3.9499999999999997,
+          "updateP95Ms": 8.9,
+          "frameP95Ms": 9,
+          "heapBytes": 8711092,
+          "elements": 99,
+          "highlightedFences": 1
+        }
+      },
+      {
+        "fixture": "tiny.md",
+        "mode": "animated",
+        "characters": 1357,
+        "bytes": 1359,
+        "updates": 6,
+        "words": {
+          "runs": 3,
+          "updateTotalMs": 6.4,
+          "updateMedianMs": 0.9,
+          "updateP95Ms": 1.8,
+          "frameP95Ms": 8.8,
+          "heapBytes": 489764,
+          "elements": 90,
+          "highlightedFences": 1
+        },
+        "streamdown": {
+          "runs": 3,
+          "updateTotalMs": 34.4,
+          "updateMedianMs": 4.65,
+          "updateP95Ms": 10.4,
+          "frameP95Ms": 8.7,
+          "heapBytes": 9058608,
+          "elements": 99,
+          "highlightedFences": 1
+        }
+      },
+      {
+        "fixture": "assistant-review.md",
+        "mode": "plain",
+        "characters": 5524,
+        "bytes": 5563,
+        "updates": 22,
+        "words": {
+          "runs": 3,
+          "updateTotalMs": 8.7,
+          "updateMedianMs": 0.3,
+          "updateP95Ms": 0.8,
+          "frameP95Ms": 8.5,
+          "heapBytes": 465644,
+          "elements": 159,
+          "highlightedFences": 0
+        },
+        "streamdown": {
+          "runs": 3,
+          "updateTotalMs": 69.9,
+          "updateMedianMs": 2.8,
+          "updateP95Ms": 5.2,
+          "frameP95Ms": 8.9,
+          "heapBytes": 2499656,
+          "elements": 178,
+          "highlightedFences": 0
+        }
+      },
+      {
+        "fixture": "assistant-review.md",
+        "mode": "highlight",
+        "characters": 5524,
+        "bytes": 5563,
+        "updates": 22,
+        "words": {
+          "runs": 3,
+          "updateTotalMs": 11.6,
+          "updateMedianMs": 0.4,
+          "updateP95Ms": 1,
+          "frameP95Ms": 8.5,
+          "heapBytes": 513836,
+          "elements": 199,
+          "highlightedFences": 2
+        },
+        "streamdown": {
+          "runs": 3,
+          "updateTotalMs": 70.2,
+          "updateMedianMs": 2.9,
+          "updateP95Ms": 5.1,
+          "frameP95Ms": 8.7,
+          "heapBytes": 10954356,
+          "elements": 209,
+          "highlightedFences": 2
+        }
+      },
+      {
+        "fixture": "assistant-review.md",
+        "mode": "animated",
+        "characters": 5524,
+        "bytes": 5563,
+        "updates": 22,
+        "words": {
+          "runs": 3,
+          "updateTotalMs": 13.6,
+          "updateMedianMs": 0.5,
+          "updateP95Ms": 1.2,
+          "frameP95Ms": 8.7,
+          "heapBytes": 610056,
+          "elements": 199,
+          "highlightedFences": 2
+        },
+        "streamdown": {
+          "runs": 3,
+          "updateTotalMs": 97.8,
+          "updateMedianMs": 4,
+          "updateP95Ms": 6.3,
+          "frameP95Ms": 8.5,
+          "heapBytes": 11505556,
+          "elements": 209,
+          "highlightedFences": 2
+        }
+      },
+      {
+        "fixture": "assistant-explain.md",
+        "mode": "plain",
+        "characters": 6093,
+        "bytes": 6128,
+        "updates": 24,
+        "words": {
+          "runs": 3,
+          "updateTotalMs": 9.7,
+          "updateMedianMs": 0.4,
+          "updateP95Ms": 0.7,
+          "frameP95Ms": 8.6,
+          "heapBytes": 504692,
+          "elements": 130,
+          "highlightedFences": 0
+        },
+        "streamdown": {
+          "runs": 3,
+          "updateTotalMs": 39.2,
+          "updateMedianMs": 1.45,
+          "updateP95Ms": 3,
+          "frameP95Ms": 8.4,
+          "heapBytes": 2502068,
+          "elements": 276,
+          "highlightedFences": 0
+        }
+      },
+      {
+        "fixture": "assistant-explain.md",
+        "mode": "highlight",
+        "characters": 6093,
+        "bytes": 6128,
+        "updates": 24,
+        "words": {
+          "runs": 3,
+          "updateTotalMs": 13.8,
+          "updateMedianMs": 0.5,
+          "updateP95Ms": 1,
+          "frameP95Ms": 8.5,
+          "heapBytes": 650648,
+          "elements": 716,
+          "highlightedFences": 4
+        },
+        "streamdown": {
+          "runs": 3,
+          "updateTotalMs": 42.3,
+          "updateMedianMs": 1.65,
+          "updateP95Ms": 3.2,
+          "frameP95Ms": 8.9,
+          "heapBytes": 18268104,
+          "elements": 743,
+          "highlightedFences": 4
+        }
+      },
+      {
+        "fixture": "assistant-explain.md",
+        "mode": "animated",
+        "characters": 6093,
+        "bytes": 6128,
+        "updates": 24,
+        "words": {
+          "runs": 3,
+          "updateTotalMs": 15.9,
+          "updateMedianMs": 0.6,
+          "updateP95Ms": 1.2,
+          "frameP95Ms": 8.5,
+          "heapBytes": 787120,
+          "elements": 716,
+          "highlightedFences": 4
+        },
+        "streamdown": {
+          "runs": 3,
+          "updateTotalMs": 57.6,
+          "updateMedianMs": 2,
+          "updateP95Ms": 6.3,
+          "frameP95Ms": 9.2,
+          "heapBytes": 19081872,
+          "elements": 743,
+          "highlightedFences": 4
+        }
+      },
+      {
+        "fixture": "simd.md",
+        "mode": "plain",
+        "characters": 39870,
+        "bytes": 39898,
+        "updates": 156,
+        "words": {
+          "runs": 3,
+          "updateTotalMs": 37.5,
+          "updateMedianMs": 0.2,
+          "updateP95Ms": 0.4,
+          "frameP95Ms": 8.4,
+          "heapBytes": 610624,
+          "elements": 1303,
+          "highlightedFences": 0
+        },
+        "streamdown": {
+          "runs": 3,
+          "updateTotalMs": 282.3,
+          "updateMedianMs": 1.8,
+          "updateP95Ms": 2.7,
+          "frameP95Ms": 8.4,
+          "heapBytes": 6762184,
+          "elements": 2026,
+          "highlightedFences": 0
+        }
+      },
+      {
+        "fixture": "simd.md",
+        "mode": "highlight",
+        "characters": 39870,
+        "bytes": 39898,
+        "updates": 156,
+        "words": {
+          "runs": 3,
+          "updateTotalMs": 55.6,
+          "updateMedianMs": 0.3,
+          "updateP95Ms": 0.6,
+          "frameP95Ms": 8.4,
+          "heapBytes": 858136,
+          "elements": 3310,
+          "highlightedFences": 38
+        },
+        "streamdown": {
+          "runs": 3,
+          "updateTotalMs": 283.8,
+          "updateMedianMs": 1.8,
+          "updateP95Ms": 2.7,
+          "frameP95Ms": 8.5,
+          "heapBytes": 7986492,
+          "elements": 2637,
+          "highlightedFences": 38
+        }
+      },
+      {
+        "fixture": "simd.md",
+        "mode": "animated",
+        "characters": 39870,
+        "bytes": 39898,
+        "updates": 156,
+        "words": {
+          "runs": 3,
+          "updateTotalMs": 66.5,
+          "updateMedianMs": 0.4,
+          "updateP95Ms": 0.8,
+          "frameP95Ms": 8.6,
+          "heapBytes": 1112176,
+          "elements": 3310,
+          "highlightedFences": 38
+        },
+        "streamdown": {
+          "runs": 3,
+          "updateTotalMs": 389.9,
+          "updateMedianMs": 2.2,
+          "updateP95Ms": 3.4,
+          "frameP95Ms": 8.4,
+          "heapBytes": 12577624,
+          "elements": 2637,
+          "highlightedFences": 38
+        }
+      },
+      {
+        "fixture": "gfm-spec.md",
+        "mode": "plain",
+        "characters": 216063,
+        "bytes": 216394,
+        "updates": 844,
+        "words": {
+          "runs": 3,
+          "updateTotalMs": 174.2,
+          "updateMedianMs": 0.2,
+          "updateP95Ms": 0.3,
+          "frameP95Ms": 8.4,
+          "heapBytes": 1271700,
+          "elements": 6921,
+          "highlightedFences": 0
+        },
+        "streamdown": {
+          "runs": 3,
+          "updateTotalMs": 4593.6,
+          "updateMedianMs": 5.5,
+          "updateP95Ms": 9.8,
+          "frameP95Ms": 8.5,
+          "heapBytes": 26240184,
+          "elements": 16049,
+          "highlightedFences": 0
+        }
+      },
+      {
+        "fixture": "gfm-spec.md",
+        "mode": "highlight",
+        "characters": 216063,
+        "bytes": 216394,
+        "updates": 844,
+        "words": {
+          "runs": 3,
+          "updateTotalMs": 237,
+          "updateMedianMs": 0.3,
+          "updateP95Ms": 0.4,
+          "frameP95Ms": 8.5,
+          "heapBytes": 1556240,
+          "elements": 7142,
+          "highlightedFences": 35
+        },
+        "streamdown": {
+          "runs": 3,
+          "updateTotalMs": 4726.5,
+          "updateMedianMs": 5.7,
+          "updateP95Ms": 10.1,
+          "frameP95Ms": 8.6,
+          "heapBytes": 30525540,
+          "elements": 16240,
+          "highlightedFences": 40
+        }
+      },
+      {
+        "fixture": "gfm-spec.md",
+        "mode": "animated",
+        "characters": 216063,
+        "bytes": 216394,
+        "updates": 844,
+        "words": {
+          "runs": 3,
+          "updateTotalMs": 258.9,
+          "updateMedianMs": 0.3,
+          "updateP95Ms": 0.5,
+          "frameP95Ms": 8.4,
+          "heapBytes": 1881584,
+          "elements": 7142,
+          "highlightedFences": 35
+        },
+        "streamdown": {
+          "runs": 3,
+          "updateTotalMs": 5132.2,
+          "updateMedianMs": 5.8,
+          "updateP95Ms": 10.7,
+          "frameP95Ms": 8.6,
+          "heapBytes": 44573120,
+          "elements": 16240,
+          "highlightedFences": 40
+        }
+      }
+    ],
+    "download": {
+      "base": {
+        "words": 57760,
+        "streamdown": 165295
+      },
+      "shared": {
+        "words": 253649,
+        "streamdown": 1057789
+      },
+      "css": {
+        "words": 1186,
+        "streamdown": 449
+      }
+    },
+    "downloadRun": {
+      "date": "2026-11-16T16:03:25.812Z",
+      "commit": "f318c3545a3cbc5207bc444de896e440a18448a1",
+      "dirty": true,
+      "bun": "1.4.0",
+      "versions": {
+        "react": "19.2.7",
+        "streamdown": "2.7.1",
+        "@streamdown/code": "2.0.0",
+        "@playwright/test": "1.51.1",
+        "shiki": "4.4.1"
+      }
+    },
+    "downloadCoverage": {
+      "wordsLanguages": [
+        "abap",
+        "ada",
+        "angular-html",
+        "apache",
+        "apex",
+        "applescript",
+        "asciidoc",
+        "asm",
+        "astro",
+        "awk",
+        "bash",
+        "batch",
+        "bibtex",
+        "bicep",
+        "blade",
+        "c",
+        "c3",
+        "clojure",
+        "cmake",
+        "cobol",
+        "codeowners",
+        "codeql",
+        "coffee",
+        "coq",
+        "cpp",
+        "csharp",
+        "css",
+        "csv",
+        "cuda",
+        "cypher",
+        "d",
+        "dart",
+        "dax",
+        "diff",
+        "dockerfile",
+        "dotenv",
+        "elixir",
+        "elm",
+        "erb",
+        "erlang",
+        "fish",
+        "fortran",
+        "fortran-fixed-form",
+        "fsharp",
+        "gdresource",
+        "gdscript",
+        "gdshader",
+        "gherkin",
+        "gleam",
+        "glsl",
+        "gnuplot",
+        "go",
+        "graphql",
+        "groovy",
+        "groq",
+        "hack",
+        "haml",
+        "handlebars",
+        "haskell",
+        "haxe",
+        "hlsl",
+        "html",
+        "http",
+        "ini",
+        "java",
+        "jinja",
+        "js",
+        "json",
+        "json5",
+        "jsonl",
+        "jsonnet",
+        "jsx",
+        "julia",
+        "just",
+        "kdl",
+        "kotlin",
+        "latex",
+        "lean",
+        "less",
+        "liquid",
+        "lisp",
+        "llvm",
+        "log",
+        "lua",
+        "luau",
+        "makefile",
+        "markdown",
+        "matlab",
+        "mdx",
+        "mermaid",
+        "moonbit",
+        "nginx",
+        "nim",
+        "nix",
+        "objc",
+        "ocaml",
+        "odin",
+        "openscad",
+        "pascal",
+        "perl",
+        "php",
+        "plsql",
+        "po",
+        "powerquery",
+        "powershell",
+        "prisma",
+        "prolog",
+        "promql",
+        "proto",
+        "pug",
+        "puppet",
+        "python",
+        "qml",
+        "r",
+        "razor",
+        "reg",
+        "rosmsg",
+        "rst",
+        "ruby",
+        "rust",
+        "sas",
+        "sass",
+        "scala",
+        "scss",
+        "shaderlab",
+        "solidity",
+        "sparql",
+        "sql",
+        "stata",
+        "stylus",
+        "svelte",
+        "swift",
+        "tcl",
+        "terraform",
+        "toml",
+        "ts",
+        "tsrx",
+        "tsv",
+        "tsx",
+        "turtle",
+        "twig",
+        "typst",
+        "verilog",
+        "vhdl",
+        "viml",
+        "vue",
+        "wat",
+        "wgsl",
+        "wolfram",
+        "xml",
+        "yaml",
+        "zig"
+      ],
+      "sharedLanguages": [
+        {
+          "words": "abap",
+          "streamdown": "abap",
+          "fence": "abap"
+        },
+        {
+          "words": "ada",
+          "streamdown": "ada",
+          "fence": "ada"
+        },
+        {
+          "words": "angular-html",
+          "streamdown": "angular-html",
+          "fence": "angular-html"
+        },
+        {
+          "words": "apache",
+          "streamdown": "apache",
+          "fence": "apache"
+        },
+        {
+          "words": "apex",
+          "streamdown": "apex",
+          "fence": "apex"
+        },
+        {
+          "words": "applescript",
+          "streamdown": "applescript",
+          "fence": "applescript"
+        },
+        {
+          "words": "asciidoc",
+          "streamdown": "asciidoc",
+          "fence": "asciidoc"
+        },
+        {
+          "words": "asm",
+          "streamdown": "asm",
+          "fence": "asm"
+        },
+        {
+          "words": "astro",
+          "streamdown": "astro",
+          "fence": "astro"
+        },
+        {
+          "words": "awk",
+          "streamdown": "awk",
+          "fence": "awk"
+        },
+        {
+          "words": "bash",
+          "streamdown": "shellscript",
+          "fence": "bash"
+        },
+        {
+          "words": "batch",
+          "streamdown": "bat",
+          "fence": "batch"
+        },
+        {
+          "words": "bibtex",
+          "streamdown": "bibtex",
+          "fence": "bibtex"
+        },
+        {
+          "words": "bicep",
+          "streamdown": "bicep",
+          "fence": "bicep"
+        },
+        {
+          "words": "blade",
+          "streamdown": "blade",
+          "fence": "blade"
+        },
+        {
+          "words": "c",
+          "streamdown": "c",
+          "fence": "c"
+        },
+        {
+          "words": "c3",
+          "streamdown": "c3",
+          "fence": "c3"
+        },
+        {
+          "words": "clojure",
+          "streamdown": "clojure",
+          "fence": "clojure"
+        },
+        {
+          "words": "cmake",
+          "streamdown": "cmake",
+          "fence": "cmake"
+        },
+        {
+          "words": "cobol",
+          "streamdown": "cobol",
+          "fence": "cobol"
+        },
+        {
+          "words": "codeowners",
+          "streamdown": "codeowners",
+          "fence": "codeowners"
+        },
+        {
+          "words": "codeql",
+          "streamdown": "codeql",
+          "fence": "codeql"
+        },
+        {
+          "words": "coffee",
+          "streamdown": "coffee",
+          "fence": "coffee"
+        },
+        {
+          "words": "coq",
+          "streamdown": "coq",
+          "fence": "coq"
+        },
+        {
+          "words": "cpp",
+          "streamdown": "cpp",
+          "fence": "cpp"
+        },
+        {
+          "words": "csharp",
+          "streamdown": "csharp",
+          "fence": "csharp"
+        },
+        {
+          "words": "css",
+          "streamdown": "css",
+          "fence": "css"
+        },
+        {
+          "words": "csv",
+          "streamdown": "csv",
+          "fence": "csv"
+        },
+        {
+          "words": "cypher",
+          "streamdown": "cypher",
+          "fence": "cypher"
+        },
+        {
+          "words": "d",
+          "streamdown": "d",
+          "fence": "d"
+        },
+        {
+          "words": "dart",
+          "streamdown": "dart",
+          "fence": "dart"
+        },
+        {
+          "words": "dax",
+          "streamdown": "dax",
+          "fence": "dax"
+        },
+        {
+          "words": "diff",
+          "streamdown": "diff",
+          "fence": "diff"
+        },
+        {
+          "words": "dockerfile",
+          "streamdown": "docker",
+          "fence": "dockerfile"
+        },
+        {
+          "words": "dotenv",
+          "streamdown": "dotenv",
+          "fence": "dotenv"
+        },
+        {
+          "words": "elixir",
+          "streamdown": "elixir",
+          "fence": "elixir"
+        },
+        {
+          "words": "elm",
+          "streamdown": "elm",
+          "fence": "elm"
+        },
+        {
+          "words": "erb",
+          "streamdown": "erb",
+          "fence": "erb"
+        },
+        {
+          "words": "erlang",
+          "streamdown": "erlang",
+          "fence": "erlang"
+        },
+        {
+          "words": "fish",
+          "streamdown": "fish",
+          "fence": "fish"
+        },
+        {
+          "words": "fortran",
+          "streamdown": "fortran-free-form",
+          "fence": "fortran-free-form"
+        },
+        {
+          "words": "fortran-fixed-form",
+          "streamdown": "fortran-fixed-form",
+          "fence": "fortran-fixed-form"
+        },
+        {
+          "words": "fsharp",
+          "streamdown": "fsharp",
+          "fence": "fsharp"
+        },
+        {
+          "words": "gdresource",
+          "streamdown": "gdresource",
+          "fence": "gdresource"
+        },
+        {
+          "words": "gdscript",
+          "streamdown": "gdscript",
+          "fence": "gdscript"
+        },
+        {
+          "words": "gdshader",
+          "streamdown": "gdshader",
+          "fence": "gdshader"
+        },
+        {
+          "words": "gherkin",
+          "streamdown": "gherkin",
+          "fence": "gherkin"
+        },
+        {
+          "words": "gleam",
+          "streamdown": "gleam",
+          "fence": "gleam"
+        },
+        {
+          "words": "glsl",
+          "streamdown": "glsl",
+          "fence": "glsl"
+        },
+        {
+          "words": "gnuplot",
+          "streamdown": "gnuplot",
+          "fence": "gnuplot"
+        },
+        {
+          "words": "go",
+          "streamdown": "go",
+          "fence": "go"
+        },
+        {
+          "words": "graphql",
+          "streamdown": "graphql",
+          "fence": "graphql"
+        },
+        {
+          "words": "groovy",
+          "streamdown": "groovy",
+          "fence": "groovy"
+        },
+        {
+          "words": "hack",
+          "streamdown": "hack",
+          "fence": "hack"
+        },
+        {
+          "words": "haml",
+          "streamdown": "haml",
+          "fence": "haml"
+        },
+        {
+          "words": "handlebars",
+          "streamdown": "handlebars",
+          "fence": "handlebars"
+        },
+        {
+          "words": "haskell",
+          "streamdown": "haskell",
+          "fence": "haskell"
+        },
+        {
+          "words": "haxe",
+          "streamdown": "haxe",
+          "fence": "haxe"
+        },
+        {
+          "words": "hlsl",
+          "streamdown": "hlsl",
+          "fence": "hlsl"
+        },
+        {
+          "words": "html",
+          "streamdown": "html",
+          "fence": "html"
+        },
+        {
+          "words": "http",
+          "streamdown": "http",
+          "fence": "http"
+        },
+        {
+          "words": "ini",
+          "streamdown": "ini",
+          "fence": "ini"
+        },
+        {
+          "words": "java",
+          "streamdown": "java",
+          "fence": "java"
+        },
+        {
+          "words": "jinja",
+          "streamdown": "jinja",
+          "fence": "jinja"
+        },
+        {
+          "words": "js",
+          "streamdown": "javascript",
+          "fence": "js"
+        },
+        {
+          "words": "json",
+          "streamdown": "json",
+          "fence": "json"
+        },
+        {
+          "words": "json5",
+          "streamdown": "json5",
+          "fence": "json5"
+        },
+        {
+          "words": "jsonl",
+          "streamdown": "jsonl",
+          "fence": "jsonl"
+        },
+        {
+          "words": "jsonnet",
+          "streamdown": "jsonnet",
+          "fence": "jsonnet"
+        },
+        {
+          "words": "jsx",
+          "streamdown": "jsx",
+          "fence": "jsx"
+        },
+        {
+          "words": "julia",
+          "streamdown": "julia",
+          "fence": "julia"
+        },
+        {
+          "words": "just",
+          "streamdown": "just",
+          "fence": "just"
+        },
+        {
+          "words": "kdl",
+          "streamdown": "kdl",
+          "fence": "kdl"
+        },
+        {
+          "words": "kotlin",
+          "streamdown": "kotlin",
+          "fence": "kotlin"
+        },
+        {
+          "words": "latex",
+          "streamdown": "latex",
+          "fence": "latex"
+        },
+        {
+          "words": "lean",
+          "streamdown": "lean",
+          "fence": "lean"
+        },
+        {
+          "words": "less",
+          "streamdown": "less",
+          "fence": "less"
+        },
+        {
+          "words": "liquid",
+          "streamdown": "liquid",
+          "fence": "liquid"
+        },
+        {
+          "words": "lisp",
+          "streamdown": "common-lisp",
+          "fence": "lisp"
+        },
+        {
+          "words": "llvm",
+          "streamdown": "llvm",
+          "fence": "llvm"
+        },
+        {
+          "words": "log",
+          "streamdown": "log",
+          "fence": "log"
+        },
+        {
+          "words": "lua",
+          "streamdown": "lua",
+          "fence": "lua"
+        },
+        {
+          "words": "luau",
+          "streamdown": "luau",
+          "fence": "luau"
+        },
+        {
+          "words": "makefile",
+          "streamdown": "make",
+          "fence": "makefile"
+        },
+        {
+          "words": "markdown",
+          "streamdown": "markdown",
+          "fence": "markdown"
+        },
+        {
+          "words": "matlab",
+          "streamdown": "matlab",
+          "fence": "matlab"
+        },
+        {
+          "words": "mdx",
+          "streamdown": "mdx",
+          "fence": "mdx"
+        },
+        {
+          "words": "mermaid",
+          "streamdown": "mermaid",
+          "fence": "mermaid"
+        },
+        {
+          "words": "moonbit",
+          "streamdown": "moonbit",
+          "fence": "moonbit"
+        },
+        {
+          "words": "nginx",
+          "streamdown": "nginx",
+          "fence": "nginx"
+        },
+        {
+          "words": "nim",
+          "streamdown": "nim",
+          "fence": "nim"
+        },
+        {
+          "words": "nix",
+          "streamdown": "nix",
+          "fence": "nix"
+        },
+        {
+          "words": "objc",
+          "streamdown": "objective-c",
+          "fence": "objc"
+        },
+        {
+          "words": "ocaml",
+          "streamdown": "ocaml",
+          "fence": "ocaml"
+        },
+        {
+          "words": "odin",
+          "streamdown": "odin",
+          "fence": "odin"
+        },
+        {
+          "words": "openscad",
+          "streamdown": "openscad",
+          "fence": "openscad"
+        },
+        {
+          "words": "pascal",
+          "streamdown": "pascal",
+          "fence": "pascal"
+        },
+        {
+          "words": "perl",
+          "streamdown": "perl",
+          "fence": "perl"
+        },
+        {
+          "words": "php",
+          "streamdown": "php",
+          "fence": "php"
+        },
+        {
+          "words": "plsql",
+          "streamdown": "plsql",
+          "fence": "plsql"
+        },
+        {
+          "words": "po",
+          "streamdown": "po",
+          "fence": "po"
+        },
+        {
+          "words": "powerquery",
+          "streamdown": "powerquery",
+          "fence": "powerquery"
+        },
+        {
+          "words": "powershell",
+          "streamdown": "powershell",
+          "fence": "powershell"
+        },
+        {
+          "words": "prisma",
+          "streamdown": "prisma",
+          "fence": "prisma"
+        },
+        {
+          "words": "prolog",
+          "streamdown": "prolog",
+          "fence": "prolog"
+        },
+        {
+          "words": "proto",
+          "streamdown": "proto",
+          "fence": "proto"
+        },
+        {
+          "words": "pug",
+          "streamdown": "pug",
+          "fence": "pug"
+        },
+        {
+          "words": "puppet",
+          "streamdown": "puppet",
+          "fence": "puppet"
+        },
+        {
+          "words": "python",
+          "streamdown": "python",
+          "fence": "python"
+        },
+        {
+          "words": "qml",
+          "streamdown": "qml",
+          "fence": "qml"
+        },
+        {
+          "words": "r",
+          "streamdown": "r",
+          "fence": "r"
+        },
+        {
+          "words": "razor",
+          "streamdown": "razor",
+          "fence": "razor"
+        },
+        {
+          "words": "reg",
+          "streamdown": "reg",
+          "fence": "reg"
+        },
+        {
+          "words": "rosmsg",
+          "streamdown": "rosmsg",
+          "fence": "rosmsg"
+        },
+        {
+          "words": "rst",
+          "streamdown": "rst",
+          "fence": "rst"
+        },
+        {
+          "words": "ruby",
+          "streamdown": "ruby",
+          "fence": "ruby"
+        },
+        {
+          "words": "rust",
+          "streamdown": "rust",
+          "fence": "rust"
+        },
+        {
+          "words": "sas",
+          "streamdown": "sas",
+          "fence": "sas"
+        },
+        {
+          "words": "sass",
+          "streamdown": "sass",
+          "fence": "sass"
+        },
+        {
+          "words": "scala",
+          "streamdown": "scala",
+          "fence": "scala"
+        },
+        {
+          "words": "scss",
+          "streamdown": "scss",
+          "fence": "scss"
+        },
+        {
+          "words": "shaderlab",
+          "streamdown": "shaderlab",
+          "fence": "shaderlab"
+        },
+        {
+          "words": "solidity",
+          "streamdown": "solidity",
+          "fence": "solidity"
+        },
+        {
+          "words": "sparql",
+          "streamdown": "sparql",
+          "fence": "sparql"
+        },
+        {
+          "words": "sql",
+          "streamdown": "sql",
+          "fence": "sql"
+        },
+        {
+          "words": "stata",
+          "streamdown": "stata",
+          "fence": "stata"
+        },
+        {
+          "words": "stylus",
+          "streamdown": "stylus",
+          "fence": "stylus"
+        },
+        {
+          "words": "svelte",
+          "streamdown": "svelte",
+          "fence": "svelte"
+        },
+        {
+          "words": "swift",
+          "streamdown": "swift",
+          "fence": "swift"
+        },
+        {
+          "words": "tcl",
+          "streamdown": "tcl",
+          "fence": "tcl"
+        },
+        {
+          "words": "terraform",
+          "streamdown": "terraform",
+          "fence": "terraform"
+        },
+        {
+          "words": "toml",
+          "streamdown": "toml",
+          "fence": "toml"
+        },
+        {
+          "words": "ts",
+          "streamdown": "typescript",
+          "fence": "ts"
+        },
+        {
+          "words": "tsv",
+          "streamdown": "tsv",
+          "fence": "tsv"
+        },
+        {
+          "words": "tsx",
+          "streamdown": "tsx",
+          "fence": "tsx"
+        },
+        {
+          "words": "turtle",
+          "streamdown": "turtle",
+          "fence": "turtle"
+        },
+        {
+          "words": "twig",
+          "streamdown": "twig",
+          "fence": "twig"
+        },
+        {
+          "words": "typst",
+          "streamdown": "typst",
+          "fence": "typst"
+        },
+        {
+          "words": "verilog",
+          "streamdown": "verilog",
+          "fence": "verilog"
+        },
+        {
+          "words": "vhdl",
+          "streamdown": "vhdl",
+          "fence": "vhdl"
+        },
+        {
+          "words": "viml",
+          "streamdown": "viml",
+          "fence": "viml"
+        },
+        {
+          "words": "vue",
+          "streamdown": "vue",
+          "fence": "vue"
+        },
+        {
+          "words": "wat",
+          "streamdown": "wasm",
+          "fence": "wasm"
+        },
+        {
+          "words": "wgsl",
+          "streamdown": "wgsl",
+          "fence": "wgsl"
+        },
+        {
+          "words": "wolfram",
+          "streamdown": "wolfram",
+          "fence": "wolfram"
+        },
+        {
+          "words": "xml",
+          "streamdown": "xml",
+          "fence": "xml"
+        },
+        {
+          "words": "yaml",
+          "streamdown": "yaml",
+          "fence": "yaml"
+        },
+        {
+          "words": "zig",
+          "streamdown": "zig",
+          "fence": "zig"
+        }
+      ],
+      "wordsOnlyLanguages": [
+        "cuda",
+        "groq",
+        "promql",
+        "tsrx"
+      ],
+      "streamdownLanguages": [
+        "abap",
+        "actionscript-3",
+        "ada",
+        "ahk",
+        "ahk2",
+        "angular-html",
+        "angular-ts",
+        "apache",
+        "apex",
+        "apl",
+        "applescript",
+        "ara",
+        "asciidoc",
+        "asm",
+        "astro",
+        "awk",
+        "ballerina",
+        "bat",
+        "beancount",
+        "berry",
+        "bibtex",
+        "bicep",
+        "bird2",
+        "blade",
+        "bsl",
+        "c",
+        "c3",
+        "cadence",
+        "cairo",
+        "chapel",
+        "clarity",
+        "clojure",
+        "cmake",
+        "cobol",
+        "codeowners",
+        "codeql",
+        "coffee",
+        "common-lisp",
+        "coq",
+        "cpp",
+        "crystal",
+        "csharp",
+        "css",
+        "csv",
+        "cue",
+        "cypher",
+        "d",
+        "dart",
+        "dax",
+        "desktop",
+        "diff",
+        "docker",
+        "dotenv",
+        "dream-maker",
+        "edge",
+        "elixir",
+        "elm",
+        "emacs-lisp",
+        "erb",
+        "erlang",
+        "fennel",
+        "fish",
+        "fluent",
+        "fortran-fixed-form",
+        "fortran-free-form",
+        "fsharp",
+        "gdresource",
+        "gdscript",
+        "gdshader",
+        "genie",
+        "gherkin",
+        "git-commit",
+        "git-rebase",
+        "gleam",
+        "glimmer-js",
+        "glimmer-ts",
+        "glsl",
+        "gn",
+        "gnuplot",
+        "go",
+        "graphql",
+        "groovy",
+        "hack",
+        "haml",
+        "handlebars",
+        "haskell",
+        "haxe",
+        "hcl",
+        "hjson",
+        "hlsl",
+        "html",
+        "html-derivative",
+        "http",
+        "hurl",
+        "hxml",
+        "hy",
+        "imba",
+        "ini",
+        "java",
+        "javascript",
+        "jinja",
+        "jison",
+        "json",
+        "json5",
+        "jsonc",
+        "jsonl",
+        "jsonnet",
+        "jssm",
+        "jsx",
+        "julia",
+        "just",
+        "kdl",
+        "kotlin",
+        "kusto",
+        "latex",
+        "lean",
+        "less",
+        "liquid",
+        "llvm",
+        "log",
+        "logo",
+        "lua",
+        "luau",
+        "make",
+        "markdown",
+        "marko",
+        "matlab",
+        "mdc",
+        "mdx",
+        "mermaid",
+        "mipsasm",
+        "mojo",
+        "moonbit",
+        "move",
+        "narrat",
+        "nextflow",
+        "nextflow-groovy",
+        "nginx",
+        "nim",
+        "nix",
+        "nsis",
+        "nushell",
+        "objective-c",
+        "objective-cpp",
+        "ocaml",
+        "odin",
+        "openscad",
+        "org",
+        "pascal",
+        "perl",
+        "php",
+        "pkl",
+        "plsql",
+        "po",
+        "polar",
+        "postcss",
+        "powerquery",
+        "powershell",
+        "prisma",
+        "prolog",
+        "proto",
+        "pug",
+        "puppet",
+        "purescript",
+        "python",
+        "qml",
+        "qmldir",
+        "qss",
+        "r",
+        "racket",
+        "raku",
+        "razor",
+        "rbs",
+        "reg",
+        "regexp",
+        "rel",
+        "riscv",
+        "ron",
+        "rosmsg",
+        "rst",
+        "ruby",
+        "rust",
+        "sas",
+        "sass",
+        "scala",
+        "scheme",
+        "scss",
+        "sdbl",
+        "shaderlab",
+        "shellscript",
+        "shellsession",
+        "smalltalk",
+        "smithy",
+        "solidity",
+        "soy",
+        "sparql",
+        "splunk",
+        "sql",
+        "ssh-config",
+        "stata",
+        "stylus",
+        "surrealql",
+        "svelte",
+        "swift",
+        "system-verilog",
+        "systemd",
+        "talonscript",
+        "tasl",
+        "tcl",
+        "templ",
+        "terraform",
+        "tex",
+        "toml",
+        "ts-tags",
+        "tsv",
+        "tsx",
+        "turtle",
+        "twig",
+        "typescript",
+        "typespec",
+        "typst",
+        "v",
+        "vala",
+        "vb",
+        "verilog",
+        "vhdl",
+        "viml",
+        "vue",
+        "vue-html",
+        "vue-vine",
+        "vyper",
+        "wasm",
+        "wenyan",
+        "wgsl",
+        "wikitext",
+        "wit",
+        "wolfram",
+        "xml",
+        "xsl",
+        "yaml",
+        "zenscript",
+        "zig"
+      ],
+      "shared": {
+        "themes": [
+          "github-light",
+          "github-dark"
+        ],
+        "loadedStreamdownLanguages": [
+          "abap",
+          "ada",
+          "angular-expression",
+          "angular-html",
+          "angular-let-declaration",
+          "angular-template",
+          "angular-template-blocks",
+          "apache",
+          "apex",
+          "applescript",
+          "asciidoc",
+          "asm",
+          "astro",
+          "awk",
+          "bat",
+          "bibtex",
+          "bicep",
+          "blade",
+          "c",
+          "c3",
+          "clojure",
+          "cmake",
+          "cobol",
+          "codeowners",
+          "codeql",
+          "coffee",
+          "common-lisp",
+          "coq",
+          "cpp",
+          "cpp-macro",
+          "csharp",
+          "css",
+          "csv",
+          "cypher",
+          "d",
+          "dart",
+          "dax",
+          "diff",
+          "docker",
+          "dotenv",
+          "elixir",
+          "elm",
+          "erb",
+          "erlang",
+          "fish",
+          "fortran-fixed-form",
+          "fortran-free-form",
+          "fsharp",
+          "gdresource",
+          "gdscript",
+          "gdshader",
+          "gherkin",
+          "gleam",
+          "glsl",
+          "gnuplot",
+          "go",
+          "graphql",
+          "groovy",
+          "hack",
+          "haml",
+          "handlebars",
+          "haskell",
+          "haxe",
+          "hlsl",
+          "html",
+          "html-derivative",
+          "http",
+          "ini",
+          "java",
+          "javascript",
+          "jinja",
+          "jinja-html",
+          "json",
+          "json5",
+          "jsonl",
+          "jsonnet",
+          "jsx",
+          "julia",
+          "just",
+          "kdl",
+          "kotlin",
+          "latex",
+          "lean",
+          "less",
+          "liquid",
+          "llvm",
+          "log",
+          "lua",
+          "luau",
+          "make",
+          "markdown",
+          "markdown-nix",
+          "markdown-vue",
+          "matlab",
+          "mdx",
+          "mermaid",
+          "moonbit",
+          "nginx",
+          "nim",
+          "nix",
+          "objective-c",
+          "ocaml",
+          "odin",
+          "openscad",
+          "pascal",
+          "perl",
+          "php",
+          "plsql",
+          "po",
+          "postcss",
+          "powerquery",
+          "powershell",
+          "prisma",
+          "prolog",
+          "proto",
+          "pug",
+          "puppet",
+          "python",
+          "qml",
+          "r",
+          "razor",
+          "reg",
+          "regexp",
+          "rosmsg",
+          "rst",
+          "ruby",
+          "rust",
+          "sas",
+          "sass",
+          "scala",
+          "scss",
+          "shaderlab",
+          "shellscript",
+          "solidity",
+          "sparql",
+          "sql",
+          "stata",
+          "stylus",
+          "svelte",
+          "swift",
+          "tcl",
+          "terraform",
+          "tex",
+          "toml",
+          "tsv",
+          "tsx",
+          "turtle",
+          "twig",
+          "typescript",
+          "typst",
+          "verilog",
+          "vhdl",
+          "viml",
+          "vue",
+          "vue-directives",
+          "vue-interpolations",
+          "vue-sfc-style-variable-injection",
+          "wasm",
+          "wgsl",
+          "wolfram",
+          "xml",
+          "yaml",
+          "zig"
+        ]
+      }
+    }
+  },
+  "packageRun": {
+    "head": "f318c3545a3cbc5207bc444de896e440a18448a1",
+    "environment": {
+      "date": "2026-11-16T11:38:45.022Z",
+      "node": "v24.11.0",
+      "runtime": {
+        "name": "node",
+        "version": "v24.11.0"
+      },
+      "platform": "darwin",
+      "arch": "arm64",
+      "cpu": "Apple M4 Pro",
+      "memoryBytes": 51539607552,
+      "versions": {
+        "md4x": "0.0.29",
+        "markdown-it": "15.0.0",
+        "streamdown": "2.7.1",
+        "react": "19.2.7",
+        "jsdom": "26.1.0"
+      }
+    },
+    "metrics": [
+      {
+        "label": "HTML throughput",
+        "description": "Median HTML throughput in MiB/s. Higher is better.",
+        "decimals": 1,
+        "unit": "MiB/s",
+        "higherIsBetter": true,
+        "engines": [
+          "Words",
+          "md4x (NAPI)",
+          "md4x (Wasm)",
+          "markdown-it"
+        ],
+        "rows": [
+          {
+            "fixture": "tiny.md",
+            "values": [
+              378.7,
+              163,
+              117.4,
+              15.8
+            ]
+          },
+          {
+            "fixture": "assistant-review.md",
+            "values": [
+              449.2,
+              234.9,
+              185,
+              26.1
+            ]
+          },
+          {
+            "fixture": "assistant-explain.md",
+            "values": [
+              511.6,
+              251.7,
+              197.7,
+              36.6
+            ]
+          },
+          {
+            "fixture": "simd.md",
+            "values": [
+              426.9,
+              209.8,
+              143.3,
+              24.7
+            ]
+          },
+          {
+            "fixture": "gfm-spec.md",
+            "values": [
+              444.1,
+              195.3,
+              139.3,
+              34
+            ]
+          }
+        ]
+      },
+      {
+        "label": "React stream replay",
+        "description": "Median ms per complete React replay in JSDOM, with chunks of up to 256 UTF-16 code units. Lower is better.",
+        "decimals": 2,
+        "unit": "ms",
+        "engines": [
+          "Words React",
+          "Streamdown"
+        ],
+        "rows": [
+          {
+            "fixture": "tiny.md",
+            "values": [
+              1.24,
+              5.54
+            ]
+          },
+          {
+            "fixture": "assistant-review.md",
+            "values": [
+              2.57,
+              27.33
+            ]
+          },
+          {
+            "fixture": "assistant-explain.md",
+            "values": [
+              2.05,
+              8.68
+            ]
+          },
+          {
+            "fixture": "simd.md",
+            "values": [
+              13.73,
+              157.34
+            ]
+          },
+          {
+            "fixture": "gfm-spec.md",
+            "values": [
+              85.18,
+              3837.76
+            ]
+          }
+        ]
+      },
+      {
+        "label": "HTML memory",
+        "description": "Median peak RSS growth in MiB through the first HTML render, relative to each process before engine import. Five processes per engine and fixture. Lower is better.",
+        "decimals": 1,
+        "unit": "MiB",
+        "engines": [
+          "Words",
+          "md4x (NAPI)",
+          "md4x (Wasm)",
+          "markdown-it"
+        ],
+        "rows": [
+          {
+            "fixture": "tiny.md",
+            "values": [
+              3.3,
+              0.9,
+              7.7,
+              6.3
+            ]
+          },
+          {
+            "fixture": "assistant-review.md",
+            "values": [
+              3.2,
+              0.9,
+              7.8,
+              5.9
+            ]
+          },
+          {
+            "fixture": "assistant-explain.md",
+            "values": [
+              3.2,
+              0.9,
+              7.8,
+              5.7
+            ]
+          },
+          {
+            "fixture": "simd.md",
+            "values": [
+              3.6,
+              1.4,
+              11.8,
+              8.7
+            ]
+          },
+          {
+            "fixture": "gfm-spec.md",
+            "values": [
+              7.8,
+              2.5,
+              22.1,
+              17.7
+            ]
+          }
+        ]
+      },
+      {
+        "label": "React stream memory",
+        "description": "Median peak RSS growth in MiB through a complete JSDOM replay, relative to each process before engine import. Five processes per engine and fixture. Lower is better.",
+        "decimals": 1,
+        "unit": "MiB",
+        "engines": [
+          "Words React",
+          "Streamdown"
+        ],
+        "rows": [
+          {
+            "fixture": "tiny.md",
+            "values": [
+              76.6,
+              85.2
+            ]
+          },
+          {
+            "fixture": "assistant-review.md",
+            "values": [
+              75.9,
+              121.1
+            ]
+          },
+          {
+            "fixture": "assistant-explain.md",
+            "values": [
+              76.5,
+              93.1
+            ]
+          },
+          {
+            "fixture": "simd.md",
+            "values": [
+              89.1,
+              145.4
+            ]
+          },
+          {
+            "fixture": "gfm-spec.md",
+            "values": [
+              150,
+              329.1
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

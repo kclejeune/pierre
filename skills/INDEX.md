@@ -11,6 +11,7 @@ the task.
 | [theme](theme/SKILL.md)           | Select and load a Pierre syntax or editor theme from `@pierre/theme`.                               |
 | [theming](theming/SKILL.md)       | Build runtime theme collections, resolvers, controllers, and color mappings with `@pierre/theming`. |
 | [trees](trees/SKILL.md)           | Render and control an interactive file tree with `@pierre/trees`.                                   |
+| [words](words/SKILL.md)           | Render and stream Markdown with `@pierre/words`, including code, Mermaid, math, and CJK emphasis.   |
 
 ## Package relationship
 
@@ -21,3 +22,6 @@ trees with the selected theme.
 `@pierre/highlights` generates standalone HTML or tokens using Zed-compatible
 themes from `@pierre/highlights/themes`. Its theme objects use a different
 format from the Shiki and VS Code themes in `@pierre/theme`.
+
+`@pierre/words` renders Markdown. Its optional Highlights plugin adds syntax
+colors to fenced code through `@pierre/highlights`.

@@ -16,6 +16,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -103,24 +104,19 @@ interface PullDetailsControlProps {
   // Extra classes for the trigger button (the header's PR group restyles
   // it as a segment).
   className?: string;
-  // Whether the viewer has a token; merging always needs one.
-  canWrite: boolean;
-  // Review conversations on the loaded diff, resolved vs total; null until
-  // the diff (and so its threads) has loaded.
-  conversations: ConversationCounts | null;
-  // Line counts of the loaded diff, for the +/− diffstat.
-  diffStats: DiffsHubDiffStats | null;
-  getGitHubToken(): string | undefined;
-  // Bumped on credential changes; permissions are per-viewer, so the
-  // supplement reloads.
-  githubTokenVersion: number;
-  // Merges refreshed fields into the latest details after any edit.
-  onDetailsEdited(pull: PullRequestRef, fields: Partial<PullDetails>): void;
-  // Called after a successful merge so the parent reloads the (now-merged)
-  // diff.
-  onMerged(): void;
-  pullInfo: PullInfo | null;
+  model: PullDetailsModel;
   pullRequest: PullRequestRef;
+  // Renders the popover body (a PullDetailsPanel) on the given footer
+  // surface; `onMerged` closes the popover and must run after a merge.
+  renderPanel(options: PullDetailsPanelHostOptions): ReactNode;
+}
+
+// What a host (the header popover, the sidebar's Overview tab) supplies when
+// it renders PullDetailsPanel: the background its sticky footer paints, and
+// a hook run after a successful merge.
+export interface PullDetailsPanelHostOptions {
+  footerSurfaceClassName: string;
+  onMerged(): void;
 }
 
 // The method picker's options, and the merge button's label for each, as
@@ -151,8 +147,10 @@ export type PullDetailsModel = NonNullable<
 // merge options), the cells and headline derived from it, and the panel's
 // local edit/expand state. Kept in one hook so the header chip (CI dot,
 // unresolved count) and the panel body read the same state, and so the
-// /pulls preview pane can show the same panel without the chip. Null until
-// the pull's details have loaded.
+// /pulls preview pane can show the same panel without the chip. The review
+// page calls it once for both the header chip and the sidebar's Overview
+// tab, so they share one fetch and one edit draft. Null until the pull's
+// details have loaded (always, without a pull).
 export function usePullDetailsModel({
   canWrite,
   conversations,
@@ -166,7 +164,7 @@ export function usePullDetailsModel({
   getGitHubToken(): string | undefined;
   githubTokenVersion: number;
   pullInfo: PullInfo | null;
-  pullRequest: PullRequestRef;
+  pullRequest?: PullRequestRef | null;
 }) {
   const [checksExpanded, setChecksExpanded] = useState(false);
   // What the app's installation in the pull's org allows (documented
@@ -189,7 +187,7 @@ export function usePullDetailsModel({
   useEffect(() => {
     setEditDraft(null);
     setChecksExpanded(false);
-  }, [pullRequest.number, pullRequest.owner, pullRequest.repo]);
+  }, [pullRequest?.number, pullRequest?.owner, pullRequest?.repo]);
 
   useEffect(() => {
     supplementRequest.current?.abort();
@@ -199,16 +197,20 @@ export function usePullDetailsModel({
   }, [
     githubTokenVersion,
     headSha,
-    pullRequest.number,
-    pullRequest.owner,
-    pullRequest.repo,
+    pullRequest?.number,
+    pullRequest?.owner,
+    pullRequest?.repo,
   ]);
 
   const loadSupplement = useCallback(
     (force = false) => {
       // A forced load (Retry, or a review or merge just landed) restarts a
       // read already in flight, since that read may predate the change.
-      if (headSha == null || (!force && supplement.kind !== 'idle')) {
+      if (
+        pullRequest == null ||
+        headSha == null ||
+        (!force && supplement.kind !== 'idle')
+      ) {
         return;
       }
       supplementRequest.current?.abort();
@@ -248,6 +250,9 @@ export function usePullDetailsModel({
   // reloads the verdicts and merge state, which don't move the head commit.
   const reloadSupplement = useLatestValueRef(() => loadSupplement(true));
   useEffect(() => {
+    if (pullRequest == null) {
+      return undefined;
+    }
     const ownKey = pullChangeKey(pullRequest);
     return subscribePullChanges((key) => {
       if (key === ownKey) {
@@ -266,138 +271,143 @@ export function usePullDetailsModel({
     }
   }, [headSha, loadSupplement, supplement.kind]);
 
-  if (details == null) {
-    return null;
-  }
-  const supplementalValue =
-    supplement.kind === 'ready' ? supplement.value : null;
-  const checks = supplementalValue?.checks ?? null;
-  // Verdicts are unknown, not absent, when the whole supplement request
-  // failed or it reported reviewers: null (the reviews listing itself
-  // failed), so the panel says so instead of presenting everyone as merely
-  // pending.
-  const reviewerVerdictsUnavailable =
-    supplement.kind === 'error' ||
-    (supplementalValue != null && supplementalValue.reviewers == null);
-  const reviewers = mergePullReviewers(
-    details.reviewers,
-    supplementalValue?.reviewers ?? null
-  );
-  const permissions = canWrite ? supplementalValue?.viewerPermissions : null;
-  const canEdit = permissions?.canUpdate === true && editBlocked == null;
-  const supplementLoading =
-    supplement.kind === 'idle' || supplement.kind === 'loading';
-  // The viewer's permissions arrive with the supplement. While they're
-  // unknown, controls that depend on them render as placeholders of the
-  // same size, so the panel doesn't shift when they resolve.
-  const permissionsLoading = canWrite && supplementLoading;
-  // A permission-gated control's state: 'loading' while the permissions
-  // are unknown, so it can hold its place.
-  const gate = (allowed: boolean | undefined): boolean | 'loading' =>
-    permissionsLoading ? 'loading' : allowed === true;
-  const reviewerVerdicts: ReviewerVerdicts = supplementLoading
-    ? 'loading'
-    : reviewerVerdictsUnavailable
-      ? 'unavailable'
-      : 'ready';
-  const checksMetric = checks == null ? null : summarizeChecks(checks);
-  // The trigger's CI dot: the checks tone, hidden when every check was
-  // skipped or none ran.
-  const ciState =
-    checksMetric?.tone === 'neutral' ? null : (checksMetric?.tone ?? null);
-  const checksCell: OverviewCell = supplementLoading
-    ? { kind: 'loading' }
-    : supplement.kind === 'error'
-      ? { kind: 'unavailable', reason: supplement.message }
-      : (checksMetric ?? {
-          kind: 'unavailable',
-          reason: 'CI status could not be loaded.',
-        });
-  const approvalsCell: OverviewCell = supplementLoading
-    ? { kind: 'loading' }
-    : reviewerVerdictsUnavailable
-      ? { kind: 'unavailable', reason: 'Review verdicts could not be loaded.' }
-      : summarizeApprovals(reviewers);
-  const commentsCell: OverviewCell =
-    conversations == null
+  // Memoized so the model keeps its identity across renders that change
+  // none of its inputs: the review page passes it into the memoized
+  // sidebar, which would otherwise re-render (file tree included) on every
+  // page render while a large diff streams. `details` is null without a
+  // pull, since usePullInfo clears it whenever the pull changes.
+  return useMemo(() => {
+    if (details == null) {
+      return null;
+    }
+    const supplementalValue =
+      supplement.kind === 'ready' ? supplement.value : null;
+    const checks = supplementalValue?.checks ?? null;
+    // Verdicts are unknown, not absent, when the whole supplement request
+    // failed or it reported reviewers: null (the reviews listing itself
+    // failed), so the panel says so instead of presenting everyone as merely
+    // pending.
+    const reviewerVerdictsUnavailable =
+      supplement.kind === 'error' ||
+      (supplementalValue != null && supplementalValue.reviewers == null);
+    const reviewers = mergePullReviewers(
+      details.reviewers,
+      supplementalValue?.reviewers ?? null
+    );
+    const permissions = canWrite ? supplementalValue?.viewerPermissions : null;
+    const canEdit = permissions?.canUpdate === true && editBlocked == null;
+    const supplementLoading =
+      supplement.kind === 'idle' || supplement.kind === 'loading';
+    // The viewer's permissions arrive with the supplement. While they're
+    // unknown, controls that depend on them render as placeholders of the
+    // same size, so the panel doesn't shift when they resolve.
+    const permissionsLoading = canWrite && supplementLoading;
+    // A permission-gated control's state: 'loading' while the permissions
+    // are unknown, so it can hold its place.
+    const gate = (allowed: boolean | undefined): boolean | 'loading' =>
+      permissionsLoading ? 'loading' : allowed === true;
+    const reviewerVerdicts: ReviewerVerdicts = supplementLoading
+      ? 'loading'
+      : reviewerVerdictsUnavailable
+        ? 'unavailable'
+        : 'ready';
+    const checksMetric = checks == null ? null : summarizeChecks(checks);
+    // The trigger's CI dot: the checks tone, hidden when every check was
+    // skipped or none ran.
+    const ciState =
+      checksMetric?.tone === 'neutral' ? null : (checksMetric?.tone ?? null);
+    const checksCell: OverviewCell = supplementLoading
       ? { kind: 'loading' }
-      : summarizeConversations(conversations);
-  const headline = describeMergeHeadline({
-    checks: checksCell,
-    details,
-    reviewers: approvalsCell,
-  });
-  return {
-    approvalsCell,
-    canEdit,
-    canLabel: gate(permissions?.canLabel === true && labelBlocked == null),
-    canRequestReviews: gate(
-      permissions?.canRequestReviews === true && reviewersBlocked == null
-    ),
-    checks,
-    checksCell,
+      : supplement.kind === 'error'
+        ? { kind: 'unavailable', reason: supplement.message }
+        : (checksMetric ?? {
+            kind: 'unavailable',
+            reason: 'CI status could not be loaded.',
+          });
+    const approvalsCell: OverviewCell = supplementLoading
+      ? { kind: 'loading' }
+      : reviewerVerdictsUnavailable
+        ? {
+            kind: 'unavailable',
+            reason: 'Review verdicts could not be loaded.',
+          }
+        : summarizeApprovals(reviewers);
+    const commentsCell: OverviewCell =
+      conversations == null
+        ? { kind: 'loading' }
+        : summarizeConversations(conversations);
+    const headline = describeMergeHeadline({
+      checks: checksCell,
+      details,
+      reviewers: approvalsCell,
+    });
+    return {
+      approvalsCell,
+      canEdit,
+      canLabel: gate(permissions?.canLabel === true && labelBlocked == null),
+      canRequestReviews: gate(
+        permissions?.canRequestReviews === true && reviewersBlocked == null
+      ),
+      checks,
+      checksCell,
+      checksExpanded,
+      ciState,
+      commentsCell,
+      details,
+      editDraft,
+      headSha,
+      headline,
+      loadSupplement,
+      permissions,
+      permissionsLoading,
+      reviewerVerdicts,
+      reviewers,
+      setChecksExpanded,
+      setEditDraft,
+      setSupplement,
+      showMergeControls: details.state === 'open' && canWrite,
+      // Draft, close, and reopen share the merge controls' sticky footer.
+      // On the viewer's own rights: when the app's installation is what's
+      // missing, the buttons show disabled with the reason instead.
+      showStateActions:
+        permissions?.canUpdate === true && details.state !== 'merged',
+      supplement,
+      supplementLoading,
+      supplementalValue,
+      // Unresolved review conversations, the one overview number worth
+      // showing on the closed chip: it is what a reviewer acts on next. Only
+      // known once resolution has loaded (`counted`).
+      unresolvedCount:
+        conversations?.kind === 'counted'
+          ? Math.max(0, conversations.total - conversations.resolved)
+          : 0,
+    };
+  }, [
+    canWrite,
     checksExpanded,
-    ciState,
-    commentsCell,
+    conversations,
     details,
+    editBlocked,
     editDraft,
     headSha,
-    headline,
+    labelBlocked,
     loadSupplement,
-    permissions,
-    permissionsLoading,
-    reviewerVerdicts,
-    reviewers,
-    setChecksExpanded,
-    setEditDraft,
-    setSupplement,
-    showMergeControls: details.state === 'open' && canWrite,
-    // Draft, close, and reopen share the merge controls' sticky footer.
-    // On the viewer's own rights: when the app's installation is what's
-    // missing, the buttons show disabled with the reason instead.
-    showStateActions:
-      permissions?.canUpdate === true && details.state !== 'merged',
+    reviewersBlocked,
     supplement,
-    supplementLoading,
-    supplementalValue,
-    // Unresolved review conversations, the one overview number worth
-    // showing on the closed chip: it is what a reviewer acts on next. Only
-    // known once resolution has loaded (`counted`).
-    unresolvedCount:
-      conversations?.kind === 'counted'
-        ? Math.max(0, conversations.total - conversations.resolved)
-        : 0,
-  };
+  ]);
 }
 
 // The header's pull-details control: a compact state chip (draft/open/merged
 // plus an aggregate CI dot) opening the pull's overview in a popover (see
 // PullDetailsPanel).
 export function PullDetailsControl({
-  canWrite,
   className,
-  conversations,
-  diffStats,
-  getGitHubToken,
-  githubTokenVersion,
-  onDetailsEdited,
-  onMerged,
-  pullInfo,
+  model,
   pullRequest,
+  renderPanel,
 }: PullDetailsControlProps) {
   const dropdownThemeStyle = useDropdownChromeStyle();
   const [open, setOpen] = useState(false);
-  const model = usePullDetailsModel({
-    canWrite,
-    conversations,
-    getGitHubToken,
-    githubTokenVersion,
-    pullInfo,
-    pullRequest,
-  });
-  if (model == null) {
-    return null;
-  }
   return (
     <DropdownMenu modal={false} open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
@@ -456,19 +466,11 @@ export function PullDetailsControl({
         style={dropdownThemeStyle}
       >
         <div className="p-3">
-          <PullDetailsPanel
-            diffStats={diffStats}
-            footerSurfaceClassName="bg-[var(--diffshub-popover-bg,var(--color-popover))]"
-            getGitHubToken={getGitHubToken}
-            model={model}
-            pullInfo={pullInfo}
-            pullRequest={pullRequest}
-            onDetailsEdited={onDetailsEdited}
-            onMerged={() => {
-              setOpen(false);
-              onMerged();
-            }}
-          />
+          {renderPanel({
+            footerSurfaceClassName:
+              'bg-[var(--diffshub-popover-bg,var(--color-popover))]',
+            onMerged: () => setOpen(false),
+          })}
         </div>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -511,6 +513,14 @@ export function PullDetailsPanel({
     </p>
   );
   const editing = model.editDraft != null;
+  // The draft is shared by every host showing this pull (header popover,
+  // sidebar tab), so each mounts an edit form; only the one whose pencil was
+  // clicked takes focus. Two autofocusing forms would pull focus out of the
+  // popover and close it. Cleared when the edit ends, wherever it ended.
+  const [editStartedHere, setEditStartedHere] = useState(false);
+  if (editStartedHere && !editing) {
+    setEditStartedHere(false);
+  }
   // Draft, close, and reopen render beside the merge button, in the same
   // action cluster, so the next step for a draft (Ready for review) sits
   // where the eye goes for "what can I do with this pull".
@@ -532,6 +542,7 @@ export function PullDetailsPanel({
     <div className="@container flex flex-col gap-3">
       {model.editDraft != null ? (
         <PullEditForm
+          autoFocus={editStartedHere}
           details={model.details}
           draft={model.editDraft}
           getGitHubToken={getGitHubToken}
@@ -564,12 +575,13 @@ export function PullDetailsPanel({
                 disabled={!model.canEdit}
                 title="Edit title and description"
                 aria-label="Edit title and description"
-                onClick={() =>
+                onClick={() => {
+                  setEditStartedHere(true);
                   model.setEditDraft({
                     body: model.details.body,
                     title: model.details.title,
-                  })
-                }
+                  });
+                }}
               >
                 <IconPencil className="size-3.5" />
               </Button>
@@ -820,6 +832,7 @@ interface PullEditDraft {
 // stay in the fields (no Radix typeahead); Escape cancels, asking first if
 // dirty.
 function PullEditForm({
+  autoFocus,
   details,
   draft,
   getGitHubToken,
@@ -828,6 +841,7 @@ function PullEditForm({
   onSaved,
   pullRequest,
 }: {
+  autoFocus: boolean;
   details: PullDetails;
   draft: PullEditDraft;
   getGitHubToken(): string | undefined;
@@ -906,7 +920,7 @@ function PullEditForm({
         disabled={isSaving}
         aria-label="Pull request title"
         placeholder="Title"
-        autoFocus
+        autoFocus={autoFocus}
         aria-invalid={trimmedTitle === ''}
         onChange={({ currentTarget }) =>
           onDraftChange({ ...draft, title: currentTarget.value })

@@ -12,6 +12,7 @@ import { diffshubChromeMapping } from '../theme/diffshubChromeMapping';
 // stays byte-for-byte stable.
 const LIGHT_SOFT_CHROME: Record<string, string> = {
   backgroundColor: '#f7f7f7',
+  '--diffshub-sidebar-surface': '#f7f7f7',
   color: '#737373',
   '--color-foreground': '#737373',
   '--foreground': '#737373',
@@ -77,6 +78,7 @@ const LIGHT_SOFT_CHROME: Record<string, string> = {
 
 const DARK_SOFT_CHROME: Record<string, string> = {
   backgroundColor: '#101010',
+  '--diffshub-sidebar-surface': '#101010',
   color: '#8a8a8a',
   '--color-foreground': '#8a8a8a',
   '--foreground': '#8a8a8a',

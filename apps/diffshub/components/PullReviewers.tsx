@@ -82,6 +82,9 @@ export function PullReviewers({
     );
   const toggle = (login: string) =>
     change(login, isRequested(login) ? 'remove' : 'add');
+  const isRemovable = (reviewer: PullReviewer) =>
+    editable && reviewer.team !== true && isRequested(reviewer.login);
+  const reserveRemoveSlot = reviewers.some(isRemovable);
 
   const empty = reviewers.length === 0;
   const pickerToggle = editable ? (
@@ -116,11 +119,10 @@ export function PullReviewers({
             <ReviewerRow
               key={`${reviewer.team === true ? 'team' : 'user'}:${reviewer.login}`}
               busy={picker.pending != null}
+              reserveRemoveSlot={reserveRemoveSlot}
               reviewer={reviewer}
               onRemove={
-                editable &&
-                reviewer.team !== true &&
-                isRequested(reviewer.login)
+                isRemovable(reviewer)
                   ? () => change(reviewer.login, 'remove')
                   : undefined
               }
@@ -226,13 +228,18 @@ const VERDICTS: Record<
 
 // One reviewer: avatar, login, and their verdict, plus a remove button when
 // `onRemove` is set (a pending user request the viewer may withdraw).
+// `reserveRemoveSlot` (set when any row is removable) keeps an empty slot of
+// the button's size on rows without one, such as team requests, so the
+// verdicts line up in one column.
 function ReviewerRow({
   busy,
   onRemove,
+  reserveRemoveSlot,
   reviewer,
 }: {
   busy: boolean;
   onRemove?(): void;
+  reserveRemoveSlot: boolean;
   reviewer: PullReviewer;
 }) {
   const verdict = VERDICTS[reviewer.state];
@@ -250,17 +257,19 @@ function ReviewerRow({
         <verdict.Icon className="size-3" />
         {verdict.label}
       </span>
-      {onRemove != null && (
+      {onRemove != null ? (
         <button
           type="button"
           aria-label={`Remove ${reviewer.login}'s review request`}
           title="Remove review request"
           disabled={busy}
-          className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+          className="text-muted-foreground hover:text-foreground shrink-0 disabled:opacity-50"
           onClick={onRemove}
         >
           <IconX className="size-3" />
         </button>
+      ) : (
+        reserveRemoveSlot && <span aria-hidden className="size-3 shrink-0" />
       )}
     </li>
   );

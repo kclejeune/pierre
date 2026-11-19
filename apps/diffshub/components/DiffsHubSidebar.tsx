@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  IconBranch,
   IconCodeSearch,
   IconComment,
   IconFileTree,
@@ -23,6 +24,7 @@ import {
   useState,
 } from 'react';
 
+import { revealScrollbarWhileScrolling } from './autoHideScrollbar';
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
 import {
   DiffsHubCommentsList,
@@ -63,7 +65,7 @@ import type {
   PullDiscussionComment,
 } from '@/lib/types';
 
-type SidebarTab = 'files' | 'search' | 'comments';
+type SidebarTab = 'files' | 'search' | 'comments' | 'overview';
 
 const HIDDEN_ITEMS_SYNC_DELAY_MS = 150;
 
@@ -82,6 +84,10 @@ interface DiffsHubSidebarProps {
   onMobileClose(): void;
   onSelectComment(comment: DiffsHubSavedCommentEntry): void;
   onSelectItem(itemId: string): void;
+  // The pull request's overview panel (the header PR chip's popover body),
+  // shown in its own tab so it can stay open beside the diff. Omitted outside
+  // pull requests or until the pull's details load.
+  overviewPanel?: ReactNode;
   // Renders the cross-file search panel; `visible` is whether its tab is the
   // active one. Omitted when the view has no searchable content.
   renderSearchPanel?(visible: boolean): ReactNode;
@@ -105,6 +111,7 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
   onMobileClose,
   onSelectComment,
   onSelectItem,
+  overviewPanel,
   renderSearchPanel,
   scrollRef,
   searchTabRequest = 0,
@@ -112,34 +119,34 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
   streaming,
   stressTest,
 }: DiffsHubSidebarProps) {
-  const [activeTab, setActiveTab] = useState<SidebarTab>('files');
-  // The comments list mounts the first time its tab is opened and stays
-  // mounted after (so composer state survives tab switches). Rendering it
-  // from the start — hidden — meant a row, avatar, and deferred-markdown
-  // observer per review thread on large PRs before the user ever asked for
-  // the list; the tab's count badge needs only the section totals.
-  const [commentsTabVisited, setCommentsTabVisited] = useState(false);
-  const handleTabChange = (value: string) => {
-    const tab = value as SidebarTab;
-    setActiveTab(tab);
-    if (tab === 'comments') {
-      setCommentsTabVisited(true);
-    }
-    if (tab === 'search') {
-      setSearchTabVisited(true);
-    }
+  const [selectedTab, setSelectedTab] = useState<SidebarTab>('files');
+  // The overview tab disappears with its panel (navigating to a compare,
+  // say); show the file tree instead of an empty sidebar.
+  const activeTab: SidebarTab =
+    selectedTab === 'overview' && overviewPanel == null ? 'files' : selectedTab;
+  // Tabs other than Files mount the first time they are opened and stay
+  // mounted after, so composer drafts, search results, and open pickers
+  // survive tab switches. Rendering them from the start — hidden — meant a
+  // row, avatar, and deferred-markdown observer per review thread on large
+  // PRs before the user ever asked for the list; the comments badge needs
+  // only the section totals.
+  const [visitedTabs, setVisitedTabs] = useState<ReadonlySet<SidebarTab>>(
+    () => new Set(['files'])
+  );
+  const selectTab = (tab: SidebarTab) => {
+    setSelectedTab(tab);
+    setVisitedTabs((visited) =>
+      visited.has(tab) ? visited : new Set(visited).add(tab)
+    );
   };
-  // The search tab mounts on first use, like the comments list, and stays
-  // mounted so its query and results survive tab switches. A new request
-  // switches to it during render (React's adjust-state-on-prop-change
-  // pattern), so the panel is visible in the same commit that asked for it.
-  const [searchTabVisited, setSearchTabVisited] = useState(false);
+  // A new search request switches to the search tab during render (React's
+  // adjust-state-on-prop-change pattern), so the panel is visible in the
+  // same commit that asked for it.
   const [seenSearchTabRequest, setSeenSearchTabRequest] =
     useState(searchTabRequest);
   if (searchTabRequest !== seenSearchTabRequest) {
     setSeenSearchTabRequest(searchTabRequest);
-    setActiveTab('search');
-    setSearchTabVisited(true);
+    selectTab('search');
   }
   let totalCommentCount = discussion.length;
   for (const section of commentSections) {
@@ -305,7 +312,7 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
             className="mr-auto flex min-w-0 gap-3 bg-transparent md:gap-2"
             variant="ghost"
             value={activeTab}
-            onValueChange={handleTabChange}
+            onValueChange={(value) => selectTab(value as SidebarTab)}
           >
             <ButtonGroupItem
               value="files"
@@ -352,6 +359,17 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
                 </span>
               )}
             </ButtonGroupItem>
+            {overviewPanel != null && (
+              <ButtonGroupItem
+                value="overview"
+                size="icon-only"
+                className="shadow-none"
+                title="Pull request overview"
+              >
+                <IconBranch className="size-4 md:size-3" />
+                <span className="sr-only">Overview</span>
+              </ButtonGroupItem>
+            )}
           </ButtonGroup>
           {activeTab === 'files' && fileTreeModel != null && (
             <FileTreeSearchToggle model={fileTreeModel} />
@@ -399,7 +417,8 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
               hidden={activeTab !== 'search'}
               className="h-full min-h-0"
             >
-              {searchTabVisited && renderSearchPanel(activeTab === 'search')}
+              {visitedTabs.has('search') &&
+                renderSearchPanel(activeTab === 'search')}
             </div>
           )}
           <div
@@ -408,7 +427,7 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
             hidden={activeTab !== 'comments'}
             className="h-full min-h-0"
           >
-            {commentsTabVisited && (
+            {visitedTabs.has('comments') && (
               <DiffsHubCommentsList
                 commentSections={commentSections}
                 description={description}
@@ -419,6 +438,21 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
               />
             )}
           </div>
+          {overviewPanel != null && (
+            <div
+              role="region"
+              aria-label="Overview"
+              hidden={activeTab !== 'overview'}
+              // Unpadded scroller, as in PullPreviewPane, so the panel's
+              // sticky footer reaches the bottom edge.
+              className="cv-autohide-scrollbar h-full min-h-0 overflow-y-auto"
+              onScroll={revealScrollbarWhileScrolling}
+            >
+              {visitedTabs.has('overview') && (
+                <div className="px-3 pb-3">{overviewPanel}</div>
+              )}
+            </div>
+          )}
         </div>
         <DiffsHubDiffStats
           expanded={diffStatsExpanded}

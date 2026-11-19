@@ -30,8 +30,16 @@ export const diffshubChromeMapping: ChromeMapping = (chrome, theme) => {
   // No chrome means deriveChromeTokens found no legible foreground (degenerate
   // bg-only theme). Mirror the previous behavior: paint just the background when
   // we have one, otherwise contribute nothing.
+  // `--diffshub-sidebar-surface` republishes the painted background for
+  // sticky surfaces inside the chrome (the overview panel's merge footer)
+  // that must hide what scrolls under them.
   if (chrome == null) {
-    return bg != null ? { backgroundColor: bg } : undefined;
+    return bg != null
+      ? ({
+          backgroundColor: bg,
+          '--diffshub-sidebar-surface': bg,
+        } as CSSProperties)
+      : undefined;
   }
 
   const fg = chrome.fg;
@@ -39,7 +47,10 @@ export const diffshubChromeMapping: ChromeMapping = (chrome, theme) => {
   // the previous `bg ?? 'transparent'` fallback exactly.
   const base = bg ?? 'transparent';
   const style: CSSProperties & Record<string, string> = {};
-  if (bg != null) style.backgroundColor = bg;
+  if (bg != null) {
+    style.backgroundColor = bg;
+    style['--diffshub-sidebar-surface'] = bg;
+  }
   style.color = fg;
   style['--color-foreground'] = fg;
   style['--foreground'] = fg;

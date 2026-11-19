@@ -13,11 +13,11 @@
     "lint-staged": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
-    "oxlint-tsgolint": "catalog:",
     "postcss-html": "catalog:",
     "stylelint": "catalog:",
     "stylelint-config-standard": "catalog:",
     "svgo": "catalog:",
+    "tsrs": "catalog:",
     "typescript": "catalog:"
   },
   "lint-staged": {

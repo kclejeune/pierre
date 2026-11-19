@@ -235,7 +235,11 @@ function useQueryCompletion({
     () =>
       caret == null || dismissed
         ? null
-        : getQuerySuggestions(draft, caret, { labels, now: new Date() }),
+        : getQuerySuggestions(draft, caret, {
+            labels,
+            // oxlint-disable-next-line react/purity -- relative-date suggestions ("last 7 days") must use the current time each time the draft changes; a mount-time snapshot would go stale in a long-lived tab.
+            now: new Date(),
+          }),
     [caret, dismissed, draft, labels]
   );
   const itemCount = suggestions?.items.length ?? 0;

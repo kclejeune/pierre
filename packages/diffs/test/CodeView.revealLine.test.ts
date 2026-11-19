@@ -57,8 +57,7 @@ function createPartialChange(): {
       undefined,
       { context: 0 }
     ),
-    'reveal',
-    true
+    { cacheKeyPrefix: 'reveal', throwOnError: true }
   )[0]?.files[0];
   assertDefined(partial, 'expected patch to contain one partial diff');
   expect(partial.isPartial).toBe(true);

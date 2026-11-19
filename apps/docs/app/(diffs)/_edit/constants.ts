@@ -448,7 +448,10 @@ export const CARET_DEMO_FILE_EXAMPLE: PreloadFileOptions<
   CursorCaretMetadata
 > = {
   file: CARET_DEMO_FILE,
-  options: EDITABLE_FILE_OPTIONS as FileOptions<undefined, CursorCaretMetadata>,
+  // The shared literal, not EDITABLE_FILE_OPTIONS: that constant is typed for
+  // `undefined` carets, and options typed for one caret type don't convert to
+  // another.
+  options: EDITABLE_OPTIONS,
 };
 
 export const FIND_DEMO_FILE_EXAMPLE: PreloadFileOptions<undefined, undefined> =

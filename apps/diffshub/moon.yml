@@ -22,6 +22,9 @@ tasks:
     outputs:
       - '.next/**/*'
       - '!.next/cache/**'
+      # A running `next dev` writes here (with symlinks into node_modules,
+      # which moon refuses to archive); it is not part of the build.
+      - '!.next/dev/**'
 
   # Build deps run to completion first, then dependency watchers (`^:dev`)
   # run alongside next dev. run-dev.sh kills stale listeners on the port

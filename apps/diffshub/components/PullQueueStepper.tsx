@@ -7,40 +7,39 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { Button } from './Button';
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
-import { isEditableEventTarget } from '@/lib/platform';
+import { isPageShortcutEvent } from '@/lib/platform';
 import {
+  claimTabPullQueue,
   findQueuePosition,
-  loadPullQueue,
+  PULL_QUEUE_PARAM,
   type PullQueue,
   type PullQueueItem,
-  readPullQueueId,
-  withPullQueue,
 } from '@/lib/pullQueue';
 import { recordRecentDiff } from '@/lib/recentDiffs';
 
 // The diff header's "3 / 12" stepper through the /pulls list the viewer came
 // from (lib/pullQueue): previous and next pull, also on [ and ], and the
 // count links back to that list with its filters. Renders nothing unless the
-// URL's ?queue= names a saved list holding the open pull, so diffs reached
-// any other way keep their header as it was.
+// tab's queue (claimTabPullQueueId, which also takes a ?queue= the tab
+// arrived with out of the URL) holds the open pull, so diffs outside it
+// keep their header as it was.
 export function PullQueueStepper() {
   const pathname = usePathname();
   const router = useRouter();
-  // Re-read whenever the URL changes, including a same-path navigation that
-  // drops ?queue= (opening this pull again from recents or the palette).
   // The header wraps this in a Suspense boundary for useSearchParams.
-  const search = useSearchParams().toString();
+  const searchParams = useSearchParams();
   // Commit and compare views opened from a pull name it in ?fromPull=.
-  const fromPull = new URLSearchParams(search).get('fromPull');
-  // Read after mount: the queue lives in localStorage.
-  const [queue, setQueue] = useState<(PullQueue & { id: string }) | null>(null);
+  const fromPull = searchParams.get('fromPull');
+  // Re-claimed whenever ?queue= changes, so one arriving on a same-tab
+  // navigation is taken up too (claiming drops it, which re-runs this once
+  // more to read the tab's queue back).
+  const arrivingQueue = searchParams.get(PULL_QUEUE_PARAM);
+  // Read after mount: the queue lives in browser storage.
+  const [queue, setQueue] = useState<PullQueue | null>(null);
   useEffect(() => {
-    const id = readPullQueueId(search);
-    const loaded = id != null ? loadPullQueue(id) : null;
-    setQueue(id != null && loaded != null ? { id, ...loaded } : null);
-  }, [search]);
+    setQueue(claimTabPullQueue());
+  }, [arrivingQueue]);
   const items = queue?.items ?? [];
-  const queueId = queue?.id;
   const position = findQueuePosition(items, pathname, fromPull);
   const previous = position > 0 ? items[position - 1] : undefined;
   const next =
@@ -53,9 +52,9 @@ export function PullQueueStepper() {
   const go = useCallback(
     (target: PullQueueItem) => {
       recordRecentDiff(target);
-      router.push(withPullQueue(target.path, queueId));
+      router.push(target.path);
     },
-    [queueId, router]
+    [router]
   );
 
   useEffect(() => {
@@ -63,14 +62,7 @@ export function PullQueueStepper() {
       return;
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.defaultPrevented ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey ||
-        isEditableEventTarget(event) ||
-        document.querySelector('[role="dialog"], [role="menu"]') != null
-      ) {
+      if (!isPageShortcutEvent(event)) {
         return;
       }
       const target =

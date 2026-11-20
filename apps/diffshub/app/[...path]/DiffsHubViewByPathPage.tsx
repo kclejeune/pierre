@@ -6,7 +6,6 @@ import { ReviewUI } from '@/components/ReviewUI';
 import { describeDiffTarget } from '@/lib/describeDiffTarget';
 import { getGitHubEnvironment } from '@/lib/githubEnvironment';
 import { parsePullReturnPath } from '@/lib/pullCommitsList';
-import { isPullQueueId, withPullQueue } from '@/lib/pullQueue';
 import { resolveDiffshubViewerRoute } from '@/lib/resolveDiffshubViewerRoute';
 import { SITE_DESCRIPTION, SITE_NAME, SITE_ORIGIN } from '@/lib/site';
 
@@ -15,7 +14,6 @@ interface ViewByPathProps {
   searchParams: Promise<{
     domain?: string | string[];
     fromPull?: string | string[];
-    queue?: string | string[];
   }>;
 }
 
@@ -25,18 +23,13 @@ function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-// The "back to the pull" link of a commit view opened from a pull. When
-// that pull was opened from a /pulls list, the link keeps the list's
-// ?queue=, so the pull's header still steps through it.
+// The "back to the pull" link of a commit view opened from a pull. The tab
+// keeps the /pulls queue it came from (lib/pullQueue), so the link needs no
+// ?queue= for the pull's header to step through it.
 function returnToPullPath(
-  fromPull: string | string[] | undefined,
-  queue: string | string[] | undefined
+  fromPull: string | string[] | undefined
 ): string | undefined {
-  const path = parsePullReturnPath(firstParam(fromPull));
-  const queueId = firstParam(queue);
-  return path == null
-    ? undefined
-    : withPullQueue(path, isPullQueueId(queueId) ? queueId : null);
+  return parsePullReturnPath(firstParam(fromPull));
 }
 
 // Viewer pages are deliberately excluded from search results: they render
@@ -91,7 +84,7 @@ export async function DiffsHubViewByPathPage({
   searchParams,
 }: ViewByPathProps) {
   const { path } = await params;
-  const { domain, fromPull, queue } = await searchParams;
+  const { domain, fromPull } = await searchParams;
   const route = resolveDiffshubViewerRoute(
     path,
     firstParam(domain),
@@ -123,7 +116,7 @@ export async function DiffsHubViewByPathPage({
         domain={route.domain}
         initialUrl={route.url}
         path={route.upstreamPath}
-        returnToPullPath={returnToPullPath(fromPull, queue)}
+        returnToPullPath={returnToPullPath(fromPull)}
       />
     </div>
   );

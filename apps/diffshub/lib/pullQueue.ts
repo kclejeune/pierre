@@ -2,19 +2,26 @@
 // opened from it can step to the next or previous pull without going back to
 // the list. Each list the viewer opens a diff from is saved under an id
 // derived from its rows, and the dashboard's diff links carry that id as
-// ?queue=. The diff view's header shows its stepper only when the URL names
-// a saved queue that holds the open pull, so a pull reached any other way (a
-// GitHub link, recents, the palette) keeps its header plain, and two tabs
-// opened from different lists step through their own lists.
+// ?queue= into the tab they open. On arrival the diff view moves the id into
+// that tab's session storage and drops it from the URL
+// (claimTabPullQueueId), so the address bar, and any link copied from it,
+// stays plain, and the tab keeps its queue across reloads, back/forward, and
+// the stepper's own steps. The header shows its stepper only while the
+// tab's queue holds the open pull, and two tabs opened from different lists
+// step through their own lists.
 //
-// localStorage rather than sessionStorage: the dashboard opens diffs in new
-// tabs without an opener, and those tabs start with empty session storage.
+// The lists themselves live in localStorage rather than sessionStorage: the
+// dashboard opens diffs in new tabs without an opener, and those tabs start
+// with empty session storage, so only the id can travel, in the URL.
 
+import { consumeSearchParam, withSearchParam } from './searchParams';
 import { readStoredJSON, writeStoredJSON } from './storedJSON';
 
 // Each saved list sits under its own key (this prefix plus its id), so two
 // dashboard tabs saving at once can't overwrite each other's lists.
 const STORAGE_PREFIX = 'diffshub.pull-queue.';
+// This tab's queue id, in sessionStorage.
+const TAB_QUEUE_KEY = 'diffshub.tab-pull-queue';
 // Where the single queue lived before lists were kept per id.
 const LEGACY_STORAGE_KEY = 'diffshub.pull-queue';
 // The URL parameter naming the queue a diff was opened from.
@@ -83,12 +90,9 @@ export function withPullQueue(
   path: string,
   queueId: string | null | undefined
 ): string {
-  if (queueId == null) {
-    return path;
-  }
-  const url = new URL(path, 'https://diffshub.invalid');
-  url.searchParams.set(PULL_QUEUE_PARAM, queueId);
-  return `${url.pathname}${url.search}${url.hash}`;
+  return queueId == null
+    ? path
+    : withSearchParam(path, PULL_QUEUE_PARAM, queueId);
 }
 
 // Whether `value` has the shape pullQueueId produces (base36 of a 32-bit
@@ -101,6 +105,34 @@ export function isPullQueueId(value: unknown): value is string {
 export function readPullQueueId(search: string): string | null {
   const id = new URLSearchParams(search).get(PULL_QUEUE_PARAM);
   return isPullQueueId(id) ? id : null;
+}
+
+// The queue this tab steps through. A ?queue= in the URL naming a list this
+// browser saved becomes the tab's queue; one it didn't save (a link someone
+// else copied mid-queue) is ignored, leaving the tab's queue as it was.
+// Either way the parameter is dropped from the URL in place (no
+// navigation), so it never lingers to be copied or bookmarked. Returns the
+// queue itself, read from storage once.
+export function claimTabPullQueue(): PullQueue | null {
+  const arrived = consumeSearchParam(PULL_QUEUE_PARAM);
+  if (isPullQueueId(arrived)) {
+    const queue = loadPullQueue(arrived);
+    if (queue != null) {
+      try {
+        window.sessionStorage.setItem(TAB_QUEUE_KEY, arrived);
+      } catch {
+        // Storage unavailable; the queue still applies to this page.
+      }
+      return queue;
+    }
+  }
+  let id: string | null = null;
+  try {
+    id = window.sessionStorage.getItem(TAB_QUEUE_KEY);
+  } catch {
+    return null;
+  }
+  return isPullQueueId(id) ? loadPullQueue(id) : null;
 }
 
 // Reads one saved queue (as parsed JSON); a missing, malformed, or expired

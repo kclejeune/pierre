@@ -9,8 +9,8 @@ import {
   type PullRequestRef,
   requestJSON,
 } from './pullCommentsClient';
-import { withPullQueue } from './pullQueue';
 import { buildCommitDiffPath, buildComparePath } from './repoBrowser';
+import { withSearchParam } from './searchParams';
 
 // One commit of a pull request, oldest first as GitHub lists them.
 export interface PullCommitSummary {
@@ -58,18 +58,14 @@ export function commitRangeViewerPath(
 }
 
 // A commit or compare view opened from a pull: ?fromPull= names the pull to
-// return to, and ?queue= (when the pull was opened from a /pulls list)
-// keeps the header's queue stepper through that list.
+// return to. (A /pulls queue the pull was opened from stays with the tab;
+// see lib/pullQueue.)
 export function commitRangeViewerHref(
   path: string,
-  pull: PullRequestRef,
-  queueId?: string | null
+  pull: PullRequestRef
 ): string {
   const returnPath = `/${encodeURIComponent(pull.owner)}/${encodeURIComponent(pull.repo)}/pull/${encodeURIComponent(pull.number)}`;
-  return withPullQueue(
-    `${path}?fromPull=${encodeURIComponent(returnPath)}`,
-    queueId
-  );
+  return withSearchParam(path, 'fromPull', returnPath);
 }
 
 export function parsePullReturnPath(value: unknown): string | undefined {

@@ -22,7 +22,6 @@ import {
   fetchPullCommitsList,
   type PullCommitSummary,
 } from '@/lib/pullCommitsList';
-import { readPullQueueId } from '@/lib/pullQueue';
 import { recordRecentDiff } from '@/lib/recentDiffs';
 
 interface PullCommitRangePickerProps {
@@ -123,16 +122,8 @@ export function PullCommitRangePicker({
           commits[rangeStart],
           commits[rangeEnd]
         );
-  // A selection only exists after the menu opens, on the client, so the
-  // URL's queue id can be read here directly.
   const viewerHref =
-    viewerPath == null
-      ? null
-      : commitRangeViewerHref(
-          viewerPath,
-          pullRequest,
-          readPullQueueId(window.location.search)
-        );
+    viewerPath == null ? null : commitRangeViewerHref(viewerPath, pullRequest);
 
   const toggleCommit = (sha: string) => {
     setSelection((current) => {

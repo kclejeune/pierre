@@ -34,6 +34,9 @@ const buttonVariants = cva(
       },
       size: {
         xs: 'h-5.5 rounded-sm gap-1.5 px-1.5 text-xs',
+        // List toolbars and the batch bar: 28px, grown to 36px on touch
+        // screens so every control on those bars takes a thumb.
+        toolbar: 'h-7 rounded-md gap-1 px-1.5 text-xs pointer-coarse:h-9',
         default: 'h-9 px-3.5 py-2 rounded-lg',
         sm: 'h-8 rounded-md gap-1.5 px-3',
         lg: 'h-10 rounded-md px-6',

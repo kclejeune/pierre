@@ -78,6 +78,11 @@ const DropdownMenuContent = React.forwardRef<
     {
       className,
       sideOffset = 4,
+      // Keeps every menu 8px clear of the viewport edges. Wide menus cap
+      // their width at calc(100vw - 1rem) to match, so on a phone they fill
+      // the screen with even margins instead of sitting flush against one
+      // edge wherever their trigger happens to end.
+      collisionPadding = 8,
       scrollSelectedIntoView = false,
       selectedItemSelector = DEFAULT_SELECTED_ITEM_SELECTOR,
       // Added by us for docs, but not generally available to our
@@ -147,6 +152,7 @@ const DropdownMenuContent = React.forwardRef<
         <DropdownMenuPrimitive.Content
           ref={setRefs}
           sideOffset={sideOffset}
+          collisionPadding={collisionPadding}
           className={cn(
             'bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 min-w-[8rem] space-y-[1px] overflow-hidden rounded-lg border border-[rgb(0_0_0_/_0.1)] bg-clip-padding p-1 shadow-lg dark:border-[rgb(255_255_255_/_0.15)] dark:shadow-black/25',
             className

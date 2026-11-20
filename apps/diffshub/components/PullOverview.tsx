@@ -227,7 +227,10 @@ export function MergeStatusCard({
   return (
     <section
       aria-label="Merge status"
-      className={cn('overflow-hidden rounded-md border', annotationBorderColor)}
+      className={cn(
+        '@container/merge overflow-hidden rounded-md border',
+        annotationBorderColor
+      )}
     >
       <div className="flex items-start gap-2.5 p-3">
         <span
@@ -294,12 +297,15 @@ function MetricCell({
         : 'Unavailable';
   const content = (
     <>
-      <span className="flex min-w-0 items-baseline gap-1.5 text-xs">
+      {/* Below the card's @md width (a phone-width popover) the three cells
+          are too narrow for label and summary side by side, so the summary
+          drops onto its own line under the label and disclosure icon. */}
+      <span className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs @md/merge:flex-nowrap">
         <span className="shrink-0 font-semibold">{label}</span>
         <span
           title={cell.kind === 'unavailable' ? cell.reason : summary}
           className={cn(
-            'min-w-0 truncate',
+            'order-last min-w-0 basis-full truncate @md/merge:order-none @md/merge:basis-auto',
             cell.kind === 'metric' && cell.tone != null
               ? TONE_TEXT_CLASS[cell.tone]
               : 'text-muted-foreground'

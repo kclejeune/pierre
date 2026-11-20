@@ -5,25 +5,21 @@ import type { PullScope } from '@/lib/pullScopes';
 import { splitPath } from '@/lib/splitPath';
 
 // An "owner/name" in the /pulls scope controls: owner quiet, name loud,
-// because scanning a list of repositories is scanning names. `hideOwnerOnMobile`
-// drops the owner on narrow screens where only the name fits.
+// because scanning a list of repositories is scanning names.
+// `ownerClassName` lets a caller drop the owner where only the name fits
+// (the query bar hides it on a narrow bar).
 export function RepoName({
-  hideOwnerOnMobile = false,
+  ownerClassName,
   repo,
 }: {
-  hideOwnerOnMobile?: boolean;
+  ownerClassName?: string;
   repo: string;
 }) {
   const { basename, dirname } = splitPath(repo);
   return (
     <span className="min-w-0 truncate font-mono text-[13px]">
       {dirname !== '' && (
-        <span
-          className={cn(
-            'text-muted-foreground',
-            hideOwnerOnMobile && 'hidden sm:inline'
-          )}
-        >
+        <span className={cn('text-muted-foreground', ownerClassName)}>
           {dirname}/
         </span>
       )}

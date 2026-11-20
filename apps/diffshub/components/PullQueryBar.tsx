@@ -100,7 +100,9 @@ export function PullQueryBar({
     <form
       role="search"
       aria-label="Search pull requests"
-      className="bg-background focus-within:border-ring focus-within:ring-ring/40 relative flex h-10 min-w-0 items-stretch rounded-lg border shadow-xs transition-[border-color,box-shadow] focus-within:ring-[3px]"
+      // A size container (@container/query) so the scope button can size
+      // its label to the bar itself, which narrows beside the preview pane.
+      className="bg-background focus-within:border-ring focus-within:ring-ring/40 @container/query relative flex h-10 min-w-0 items-stretch rounded-lg border shadow-xs transition-[border-color,box-shadow] focus-within:ring-[3px]"
       onSubmit={(event) => {
         event.preventDefault();
         onApply(draft.trim());
@@ -406,7 +408,7 @@ function ScopeButton({
       aria-haspopup="dialog"
       aria-label="Switch repository"
       title="Switch repository"
-      className="hover:bg-accent/60 focus-visible:ring-ring flex max-w-[55%] min-w-0 shrink-0 cursor-pointer items-center gap-2 rounded-l-[inherit] border-r pr-2 pl-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset sm:max-w-[45%]"
+      className="hover:bg-accent/60 focus-visible:ring-ring flex max-w-[55%] min-w-0 shrink-0 cursor-pointer items-center gap-2 rounded-l-[inherit] border-r pr-2 pl-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset sm:max-w-[60%]"
       onClick={onClick}
     >
       <ScopeIcon
@@ -431,7 +433,16 @@ function ScopeLabel({ scope }: { scope: PullScope }) {
       </span>
     );
   }
-  return <RepoName hideOwnerOnMobile repo={scope.repo} />;
+  // The full owner/repo shows once the bar has room for it beside a usable
+  // query field (40rem); a narrower bar shows the repo name alone rather
+  // than cutting it off mid-word. The title and the scope strip's chip
+  // below still carry the owner.
+  return (
+    <RepoName
+      ownerClassName="hidden @min-[40rem]/query:inline"
+      repo={scope.repo}
+    />
+  );
 }
 
 // Token colors (color only: weight changes would shift glyphs out from under

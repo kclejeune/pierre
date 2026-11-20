@@ -30,6 +30,10 @@ import {
 } from 'react';
 import { toast } from 'sonner';
 
+import {
+  FILE_HEADER_ICON_BUTTON_CLASS,
+  FILE_HEADER_TOUCH_TARGET_CLASS,
+} from './chromeButtonStyles';
 import { CollapseDiffButton } from './CollapseDiffButton';
 import { DraftAnnotation } from './DraftAnnotation';
 import { ExampleAnnotation } from './ExampleAnnotation';
@@ -1300,7 +1304,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
                   : 'Edit this file and commit to the pull request branch'
               }
               className={cn(
-                'text-muted-foreground hover:bg-muted hover:text-foreground inline-flex size-6 cursor-pointer items-center justify-center rounded-md transition',
+                FILE_HEADER_ICON_BUTTON_CLASS,
                 editing && 'text-foreground bg-muted'
               )}
               onClick={(event) => {
@@ -1331,7 +1335,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
             type="button"
             aria-label="Comment on this file"
             title="Comment on this file"
-            className="text-muted-foreground hover:bg-muted hover:text-foreground inline-flex size-6 cursor-pointer items-center justify-center rounded-md transition"
+            className={FILE_HEADER_ICON_BUTTON_CLASS}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -1348,7 +1352,7 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
                 docShown ? 'Hide rendered document' : 'Show rendered document'
               }
               className={cn(
-                'text-muted-foreground hover:bg-muted hover:text-foreground inline-flex size-6 cursor-pointer items-center justify-center rounded-md transition',
+                FILE_HEADER_ICON_BUTTON_CLASS,
                 docShown && 'text-foreground bg-muted'
               )}
               onClick={(event) => {
@@ -1361,7 +1365,10 @@ export const DiffsHubViewer = memo(function DiffsHubViewer({
             </button>
           )}
           <label
-            className="text-muted-foreground hover:text-foreground flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] whitespace-nowrap select-none"
+            className={cn(
+              'text-muted-foreground hover:text-foreground flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] whitespace-nowrap select-none',
+              FILE_HEADER_TOUCH_TARGET_CLASS
+            )}
             title="Mark this file as viewed; it stays collapsed until new changes are pushed"
             onClick={(event) => event.stopPropagation()}
           >

@@ -1,6 +1,6 @@
 'use client';
 
-import { IconBranch } from '@pierre/icons';
+import { IconCommit } from '@pierre/icons';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -163,14 +163,14 @@ export function PullCommitRangePicker({
             className
           )}
         >
-          <IconBranch className="size-3.5" />
+          <IconCommit className="size-3.5" />
           {/* Icon-only below xl, where the PR title needs the room. */}
           <span className="max-xl:hidden">Commits</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="w-[420px] max-w-[90vw] p-3"
+        className="w-[420px] max-w-[calc(100vw-1rem)] p-3"
         style={dropdownThemeStyle}
       >
         <div className="flex flex-col gap-2">

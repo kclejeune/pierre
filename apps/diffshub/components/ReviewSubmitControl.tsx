@@ -127,7 +127,7 @@ export function ReviewSubmitControl({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="max-h-(--radix-dropdown-menu-content-available-height) w-80 max-w-[92vw] overflow-y-auto p-3 sm:w-[30rem]"
+        className="max-h-(--radix-dropdown-menu-content-available-height) w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto p-3 sm:w-[30rem]"
         style={dropdownThemeStyle}
       >
         <form

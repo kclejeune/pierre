@@ -1,6 +1,12 @@
 'use client';
 
-import { IconCheck, IconChevronSm, IconEyeSlash, IconPin } from '@pierre/icons';
+import {
+  IconCheck,
+  IconEyeSlash,
+  IconLayers2,
+  IconPin,
+  IconSortDown,
+} from '@pierre/icons';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -40,12 +46,11 @@ import {
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from '@/components/DropdownMenu';
 import { useGitHubEnvironment } from '@/components/GitHubEnvironmentProvider';
 import { GitHubTokenControl } from '@/components/GitHubTokenControl';
 import { PullBatchBar, usePullBatch } from '@/components/PullBatchBar';
-import { PullFilterMenus } from '@/components/PullFilterMenus';
+import { FilterTrigger, PullFilterMenus } from '@/components/PullFilterMenus';
 import {
   prefetchPullPreview,
   PullPreviewPane,
@@ -55,6 +60,7 @@ import { PullQueueIdContext } from '@/components/PullQueueLinkContext';
 import { PullQuickLook } from '@/components/PullQuickLook';
 import { PullRequestRow } from '@/components/PullRequestRow';
 import { muteWithUndo, type PullRowAction } from '@/components/PullRowActions';
+import { PULL_STATE_DISPLAY } from '@/components/pullStateDisplay';
 import { RepoPinStrip, ScopeChip } from '@/components/RepoPinStrip';
 import { formatShortcut, useModifierKey } from '@/components/ShortcutHint';
 import { Spinner } from '@/components/Spinner';
@@ -877,11 +883,14 @@ function AudienceFilter({
       aria-label="Filter by involvement"
       // Inline, the involvements are separate chips rather than one
       // segmented tray: they toggle independently, and a tray that wraps
-      // reads as a ragged block, where chips wrap into clean rows.
+      // reads as a ragged block, where chips wrap into clean rows. On a
+      // phone those rows run three deep above the list, so below sm they
+      // become one row that scrolls sideways instead; the chip cut off at
+      // the edge shows there are more.
       className={
         vertical
           ? 'w-full flex-col gap-0.5 self-stretch bg-transparent'
-          : 'flex-wrap gap-1 bg-transparent'
+          : 'flex-wrap gap-1 bg-transparent max-sm:w-full max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:[scrollbar-width:none] max-sm:[&>*]:shrink-0'
       }
       size="sm"
     >
@@ -924,11 +933,20 @@ function AudienceFilter({
   );
 }
 
-const STATE_TOGGLES: readonly { value: PullStateFilter; label: string }[] = [
-  { value: 'open', label: 'Open' },
-  { value: 'merged', label: 'Merged' },
-  { value: 'closed', label: 'Closed' },
-  { value: 'all', label: 'All' },
+// The state tabs, each led by its glyph as on GitHub's list header: the
+// rows' own state glyphs (PULL_STATE_DISPLAY), shown in the tab's text
+// color, plus a stack for "All", which GitHub has no tab for.
+const STATE_TOGGLES: readonly {
+  value: PullStateFilter;
+  label: string;
+  Icon: typeof IconLayers2;
+}[] = [
+  ...(['open', 'merged', 'closed'] as const).map((value) => ({
+    value,
+    label: PULL_STATE_DISPLAY[value].label,
+    Icon: PULL_STATE_DISPLAY[value].Icon,
+  })),
+  { value: 'all', label: 'All', Icon: IconLayers2 },
 ];
 
 // An empty list whose search did match pulls, so the matches seen are in
@@ -1207,6 +1225,8 @@ function PullList({
     onQuickLook,
     onToggleChecked: selection.toggleRow,
   });
+  // The toolbar shows the batch bar while pulls are checked or a batch runs.
+  const batchMode = selection.checked.length > 0 || batch.running != null;
   return (
     <section
       aria-busy={loading}
@@ -1218,8 +1238,11 @@ function PullList({
         fill && 'flex min-h-64 flex-1 flex-col'
       )}
     >
+      {/* Like GitHub's list header: state toggles, then the menus as one
+          group. The row wraps with space-between, so the menus sit right
+          when they fit and drop left-aligned to their own line when not. */}
       <div className="bg-muted/30 @container/header flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-2 py-1.5">
-        {selection.checked.length > 0 || batch.running != null ? (
+        {batchMode ? (
           <PullBatchBar
             allLoadedChecked={selection.allLoadedChecked}
             checked={selection.checked}
@@ -1235,11 +1258,15 @@ function PullList({
             onSelectAll={() => selection.set([...selection.checked, ...pulls])}
           />
         ) : (
-          <>
+          <div className="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <div
               role="radiogroup"
               aria-label="Pull request state"
-              className="flex items-center"
+              // From 20-30rem (most phones) the tabs get their own fully
+              // labeled row, spaced like the menus row under them. Narrower
+              // phones keep the compact tabs, and the row wraps as a last
+              // resort rather than clipping its last tab.
+              className="flex flex-wrap items-center @max-[30rem]/header:gap-2"
             >
               {STATE_TOGGLES.map((option) => (
                 <button
@@ -1247,75 +1274,89 @@ function PullList({
                   type="button"
                   role="radio"
                   aria-checked={state === option.value}
+                  // The tooltip names the tab where only its glyph shows.
+                  title={option.label}
                   className={cn(
-                    'focus-visible:ring-ring h-7 cursor-pointer rounded-md px-2 text-xs outline-none focus-visible:ring-2',
+                    'focus-visible:ring-ring inline-flex h-7 cursor-pointer items-center justify-center gap-1 rounded-md px-1.5 text-xs outline-none focus-visible:ring-2 pointer-coarse:h-9',
                     state === option.value
                       ? 'text-foreground font-medium'
-                      : 'text-muted-foreground hover:text-foreground'
+                      : 'text-muted-foreground hover:text-foreground pointer-coarse:min-w-9'
                   )}
                   onClick={() =>
                     onApplyText(writePullStateFilter(text, option.value))
                   }
                 >
-                  {option.label}
+                  <option.Icon aria-hidden="true" className="size-3.5" />
+                  {/* Below 20rem and from 30-44rem only the selected tab
+                      shows its name, so the tabs fit their row; the other
+                      names stay screen-reader only. */}
+                  <span
+                    className={cn(
+                      state !== option.value &&
+                        'sr-only @min-[20rem]/header:@max-[30rem]/header:not-sr-only @min-[44rem]/header:not-sr-only'
+                    )}
+                  >
+                    {option.label}
+                  </span>
                   {state === option.value &&
                     (loading ? (
                       // Refetching: the count and any rows below are the
                       // previous answer until the search returns.
-                      <Spinner className="text-muted-foreground ml-1.5 inline size-3 align-[-1px]" />
+                      <Spinner className="text-muted-foreground size-3" />
                     ) : (
-                      <span className="text-muted-foreground ml-1.5 font-normal tabular-nums">
+                      <span className="text-muted-foreground font-normal tabular-nums">
                         {totalCount.toLocaleString()}
                       </span>
                     ))}
                 </button>
               ))}
             </div>
-            <PullFilterMenus
-              muting={muting}
-              pulls={pulls}
-              text={text}
-              onApplyText={onApplyText}
-            />
-            <MuteMenu
-              muting={muting}
-              mutedCount={mutedCount}
-              pulls={pulls}
-              text={text}
-            />
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  className="text-muted-foreground h-7"
-                >
-                  {sortLabel}
-                  <IconChevronSm className="size-3" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {PULL_SORT_OPTIONS.map((option) => (
-                  <DropdownMenuItem
-                    key={option.value}
-                    selected={option.value === sort}
-                    className="gap-2"
-                    onSelect={() =>
-                      onApplyText(writePullSort(text, option.value))
-                    }
-                  >
-                    <IconCheck
-                      className={cn(
-                        'size-3.5',
-                        option.value !== sort && 'invisible'
-                      )}
-                    />
-                    {option.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </>
+            <div className="-mx-0.5 flex items-center @max-[30rem]/header:mx-0 @max-[30rem]/header:gap-2">
+              <PullFilterMenus
+                muting={muting}
+                pulls={pulls}
+                text={text}
+                onApplyText={onApplyText}
+              />
+              <MuteMenu
+                muting={muting}
+                mutedCount={mutedCount}
+                pulls={pulls}
+                text={text}
+              />
+              <DropdownMenu>
+                {/* Named "Sort", not by the current order, so its width
+                    never changes; the menu checks the current order. */}
+                <FilterTrigger
+                  active={sort !== ''}
+                  aria-label={`Sort: ${sortLabel}`}
+                  icon={<IconSortDown className="size-3" />}
+                  label="Sort"
+                  title={`Sort: ${sortLabel}`}
+                />
+                <DropdownMenuContent align="end">
+                  {PULL_SORT_OPTIONS.map((option) => (
+                    <DropdownMenuItem
+                      key={option.value}
+                      selected={option.value === sort}
+                      className="gap-2"
+                      onSelect={() =>
+                        onApplyText(writePullSort(text, option.value))
+                      }
+                    >
+                      <IconCheck
+                        className={cn(
+                          'size-3.5',
+                          option.value !== sort && 'invisible'
+                        )}
+                      />
+                      {option.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
         )}
       </div>
       {/* No scrollbar on the pinned list: a styled scrollbar always takes
@@ -1750,15 +1791,18 @@ function MuteMenu({
   const staleValue =
     staleAfter == null ? 'off' : formatStaleDuration(staleAfter);
   const defaultStale = parseStaleDuration(muting.defaultStaleAfter);
+  // "Muted" plus the count of pulls (not rules) muting hides, lit up once
+  // muted pulls are shown.
   const triggerLabel =
     mutedView === 'show'
       ? 'Showing muted'
       : mutedView === 'only'
         ? 'Only muted'
-        : mutedCount != null && mutedCount > 0
-          ? // Counts pulls, not rules: "63 muted pulls" from one bot.
-            `${mutedCount.toLocaleString()} muted ${mutedCount === 1 ? 'pull' : 'pulls'}`
-          : 'Muted';
+        : 'Muted';
+  const triggerCount =
+    mutedView === 'hide' && mutedCount != null && mutedCount > 0
+      ? mutedCount.toLocaleString()
+      : null;
   // Shift-click range selection over the branch items (presets, then the
   // viewer's own prefixes), as on the pull rows: shift-clicking an item sets
   // every item between it and the last one clicked to the clicked item's new
@@ -1804,18 +1848,13 @@ function MuteMenu({
   };
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="xs"
-          className="text-muted-foreground h-7 tabular-nums"
-          title="What this list leaves out: muted authors and branches, and stale pulls"
-        >
-          <IconEyeSlash className="size-3" />
-          {triggerLabel}
-          <IconChevronSm className="size-3" />
-        </Button>
-      </DropdownMenuTrigger>
+      <FilterTrigger
+        active={mutedView !== 'hide'}
+        count={triggerCount ?? undefined}
+        icon={<IconEyeSlash className="size-3" />}
+        label={triggerLabel}
+        title="What this list leaves out: muted authors and branches, and stale pulls"
+      />
       <DropdownMenuContent align="end" className="w-72">
         <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
           Muted pulls

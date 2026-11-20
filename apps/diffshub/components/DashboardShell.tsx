@@ -52,13 +52,22 @@ export function DashboardShell({
     >
       <AppNavbar
         className="w-full shrink-0"
-        contentClassName={cn('md:px-5 lg:px-8', WIDTH_CLASSES[width])}
-        leading={<SectionTitle className="max-md:hidden" section={section} />}
+        // Phones get a 12px side gutter, matching the navbar's 12px top
+        // padding, so the page doesn't spend more room on its sides than
+        // above its content.
+        contentClassName={cn('px-3 md:px-5 lg:px-8', WIDTH_CLASSES[width])}
+        // Phones show the title on its own line below the navbar instead.
+        leading={
+          <SectionTitle
+            className="mr-auto min-w-0 max-md:hidden"
+            section={section}
+          />
+        }
         tokenState={tokenState}
       />
       <div
         className={cn(
-          'w-full space-y-6 px-5 pt-2 pb-8 md:space-y-0 md:pt-1 md:pb-12 lg:px-8',
+          'w-full space-y-6 px-3 pt-2 pb-8 md:space-y-0 md:px-5 md:pt-1 md:pb-12 lg:px-8',
           fillViewport && 'flex min-h-0 flex-1 flex-col md:pb-6',
           WIDTH_CLASSES[width]
         )}

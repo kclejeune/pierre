@@ -26,7 +26,9 @@ interface AppNavbarProps {
   // width and padding (the dashboards align the brand with their content).
   contentClassName?: string;
   // Rendered at the start of the row, before the right-aligned controls
-  // (the dashboards' "DiffsHub / <section>" title).
+  // (the dashboards' "DiffsHub / <section>" title). It is a direct flex
+  // child, so it takes mr-auto to push the controls right, and hiding it
+  // leaves no empty gap.
   leading?: ReactNode;
   // Pages that already own a useGitHubToken instance (e.g. the dashboard)
   // pass it in so sign-in/sign-out through the navbar updates their UI in the
@@ -56,10 +58,11 @@ export function AppNavbar({
           contentClassName
         )}
       >
-        {leading != null && (
-          <div className="mr-auto flex min-w-0 items-center">{leading}</div>
-        )}
-        <CommandPaletteTrigger className="w-40 min-w-0 min-[420px]:w-64 sm:w-80" />
+        {leading}
+        {/* Below sm the search fills what the buttons leave, so it starts
+            on the page's side gutter instead of wherever its fixed width
+            happens to end. */}
+        <CommandPaletteTrigger className="min-w-0 flex-1 sm:w-80 sm:flex-none" />
         <Button asChild variant="outline" className="rounded-md">
           <Link href="/pulls">Pulls</Link>
         </Button>

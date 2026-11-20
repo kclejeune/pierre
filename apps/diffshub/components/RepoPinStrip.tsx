@@ -82,6 +82,11 @@ export function RepoPinStrip({
           selected
           dashed
           title={`${selectedRepo} (not pinned)`}
+          // Its full owner/repo name is the longest label in the strip, so
+          // on a phone it spans the row (pin at the far end), and wider it
+          // gets a 20rem cap rather than the inline chips' 14rem, room for a
+          // typical owner/repo before it truncates.
+          growOnPhone
           trailing={
             pinned.length < MAX_PINNED_REPOS ? (
               <PinToggle
@@ -100,7 +105,7 @@ export function RepoPinStrip({
           type="button"
           className={cn(
             'text-muted-foreground hover:text-foreground focus-visible:ring-ring flex cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs outline-none focus-visible:ring-2',
-            vertical ? 'h-7 px-2 text-left' : 'h-6'
+            vertical ? 'h-7 px-2 text-left' : 'h-6 pointer-coarse:h-8'
           )}
           onClick={onAddPin}
         >
@@ -119,6 +124,7 @@ export function ScopeChip({
   children,
   dashed = false,
   fill = false,
+  growOnPhone = false,
   mono = false,
   onClick,
   selected,
@@ -128,6 +134,7 @@ export function ScopeChip({
   children: ReactNode;
   dashed?: boolean;
   fill?: boolean;
+  growOnPhone?: boolean;
   mono?: boolean;
   onClick?(): void;
   selected: boolean;
@@ -137,6 +144,9 @@ export function ScopeChip({
   const labelClassName = cn(
     'flex h-full items-center gap-1 rounded-[inherit] px-2',
     fill ? 'min-w-0 flex-1' : 'max-w-56',
+    growOnPhone &&
+      !fill &&
+      'max-sm:min-w-0 max-sm:max-w-none max-sm:flex-1 sm:max-w-80',
     mono && 'font-mono text-[12px]',
     trailing != null && 'pr-1'
   );
@@ -147,7 +157,10 @@ export function ScopeChip({
     <span
       className={cn(
         'flex items-center rounded-md border text-xs transition-colors',
-        fill ? 'h-7' : 'h-6',
+        // Inline chips grow to 32px on touch screens, where 24px is too
+        // small a tap; the strip wraps, so nothing else has to move.
+        fill ? 'h-7' : 'h-6 pointer-coarse:h-8',
+        growOnPhone && !fill && 'max-sm:w-full max-sm:min-w-0',
         // Inline chips lift like a segmented control; rail rows fill like a
         // nav list, so a selected row doesn't read as a text field.
         selected
@@ -197,7 +210,7 @@ export function PinToggle({
       aria-pressed={pinned}
       title={pinned ? 'Unpin' : 'Pin'}
       className={cn(
-        'hover:bg-accent focus-visible:ring-ring mr-0.5 flex size-5 cursor-pointer items-center justify-center rounded-sm outline-none focus-visible:ring-2',
+        'hover:bg-accent focus-visible:ring-ring mr-0.5 flex size-5 cursor-pointer items-center justify-center rounded-sm outline-none focus-visible:ring-2 pointer-coarse:size-7',
         pinned ? 'text-foreground' : 'text-muted-foreground'
       )}
       onClick={() => onToggle(repo)}

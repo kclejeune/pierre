@@ -198,8 +198,12 @@ export const PullRequestRow = memo(function PullRequestRow({
             className={cn(
               'absolute top-0 left-0 z-10 size-10 select-none',
               selectionLocked ? 'cursor-not-allowed' : 'cursor-pointer',
+              // Touch screens never hover, so there the slot always takes
+              // taps: tapping a row's state icon selects it, the way tapping
+              // an avatar does in a mail app, instead of a near miss on the
+              // invisible 14px box opening the pull.
               !showCheckbox &&
-                'pointer-events-none group-hover/row:pointer-events-auto'
+                'pointer-events-none group-hover/row:pointer-events-auto pointer-coarse:pointer-events-auto'
             )}
             // One handler for pointer clicks anywhere in the slot and the
             // click the box itself fires on Space. onClick rather than
@@ -256,7 +260,11 @@ export const PullRequestRow = memo(function PullRequestRow({
           onAuxClick={(event) => event.button === 1 && onOpen(pull)}
           onContextMenu={() => onOpen(pull)}
           // The ring is inset because section cards clip overflow.
-          className="focus-visible:ring-ring flex min-w-0 flex-1 items-start gap-3 px-3 py-2.5 outline-none focus-visible:ring-2 focus-visible:ring-inset"
+          className={cn(
+            'focus-visible:ring-ring flex min-w-0 flex-1 items-start gap-3 px-3 py-2.5 outline-none focus-visible:ring-2 focus-visible:ring-inset',
+            // Room for the always-visible touch actions button (below).
+            onRowAction != null && 'pointer-coarse:pr-11'
+          )}
         >
           <StateIcon
             className={cn(
@@ -269,14 +277,23 @@ export const PullRequestRow = memo(function PullRequestRow({
             )}
             aria-label={`${stateDisplay.label} pull request`}
           />
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="@container/row flex min-w-0 flex-1 flex-col gap-0.5">
             {/* The repository leads the title, as on GitHub's cross-repo
               list, so it never competes with the label chips for room. Long
               titles wrap to a second line: bot titles keep their most
-              telling part ("[security]", the target version) at the end. */}
+              telling part ("[security]", the target version) at the end.
+              In a narrow row (a phone, or the list beside the preview
+              pane) an inline owner/repo would eat most of that two-line
+              clamp, so below @lg it moves to its own truncated line and
+              the title keeps both lines. Only one copy is ever displayed. */}
+            {showRepo && (
+              <span className="text-muted-foreground truncate text-xs @lg/row:hidden">
+                {pull.owner}/{pull.repo}
+              </span>
+            )}
             <span className="text-foreground line-clamp-2 text-sm font-medium break-words">
               {showRepo && (
-                <span className="text-muted-foreground mr-1.5 font-normal">
+                <span className="text-muted-foreground mr-1.5 hidden font-normal @lg/row:inline">
                   {pull.owner}/{pull.repo}
                 </span>
               )}
@@ -331,13 +348,22 @@ export const PullRequestRow = memo(function PullRequestRow({
           )}
         </Link>
         {onRowAction != null && (
-          <div className="absolute top-1.5 right-2.5 z-20">
+          // With a mouse the trigger appears on hover over the avatar. On
+          // touch it stays visible beside it, its 36px box level with the
+          // avatar.
+          <div className="absolute top-1.5 right-2.5 z-20 pointer-coarse:top-0.5 pointer-coarse:right-1">
             <PullRowActions
               authorMuted={authorMuted}
               busy={actionsBusy}
               muteFull={muteFull}
               pull={pull}
+              selected={checked}
               onAction={onRowAction}
+              onToggleSelected={
+                onToggleChecked != null && !selectionLocked
+                  ? () => onToggleChecked(pullKey(pull), false)
+                  : undefined
+              }
             />
           </div>
         )}

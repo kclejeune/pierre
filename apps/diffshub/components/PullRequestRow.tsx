@@ -144,6 +144,8 @@ export const PullRequestRow = memo(function PullRequestRow({
   const href = useQueuedPullPath(pull.viewerPath);
   const stateDisplay = PULL_STATE_DISPLAY[pull.state];
   const StateIcon = stateDisplay.Icon;
+  // Selection mode: every row shows its checkbox in place of the state icon.
+  const showCheckbox = selecting || checked;
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelPrefetch = () => {
     if (hoverTimer.current != null) {
@@ -181,27 +183,48 @@ export const PullRequestRow = memo(function PullRequestRow({
         nested && 'pl-6'
       )}
     >
-      {onToggleChecked != null && (
-        <input
-          type="checkbox"
-          aria-label={`Select ${pull.title}`}
-          checked={checked}
-          disabled={selectionLocked}
-          className={cn(
-            'accent-foreground mt-[13px] ml-3 size-3.5 shrink-0 cursor-pointer disabled:cursor-not-allowed',
-            !selecting &&
-              !checked &&
-              'opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100'
-          )}
-          // onClick rather than onChange: the handler needs shiftKey for
-          // range selection. React keeps the box controlled by `checked`.
-          readOnly
-          onClick={(event) => onToggleChecked(pullKey(pull), event.shiftKey)}
-        />
-      )}
-      {/* The link and the actions overlay share a box, so the overlay sits
-          over the link's time and avatar, clear of the group toggle. */}
+      {/* The link, the checkbox and the actions overlay share a box, so
+          the overlays sit over the link's state icon and its time and
+          avatar, clear of the group toggle. */}
       <div className="relative flex min-w-0 flex-1">
+        {/* The checkbox takes the state icon's place (both 12px in from
+            the row's edge, like the avatar on the right): on hover or focus,
+            and on every row once any row is checked. Its click target is the
+            whole icon slot, not just the 14px box, so a near miss doesn't
+            land on the link, where a shift-click opens a new window. It sits
+            over the link rather than inside it so it never navigates. */}
+        {onToggleChecked != null && (
+          <div
+            className={cn(
+              'absolute top-0 left-0 z-10 size-10 select-none',
+              selectionLocked ? 'cursor-not-allowed' : 'cursor-pointer',
+              !showCheckbox &&
+                'pointer-events-none group-hover/row:pointer-events-auto'
+            )}
+            // One handler for pointer clicks anywhere in the slot and the
+            // click the box itself fires on Space. onClick rather than
+            // onChange: range selection needs shiftKey.
+            onClick={(event) => {
+              if (!selectionLocked) {
+                onToggleChecked(pullKey(pull), event.shiftKey);
+              }
+            }}
+          >
+            <input
+              type="checkbox"
+              aria-label={`Select ${pull.title}`}
+              checked={checked}
+              disabled={selectionLocked}
+              className={cn(
+                'accent-foreground pointer-events-auto absolute top-[13px] left-[13px] size-3.5 cursor-[inherit]',
+                !showCheckbox &&
+                  'opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100'
+              )}
+              // React keeps the box controlled by `checked`.
+              readOnly
+            />
+          </div>
+        )}
         <Link
           href={href}
           aria-current={selected ? 'true' : undefined}
@@ -211,6 +234,15 @@ export const PullRequestRow = memo(function PullRequestRow({
           onClick={(event) => {
             // A click within the hover delay already loads the pull.
             cancelPrefetch();
+            // While selecting, shift-click anywhere on a row extends the
+            // range instead of opening the pull in a new window.
+            if (showCheckbox && event.shiftKey && onToggleChecked != null) {
+              event.preventDefault();
+              if (!selectionLocked) {
+                onToggleChecked(pullKey(pull), true);
+              }
+              return;
+            }
             if (onPreview != null && !isModifiedClick(event)) {
               event.preventDefault();
               onPreview(pull);
@@ -227,7 +259,14 @@ export const PullRequestRow = memo(function PullRequestRow({
           className="focus-visible:ring-ring flex min-w-0 flex-1 items-start gap-3 px-3 py-2.5 outline-none focus-visible:ring-2 focus-visible:ring-inset"
         >
           <StateIcon
-            className={cn('mt-0.5 size-4 shrink-0', stateDisplay.className)}
+            className={cn(
+              'mt-0.5 size-4 shrink-0',
+              stateDisplay.className,
+              onToggleChecked != null &&
+                (showCheckbox
+                  ? 'invisible'
+                  : 'group-hover/row:invisible group-has-[input:focus-visible]/row:invisible')
+            )}
             aria-label={`${stateDisplay.label} pull request`}
           />
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -292,7 +331,7 @@ export const PullRequestRow = memo(function PullRequestRow({
           )}
         </Link>
         {onRowAction != null && (
-          <div className="absolute top-2 right-2 z-20">
+          <div className="absolute top-1.5 right-2.5 z-20">
             <PullRowActions
               authorMuted={authorMuted}
               busy={actionsBusy}

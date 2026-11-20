@@ -11,6 +11,7 @@ import { GitHubEnvironmentProvider } from '../components/GitHubEnvironmentProvid
 import { saveGitHubTokenToStorage } from '../components/githubSession';
 import { installJsdomGlobals } from '../lib/test/jsdomGlobals';
 import type { GitHubClientEnvironment } from '@/lib/githubEnvironment';
+import { DEFAULT_PULL_MUTING_CONFIG } from '@/lib/muteRules';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
   pretendToBeVisual: true,
@@ -37,6 +38,7 @@ afterAll(() => {
 // A require-login deployment: a tokenless resolve yields the unloadable
 // data: sentinel, which fires onError on consumers that record the failure.
 const REQUIRE_LOGIN_ENVIRONMENT: GitHubClientEnvironment = {
+  muting: DEFAULT_PULL_MUTING_CONFIG,
   host: 'github.example.com',
   isGitHubDotCom: false,
   oauthEnabled: true,

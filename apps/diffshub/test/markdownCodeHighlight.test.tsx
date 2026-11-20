@@ -16,6 +16,7 @@ import {
   loadHighlighter,
   MAX_HIGHLIGHTED_FENCE_LENGTH,
 } from '@/lib/markdownCodeHighlight';
+import { DEFAULT_PULL_MUTING_CONFIG } from '@/lib/muteRules';
 
 const dom = new JSDOM(
   '<!doctype html><html><head></head><body></body></html>',
@@ -26,6 +27,7 @@ const dom = new JSDOM(
 );
 
 const environment: GitHubClientEnvironment = {
+  muting: DEFAULT_PULL_MUTING_CONFIG,
   host: 'ghe.example.com',
   isGitHubDotCom: false,
   oauthEnabled: false,

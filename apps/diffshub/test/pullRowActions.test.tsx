@@ -10,6 +10,7 @@ import { PullRequestRow } from '../components/PullRequestRow';
 import { installJsdomGlobals } from '../lib/test/jsdomGlobals';
 import type { GitHubClientEnvironment } from '@/lib/githubEnvironment';
 import type { PullSummary } from '@/lib/githubPullSummaries';
+import { DEFAULT_PULL_MUTING_CONFIG } from '@/lib/muteRules';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
   pretendToBeVisual: true,
@@ -17,6 +18,7 @@ const dom = new JSDOM('<!doctype html><html><body></body></html>', {
 });
 
 const environment: GitHubClientEnvironment = {
+  muting: DEFAULT_PULL_MUTING_CONFIG,
   host: 'github.example.com',
   isGitHubDotCom: false,
   oauthEnabled: false,

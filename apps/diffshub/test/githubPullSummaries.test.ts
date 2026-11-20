@@ -949,3 +949,103 @@ describe('muted authors', () => {
     expect((await list(`mute=${tooMany.join(',')}`)).status).toBe(400);
   });
 });
+
+describe('muted branches and stale pulls', () => {
+  test('adds -head: exclusions and the staleness cutoff on open searches', () => {
+    const variables = buildActivePullsVariables({
+      involves: ['authored'],
+      mutedBranches: ['renovate', 'dependabot'],
+      staleCutoff: '2026-09-20',
+      text: OPEN,
+    });
+    expect(variables.query).toBe(
+      'is:open is:pr archived:false author:@me -head:renovate -head:dependabot updated:>=2026-09-20 sort:updated-desc'
+    );
+    // The hidden count is everything muting removed, staleness included.
+    expect(variables.unmutedQuery).toBe(
+      'is:open is:pr archived:false author:@me'
+    );
+    expect(variables.withUnmuted).toBe(true);
+  });
+
+  test('a typed head: term lifts that branch exclusion', () => {
+    const query = buildActiveSearchQuery({
+      involves: [],
+      mutedBranches: ['renovate', 'dependabot'],
+      text: 'is:open head:renovate',
+    });
+    expect(query).not.toContain('-head:renovate');
+    expect(query).toContain('-head:dependabot');
+  });
+
+  test('a typed head: under a muted prefix lifts that prefix', () => {
+    const query = buildActiveSearchQuery({
+      involves: [],
+      mutedBranches: ['renovate', 'dependabot'],
+      text: 'is:open head:renovate/pkg-update',
+    });
+    expect(query).not.toContain('-head:renovate');
+    expect(query).toContain('-head:dependabot');
+  });
+
+  // Age only makes an open pull noise, and a search that already filters or
+  // sorts by update time is looking at age on purpose.
+  test('staleness applies only to open searches without their own update terms', () => {
+    const query = (text: string) =>
+      buildActiveSearchQuery({ involves: [], staleCutoff: '2026-09-20', text });
+    expect(query('is:open')).toContain('updated:>=2026-09-20');
+    expect(query('is:merged')).not.toContain('updated:>=');
+    expect(query('is:merged OR is:open')).not.toContain('updated:>=');
+    expect(query('NOT is:open')).not.toContain('updated:>=');
+    expect(query('is:open OR label:bug')).not.toContain('updated:>=');
+    expect(query('is:open -is:merged label:bug')).toContain(
+      'updated:>=2026-09-20'
+    );
+    expect(query('')).not.toContain('updated:>=');
+    expect(query('is:open updated:<2026-01-01')).not.toContain(
+      'updated:>=2026-09-20'
+    );
+    expect(query('is:open sort:updated-asc')).not.toContain('updated:>=');
+  });
+
+  test('the route reads muteHead and stale', async () => {
+    const searches: string[] = [];
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation((async (
+      _input: RequestInfo | URL,
+      init?: RequestInit
+    ) => {
+      const body = JSON.parse(String(init?.body)) as {
+        variables: { query?: string };
+      };
+      if (body.variables.query != null) {
+        searches.push(body.variables.query);
+      }
+      return Response.json({
+        data: {
+          pulls: { issueCount: 0, nodes: [], pageInfo: { hasNextPage: false } },
+          unmuted: { issueCount: 0 },
+        },
+      });
+    }) as typeof fetch);
+    try {
+      const response = await GET(
+        new NextRequest(
+          'https://diffshub.test/api/github-pulls?involves=authored&q=is:open&muteHead=renovate&stale=2w',
+          { headers: { Authorization: 'Bearer test-token' } }
+        )
+      );
+      expect(response.status).toBe(200);
+      expect(searches[0]).toContain('-head:renovate');
+      expect(searches[0]).toMatch(/updated:>=\d{4}-\d{2}-\d{2} /);
+      const bad = await GET(
+        new NextRequest(
+          'https://diffshub.test/api/github-pulls?involves=authored&q=is:open&stale=5m',
+          { headers: { Authorization: 'Bearer test-token' } }
+        )
+      );
+      expect(bad.status).toBe(400);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});

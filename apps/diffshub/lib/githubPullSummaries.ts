@@ -4,6 +4,7 @@
 // optional set of repositories, and the GitHub search text typed in the
 // page's query bar.
 
+import { matchesMutedBranch } from './muteRules';
 import { includesName } from './nameList';
 import type { PullRequestRef } from './pullCommentsClient';
 import type { PullDetails, PullLabel } from './pullInfoClient';
@@ -12,6 +13,7 @@ import {
   DEFAULT_PULL_SORT,
   hasOrOperator,
   hasQualifier,
+  listsOnlyOpenPulls,
   normalizeQualifierNegation,
   readPositiveQualifierValues,
   splitPullSort,
@@ -86,6 +88,9 @@ export interface PullSummary {
   // The head commit when the list loaded, so the preview's details
   // supplement (keyed by head) can be prefetched alongside its pull info.
   headSha?: string;
+  // The branch the pull comes from, which branch mutes (lib/muteRules)
+  // match by prefix.
+  headRefName?: string;
   // GitHub's GraphQL node id, which the dashboard's follow-up status read
   // (PULL_STATUSES_QUERY) addresses the pull by.
   nodeId?: string;
@@ -280,6 +285,13 @@ interface PullSearchScope {
   // Author search names (lib/mutedAuthors) whose pulls are left out, except
   // any the text asks for with an author: term.
   mutedAuthors?: readonly string[];
+  // Head-branch prefixes (lib/muteRules) whose pulls are left out, except
+  // any the text asks for with a head: term.
+  mutedBranches?: readonly string[];
+  // The `updated:>=` value (lib/muteRules staleCutoff) open pulls must meet,
+  // when staleness muting is on and the search allows it (see
+  // staleMutingApplies).
+  staleCutoff?: string;
   // The query bar's GitHub search text, e.g. "is:open label:bug". Its last
   // sort: qualifier (if any) replaces the default recently-updated order.
   text?: string;
@@ -314,42 +326,89 @@ function reposQualifier(repos: readonly string[]): string | undefined {
   return terms.length === 1 ? terms[0] : `(${terms.join(' OR ')})`;
 }
 
-// The muted authors a search actually excludes: all but those the search
-// text asks for with an author: term, since excluding an author the viewer
-// typed in would empty the list. The server builds its -author: exclusions
-// from this and the dashboard dims the same authors' rows, so the two agree.
-export function effectiveMutedAuthors(
+// The muted names a search actually excludes: all but those the search text
+// asks for with a positive `qualifier` term, since excluding one the viewer
+// typed in would empty the list. `isNamed` matches a muted name against the
+// typed values the same way the mute itself matches pulls. The server builds
+// its exclusions from this and the dashboard dims the same rows, so the two
+// agree.
+function effectiveMutedNames(
   muted: readonly string[],
-  text: string
+  text: string,
+  qualifier: 'author' | 'head',
+  isNamed: (typed: readonly string[], name: string) => boolean
 ): readonly string[] {
   if (muted.length === 0) {
     return muted;
   }
-  const named = readPositiveQualifierValues(text, 'author');
-  return muted.filter((author) => !includesName(named, author));
+  const typed = readPositiveQualifierValues(text, qualifier);
+  return muted.filter((name) => !isNamed(typed, name));
 }
 
-function scopeMutedAuthors(scope: PullSearchScope): readonly string[] {
-  return effectiveMutedAuthors(scope.mutedAuthors ?? [], scope.text ?? '');
+export function effectiveMutedAuthors(
+  muted: readonly string[],
+  text: string
+): readonly string[] {
+  return effectiveMutedNames(muted, text, 'author', includesName);
+}
+
+// Muted branches are prefixes, so a typed head: under one (head:renovate/x
+// with renovate muted) lifts it.
+export function effectiveMutedBranches(
+  muted: readonly string[],
+  text: string
+): readonly string[] {
+  return effectiveMutedNames(muted, text, 'head', (typed, prefix) =>
+    typed.some((head) => matchesMutedBranch([prefix], head))
+  );
+}
+
+// Whether a search hides stale pulls: only one listing open pulls (age is
+// what makes an open pull noise; a merged or closed one is history), and not
+// when the text already filters or sorts by update time, which says the
+// viewer is looking at age on purpose.
+export function staleMutingApplies(text: string): boolean {
+  return (
+    listsOnlyOpenPulls(text) &&
+    !hasQualifier(text, 'updated') &&
+    splitPullSort(text).sort !== 'updated-asc'
+  );
+}
+
+// The terms muting adds to a search: muted authors, muted branches, and the
+// staleness cutoff.
+function scopeMuteTerms(scope: PullSearchScope): string[] {
+  const text = scope.text ?? '';
+  const terms = [
+    ...effectiveMutedAuthors(scope.mutedAuthors ?? [], text).map(
+      (author) => `-author:${author}`
+    ),
+    ...effectiveMutedBranches(scope.mutedBranches ?? [], text).map(
+      (prefix) => `-head:${prefix}`
+    ),
+  ];
+  if (scope.staleCutoff != null && staleMutingApplies(text)) {
+    terms.push(`updated:>=${scope.staleCutoff}`);
+  }
+  return terms;
 }
 
 // The dashboard search, minus its sort: the typed text first (grouped when it
 // has its own OR, so the AND-ed scope terms after it apply to every branch),
 // then is:pr, the audience, `extra` (which narrows the audience further), the
-// repository scope, and the muted-author exclusions. Archived repos are
+// repository scope, and the muting terms (scopeMuteTerms). Archived repos are
 // skipped unless the text says otherwise.
 export function buildActiveSearchQuery(
   scope: PullSearchScope,
   extra?: string
 ): string {
-  const exclusions = scopeMutedAuthors(scope).map(
-    (author) => `-author:${author}`
+  return [buildUnmutedSearchQuery(scope, extra), ...scopeMuteTerms(scope)].join(
+    ' '
   );
-  return [buildUnmutedSearchQuery(scope, extra), ...exclusions].join(' ');
 }
 
-// buildActiveSearchQuery without the muted-author exclusions, whose hit
-// count tells how many pulls muting hides.
+// buildActiveSearchQuery without the muting terms, whose hit count tells how
+// many pulls muting hides.
 function buildUnmutedSearchQuery(
   scope: PullSearchScope,
   extra?: string
@@ -429,9 +488,9 @@ function buildPullSummary(fields: {
 //   "commented" term, sorted the same way, so every commented pull in the
 //   main page also lands in the subset's page (see buildActivePullsVariables
 //   for later pages). Skipped when it can't match anything.
-// - UNMUTED_COUNT_QUERY, on the first page of a search with muted authors:
-//   the same search without their exclusions, counted, so the list can say
-//   how many pulls muting hid.
+// - UNMUTED_COUNT_QUERY, on the first page of a muted search: the same
+//   search without the muting terms, counted, so the list can say how many
+//   pulls muting hid.
 //
 // Each response's data sits under its own alias (pulls, commented,
 // unmuted), so merging the three objects gives parseActivePullsPayload the
@@ -452,6 +511,7 @@ export const ACTIVE_PULLS_QUERY = `query ($query: String!, $first: Int!, $after:
         state
         updatedAt
         headRefOid
+        headRefName
         labels(first: 6) { nodes { name color } }
         author { __typename login avatarUrl }
         repository { name owner { login } }
@@ -655,7 +715,7 @@ export function buildActivePullsVariables(
     // Sort doesn't change a count, so the unmuted search runs unsorted.
     unmutedQuery: buildUnmutedSearchQuery(scope),
     withCommented: audienceCanComment && (cursor == null || window != null),
-    withUnmuted: cursor == null && scopeMutedAuthors(scope).length > 0,
+    withUnmuted: cursor == null && scopeMuteTerms(scope).length > 0,
   };
 }
 
@@ -746,6 +806,9 @@ function parseGraphQLPullNode(
   }
   if (typeof record.headRefOid === 'string' && record.headRefOid !== '') {
     summary.headSha = record.headRefOid;
+  }
+  if (typeof record.headRefName === 'string' && record.headRefName !== '') {
+    summary.headRefName = record.headRefName;
   }
   if (typeof record.id === 'string' && record.id !== '') {
     summary.nodeId = record.id;

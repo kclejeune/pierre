@@ -420,6 +420,16 @@
 diffs-container {
   -webkit-font-smoothing: auto;
   font-weight: 450;
+  /* The hunk separators ("N unmodified lines") a step quieter than the
+     library's default, whose 15% lift stood out as bright bars on dark
+     themes. Same formula, so they still track each view's code background.
+     Set on the host, where the library declares --diffs-bg and --diffs-mixer,
+     so it reaches every diff and file view (review, quick look, conflicts,
+     browse). */
+  --diffs-bg-separator-override: light-dark(
+    color-mix(in lab, var(--diffs-bg) 97%, var(--diffs-mixer)),
+    color-mix(in lab, var(--diffs-bg) 92%, var(--diffs-mixer))
+  );
 }
 
 @layer base {

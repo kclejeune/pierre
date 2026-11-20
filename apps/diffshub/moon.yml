@@ -17,6 +17,9 @@ tasks:
   # the generated app output.
   build:
     command: 'next build'
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      WRANGLER_SEND_METRICS: 'false'
     deps:
       - '^:build'
     outputs:
@@ -68,10 +71,25 @@ tasks:
   # dashboard default (npx wrangler deploy).
   cf-build:
     command: 'opennextjs-cloudflare build'
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      WRANGLER_SEND_METRICS: 'false'
     deps:
-      - '^:build'
+      # Both builds write .next. Order them when CI requests both targets.
+      - 'build'
     outputs:
       - '.open-next/**/*'
+    options:
+      runInCI: 'always'
+
+  # Starts the built Worker locally and catches adapter/runtime mismatches
+  # before deployment. No credentials or remote Cloudflare bindings are used.
+  test-cf:
+    command: 'node scripts/check-cloudflare.ts'
+    deps:
+      - 'cf-build'
+    env:
+      WRANGLER_SEND_METRICS: 'false'
     options:
       runInCI: 'always'
 

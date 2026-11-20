@@ -461,7 +461,7 @@ export function PullDetailsControl({
         align="end"
         // No padding on the scroller itself (see PullPreviewPane): the
         // panel's sticky footer would otherwise stop short of the bottom.
-        className="max-h-[min(85vh,60rem)] w-[560px] max-w-[92vw] overflow-y-auto p-0 md:w-[720px]"
+        className="max-h-[min(85vh,60rem)] w-[560px] max-w-[calc(100vw-1rem)] overflow-y-auto p-0 md:w-[720px]"
         style={dropdownThemeStyle}
       >
         <div className="p-3">

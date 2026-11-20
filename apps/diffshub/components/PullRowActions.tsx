@@ -2,7 +2,9 @@
 
 import {
   IconArrowUpRight,
+  IconBolt,
   IconBrandGithub,
+  IconCheckbox,
   IconCheckCircle,
   IconEllipsis,
   IconEyeSlash,
@@ -58,7 +60,14 @@ interface PullRowActionsProps {
   // its PR segment's items).
   className?: string;
   onAction(pull: PullSummary, action: PullRowAction): void;
+  // Rows only: checks or unchecks this pull for the batch bar. The menu's
+  // "Select" item is the way into multi-select on touch screens, where the
+  // hover-revealed checkbox never shows; with a mouse it's a second route.
+  // Absent when the list can't select (or a batch has it locked).
+  onToggleSelected?(): void;
   pull: PullSummary;
+  // Whether this row is checked, for the item's Select/Deselect wording.
+  selected?: boolean;
   // 'row' (the /pulls list) reveals the trigger on row hover and offers
   // "Open in new tab"; 'header' (the review page, already showing the pull)
   // keeps the trigger visible and leaves that item out.
@@ -77,7 +86,9 @@ export function PullRowActions({
   className,
   muteFull,
   onAction,
+  onToggleSelected,
   pull,
+  selected = false,
   variant = 'row',
 }: PullRowActionsProps) {
   // The menu's contents mount only while it's open: every /pulls row has
@@ -89,15 +100,28 @@ export function PullRowActions({
         <button
           type="button"
           aria-label={`Actions for ${pull.owner}/${pull.repo}#${pull.number}`}
-          title="Pull request actions"
+          title={
+            variant === 'header' ? 'Quick actions' : 'Pull request actions'
+          }
           className={cn(
             'text-muted-foreground hover:text-foreground focus-visible:ring-ring flex cursor-pointer items-center justify-center outline-none focus-visible:ring-2',
             variant === 'row' &&
               'bg-background size-7 rounded-md border opacity-0 shadow-xs group-hover/row:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100',
+            // Touch screens never hover, so a hover-revealed trigger would
+            // be unreachable there: it stays visible as a plain 36px button
+            // at the row's trailing edge (PullRequestRow pads for it).
+            variant === 'row' &&
+              'pointer-coarse:size-9 pointer-coarse:border-transparent pointer-coarse:bg-transparent pointer-coarse:opacity-100 pointer-coarse:shadow-none',
             className
           )}
         >
-          <IconEllipsis className="size-3.5" />
+          {/* The review header also has the page's "⋯" menu, so this one
+              takes a bolt to tell the two apart without a tooltip. */}
+          {variant === 'header' ? (
+            <IconBolt className="size-3.5" />
+          ) : (
+            <IconEllipsis className="size-3.5" />
+          )}
         </button>
       </DropdownMenuTrigger>
       {menuOpen && (
@@ -106,8 +130,10 @@ export function PullRowActions({
           busy={busy}
           muteFull={muteFull}
           pull={pull}
+          selected={selected}
           variant={variant}
           onAction={onAction}
+          onToggleSelected={onToggleSelected}
         />
       )}
     </DropdownMenu>
@@ -121,7 +147,9 @@ function PullRowActionsMenu({
   busy,
   muteFull,
   onAction,
+  onToggleSelected,
   pull,
+  selected,
   variant,
 }: Omit<PullRowActionsProps, 'className'>) {
   const dropdownStyle = useDropdownChromeStyle();
@@ -133,6 +161,15 @@ function PullRowActionsMenu({
   const githubHref = githubPullURL(webURL, pull);
   return (
     <DropdownMenuContent align="end" className="min-w-52" style={dropdownStyle}>
+      {onToggleSelected != null && (
+        <>
+          <DropdownMenuItem className="gap-2" onSelect={onToggleSelected}>
+            <IconCheckbox className="size-3.5" />
+            {selected === true ? 'Deselect' : 'Select'}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+        </>
+      )}
       {open && (
         <>
           <DropdownMenuItem

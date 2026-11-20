@@ -1,7 +1,8 @@
 'use client';
 
-import { IconCheck, IconChevronSm, IconMinus } from '@pierre/icons';
+import { IconCheck, IconChevronSm, IconFilter, IconMinus } from '@pierre/icons';
 import {
+  type ComponentProps,
   type KeyboardEvent,
   type ReactNode,
   useEffect,
@@ -73,18 +74,18 @@ export function PullFilterMenus({
   const count = filters.reduce((total, filter) => total + filter.active, 0);
   return (
     <>
-      <div className="ml-auto hidden items-center @min-[44rem]/header:flex">
+      <div className="hidden items-center @min-[44rem]/header:flex">
         {filters.map((filter) => (
           <DropdownMenu key={filter.id}>
             <FilterTrigger
-              active={filter.active}
+              active={filter.active > 0}
               label={filter.label}
               // One choice is visible in the label's color; a count only
               // helps once a filter (Label) holds several.
-              showCount={filter.active > 1}
+              count={filter.active > 1 ? filter.active : undefined}
             />
             <DropdownMenuContent
-              align="end"
+              align="start"
               className="max-h-96 w-64 overflow-y-auto"
             >
               {filter.items}
@@ -92,10 +93,15 @@ export function PullFilterMenus({
           </DropdownMenu>
         ))}
       </div>
-      <div className="ml-auto @min-[44rem]/header:hidden">
+      <div className="@min-[44rem]/header:hidden">
         <DropdownMenu>
-          <FilterTrigger active={count} label="Filters" showCount={count > 0} />
-          <DropdownMenuContent align="end" className="min-w-48">
+          <FilterTrigger
+            active={count > 0}
+            count={count > 0 ? count : undefined}
+            icon={<IconFilter className="size-3" />}
+            label="Filters"
+          />
+          <DropdownMenuContent align="start" className="min-w-48">
             {filters.map((filter) => (
               <DropdownMenuSub key={filter.id}>
                 <DropdownMenuSubTrigger className="gap-2">
@@ -128,29 +134,38 @@ export function PullFilterMenus({
   );
 }
 
-// A filter menu's ghost trigger: muted until the filter sets something, with
-// an optional count of what it sets.
-function FilterTrigger({
+// The list toolbar's "label ⌄" menu trigger, shared by the filter menus,
+// muting, and sort so they read as one row of peers: muted until the menu
+// sets something (`active`), with an optional leading icon and a muted
+// count after the label.
+export function FilterTrigger({
   active,
+  count,
+  icon,
   label,
-  showCount,
+  ...rest
 }: {
-  active: number;
-  label: string;
-  showCount: boolean;
-}) {
+  active: boolean;
+  count?: ReactNode;
+  icon?: ReactNode;
+  label: ReactNode;
+} & Pick<ComponentProps<'button'>, 'aria-label' | 'title'>) {
   return (
     <DropdownMenuTrigger asChild>
       <Button
+        {...rest}
         variant="ghost"
-        size="xs"
+        size="toolbar"
         className={cn(
-          'h-7 tabular-nums',
-          active === 0 ? 'text-muted-foreground' : 'text-foreground'
+          'tabular-nums',
+          active ? 'text-foreground' : 'text-muted-foreground'
         )}
       >
+        {icon}
         {label}
-        {showCount && <span className="text-muted-foreground">{active}</span>}
+        {count != null && (
+          <span className="text-muted-foreground">{count}</span>
+        )}
         <IconChevronSm className="size-3" />
       </Button>
     </DropdownMenuTrigger>

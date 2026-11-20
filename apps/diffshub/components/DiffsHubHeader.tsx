@@ -16,10 +16,10 @@ import {
   IconFile,
   IconFileTreeFill,
   IconFolder,
-  IconGearFill,
   IconPin,
   IconShare,
   IconSymbolDiffstat,
+  IconType,
 } from '@pierre/icons';
 import { type ColorMode } from '@pierre/theming';
 import { ArrowLeft } from 'lucide-react';
@@ -422,7 +422,10 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
                   title="Display settings"
                   className={CHROME_ICON_BUTTON_CLASS}
                 >
-                  <IconGearFill className="size-4 md:size-3" />
+                  {/* "Aa", not a gear: the menu sets how the diff text
+                      renders, and a gear sat beside the theme button's sun
+                      reads as its twin at icon size. */}
+                  <IconType className="size-4 md:size-3" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent

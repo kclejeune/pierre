@@ -1,12 +1,15 @@
 'use client';
 
+import { IconCheckbox, IconCheckCircle, IconMerged } from '@pierre/icons';
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from './Button';
 import { readStoredGitHubToken } from './githubSession';
+import { PULL_STATE_DISPLAY } from './pullStateDisplay';
 import { Spinner } from './Spinner';
 import { useLatestValueRef } from './useLatestValueRef';
+import { cn } from '@/lib/cn';
 import { pullKey, type PullSummary } from '@/lib/githubPullSummaries';
 import {
   type PullBatchAction,
@@ -177,22 +180,31 @@ export function PullBatchBar({
     <div
       role="toolbar"
       aria-label="Selected pull requests"
-      className="flex min-h-7 flex-1 flex-wrap items-center gap-2 text-xs"
+      // Wraps like the list toolbar it replaces: the count and Select all
+      // on the left, the actions on the right, and on a narrow list the
+      // actions drop to their own line as a group, left-aligned
+      // (space-between puts a line's lone item at the start).
+      className="flex min-h-7 flex-1 flex-wrap items-center justify-between gap-2 text-xs"
     >
-      <span className="text-foreground font-medium tabular-nums">
-        {running == null ? `${count} selected` : `${running.total} in batch`}
-      </span>
-      {!allLoadedChecked && running == null && (
-        <Button
-          size="xs"
-          variant="link"
-          className="h-7 px-1"
-          onClick={onSelectAll}
-        >
-          Select all {loadedCount}
-        </Button>
-      )}
-      <div className="ml-auto flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5">
+        {/* px-1.5 matches the state tab this bar replaces, so the text
+            doesn't jump sideways when a row is checked. */}
+        <span className="text-foreground px-1.5 font-medium tabular-nums">
+          {running == null ? `${count} selected` : `${running.total} in batch`}
+        </span>
+        {!allLoadedChecked && running == null && (
+          <Button
+            size="toolbar"
+            variant="outline"
+            className="px-2"
+            onClick={onSelectAll}
+          >
+            <IconCheckbox className="size-3.5" />
+            Select all {loadedCount}
+          </Button>
+        )}
+      </div>
+      <div className="flex items-center gap-1.5">
         {running != null ? (
           <span className="text-muted-foreground flex items-center gap-1.5 tabular-nums">
             <Spinner className="size-3" />
@@ -202,37 +214,48 @@ export function PullBatchBar({
         ) : (
           <>
             <Button
-              size="xs"
+              size="toolbar"
               variant="outline"
-              className="h-7 px-2.5"
+              className="px-2"
               onClick={() => run('approve')}
             >
+              {/* The row menu's glyphs for the same actions. The buttons
+                  stay neutral: the green belongs to the merge confirm, the
+                  step that actually merges. */}
+              <IconCheckCircle className="size-3.5 text-emerald-600 dark:text-emerald-400" />
               Approve
             </Button>
             {confirmingMerge ? (
               <Button
-                size="xs"
+                size="toolbar"
                 variant="success"
-                className="h-7 px-2.5"
+                className="px-2"
                 onClick={() => run('merge')}
               >
+                <IconMerged className="size-3.5" />
                 Confirm merge of {count}
               </Button>
             ) : (
               <Button
-                size="xs"
+                size="toolbar"
                 variant="outline"
-                className="h-7 px-2.5"
+                className="px-2"
                 title="Join the merge queue where there is one, otherwise merge with the repository's default method"
                 onClick={() => setConfirmedFor(selectionKey)}
               >
+                <IconMerged
+                  className={cn(
+                    'size-3.5',
+                    PULL_STATE_DISPLAY.merged.className
+                  )}
+                />
                 Merge when ready
               </Button>
             )}
             <Button
-              size="xs"
+              size="toolbar"
               variant="ghost"
-              className="h-7 px-2"
+              className="px-2"
               onClick={onClear}
             >
               Clear

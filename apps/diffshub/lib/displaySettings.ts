@@ -16,6 +16,9 @@ export interface DiffsHubDisplaySettings {
   markdownView?: 'rendered' | 'raw';
   overflow?: 'wrap' | 'scroll';
   showBackgrounds?: boolean;
+  // Whether previous/next comment stepping also visits local drafts and
+  // pending-review comments, not just GitHub conversations.
+  stepThroughDrafts?: boolean;
 }
 
 // What the viewer shows for a setting nobody has picked. diffStyle has no
@@ -28,6 +31,7 @@ export const DEFAULT_DISPLAY_SETTINGS = {
   markdownView: 'raw',
   overflow: 'scroll',
   showBackgrounds: true,
+  stepThroughDrafts: true,
 } as const satisfies Required<Omit<DiffsHubDisplaySettings, 'diffStyle'>>;
 
 export function loadDisplaySettings(): DiffsHubDisplaySettings {
@@ -73,6 +77,9 @@ export function loadDisplaySettings(): DiffsHubDisplaySettings {
   }
   if (typeof record.showBackgrounds === 'boolean') {
     settings.showBackgrounds = record.showBackgrounds;
+  }
+  if (typeof record.stepThroughDrafts === 'boolean') {
+    settings.stepThroughDrafts = record.stepThroughDrafts;
   }
   return settings;
 }

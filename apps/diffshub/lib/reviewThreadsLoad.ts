@@ -4,13 +4,13 @@ import type { PullReviewThreadState, ViewerLoadState } from './types';
 // Comments cell) that must not mistake "not fetched yet" or "fetch failed"
 // for "this pull has no conversations".
 //
-// Once `ready`, a pull's conversations are the threads in the diff, counted
-// from the sidebar entries (which resolves and replies keep live), plus
-// `detachedCounts`: threads that can never reach the diff, because GitHub
+// Once `ready`, a pull's conversations are the threads in the diff (the
+// sidebar entries, which resolves and replies keep live) plus
+// `detachedRootIds`: threads that can never reach the diff, because GitHub
 // marks them outdated (no current line to anchor to), their file isn't part
 // of this diff (e.g. a commit-range view), or there is no viewer at all (an
-// empty or failed diff). Those have no card, so their fetched resolution
-// stays accurate.
+// empty or failed diff). Those have no card, so the Comments list shows
+// them from the fetch (lib/detachedCommentSections).
 //
 // `resolvedKnown` is false unless every thread has a resolution state:
 // without a token, when the GraphQL request failed, or when it returned only
@@ -20,7 +20,7 @@ export type PullReviewThreadsLoad =
   | { kind: 'unavailable' }
   | {
       kind: 'ready';
-      detachedCounts: { resolved: number; total: number };
+      detachedRootIds: readonly number[];
       resolvedKnown: boolean;
     };
 
@@ -69,17 +69,11 @@ export function describeReviewThreadsLoad({
   ) {
     return { kind: 'loading' };
   }
-  const detached = viewerless
-    ? rootIds
-    : rootIds.filter((rootId) => !attachableRootIds.has(rootId));
   return {
     kind: 'ready',
-    detachedCounts: {
-      resolved: detached.filter(
-        (rootId) => states?.get(rootId)?.isResolved === true
-      ).length,
-      total: detached.length,
-    },
+    detachedRootIds: viewerless
+      ? rootIds
+      : rootIds.filter((rootId) => !attachableRootIds.has(rootId)),
     // Coverage, not the map's presence: a partial map leaves some threads'
     // resolution unknown.
     resolvedKnown:

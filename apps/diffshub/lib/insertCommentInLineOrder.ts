@@ -1,5 +1,9 @@
 import type { DiffsHubSavedCommentEntry } from './types';
 
+// Places a comment thread in its file's list, which runs in line order.
+// Updating a thread (a reply, resolving it) keeps its place when its line is
+// unchanged, so it doesn't jump past other threads on the same line in the
+// sidebar or in previous/next comment stepping.
 export function insertCommentInLineOrder(
   comments: readonly DiffsHubSavedCommentEntry[],
   entry: DiffsHubSavedCommentEntry
@@ -10,6 +14,10 @@ export function insertCommentInLineOrder(
       existingIndex = index;
       break;
     }
+  }
+
+  if (comments[existingIndex]?.lineNumber === entry.lineNumber) {
+    return comments.with(existingIndex, entry);
   }
 
   const nextComments =

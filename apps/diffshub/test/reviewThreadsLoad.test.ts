@@ -32,12 +32,12 @@ describe('describeReviewThreadsLoad', () => {
   test('threads in the diff leave nothing detached', () => {
     expect(describeReviewThreadsLoad(SETTLED)).toEqual({
       kind: 'ready',
-      detachedCounts: { resolved: 0, total: 0 },
+      detachedRootIds: [],
       resolvedKnown: true,
     });
   });
 
-  test('outdated threads count as detached, with their resolution', () => {
+  test('outdated threads are detached', () => {
     // Threads 2 and 3 are outdated: grouping dropped them, so only 1 is
     // attachable. GraphQL still reports their state.
     expect(
@@ -52,7 +52,7 @@ describe('describeReviewThreadsLoad', () => {
       })
     ).toEqual({
       kind: 'ready',
-      detachedCounts: { resolved: 1, total: 2 },
+      detachedRootIds: [2, 3],
       resolvedKnown: true,
     });
   });
@@ -66,7 +66,7 @@ describe('describeReviewThreadsLoad', () => {
       })
     ).toEqual({
       kind: 'ready',
-      detachedCounts: { resolved: 1, total: 3 },
+      detachedRootIds: [1, 2, 3],
       resolvedKnown: true,
     });
   });
@@ -119,7 +119,7 @@ describe('describeReviewThreadsLoad', () => {
       })
     ).toEqual({
       kind: 'ready',
-      detachedCounts: { resolved: 0, total: 0 },
+      detachedRootIds: [],
       resolvedKnown: true,
     });
   });
@@ -134,7 +134,7 @@ describe('describeReviewThreadsLoad', () => {
       })
     ).toEqual({
       kind: 'ready',
-      detachedCounts: { resolved: 1, total: 3 },
+      detachedRootIds: [1, 2, 3],
       resolvedKnown: true,
     });
   });

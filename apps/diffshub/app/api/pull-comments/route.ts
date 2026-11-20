@@ -619,6 +619,9 @@ function normalizeReviewComment(comment: unknown): PullReviewComment | null {
       typeof record.in_reply_to_id === 'number' ? record.in_reply_to_id : null,
     line: typeof record.line === 'number' ? record.line : null,
     ...readReactionFields(record),
+    ...(typeof record.original_line === 'number'
+      ? { originalLine: record.original_line }
+      : {}),
     path: record.path,
     side: isGitHubDiffSide(record.side) ? record.side : null,
     startLine: typeof record.start_line === 'number' ? record.start_line : null,

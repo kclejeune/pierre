@@ -136,6 +136,10 @@ interface HeaderProps {
   setOverflow(value: 'wrap' | 'scroll'): void;
   setShowBackgrounds(value: boolean): void;
   showBackgrounds: boolean;
+  // Whether comment stepping visits drafts; the menu row is left out when
+  // undefined (pages without comment stepping).
+  stepThroughDrafts?: boolean;
+  setStepThroughDrafts(value: boolean): void;
 }
 
 export const DiffsHubHeader = memo(function DiffsHubHeader({
@@ -176,6 +180,8 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
   setOverflow,
   setShowBackgrounds,
   showBackgrounds,
+  stepThroughDrafts,
+  setStepThroughDrafts,
 }: HeaderProps) {
   const [currentUrl, setCurrentUrl] = useState(initialUrl);
   // Only show the external-link button when the input still reflects the
@@ -468,6 +474,25 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
                     />
                   </label>
                 </DropdownMenuItem>
+                {stepThroughDrafts != null && (
+                  <DropdownMenuItem
+                    className="cursor-default p-0"
+                    onSelect={(e) => e.preventDefault()}
+                  >
+                    <label
+                      className={SETTING_ROW_CLASS}
+                      title="Previous/next comment (p and n) also visits your drafts and pending review comments"
+                    >
+                      <span className="min-w-0 flex-1">
+                        Step through drafts
+                      </span>
+                      <Switch
+                        checked={stepThroughDrafts}
+                        onCheckedChange={setStepThroughDrafts}
+                      />
+                    </label>
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   className="w-full px-2 focus:bg-transparent"
                   onSelect={(e) => e.preventDefault()}

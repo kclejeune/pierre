@@ -27,6 +27,7 @@ import {
   type PaletteRunnableEntry,
   useCommandPaletteContext,
 } from './commandPaletteContext';
+import { CommentStepper } from './CommentStepper';
 import { DiffFindBar } from './DiffFindBar';
 import type { DiscussionActions } from './DiffsHubCommentsList';
 import { DiffsHubHeader } from './DiffsHubHeader';
@@ -51,6 +52,7 @@ import { ReviewPullActions } from './ReviewPullActions';
 import { ReviewSubmitControl } from './ReviewSubmitControl';
 import { SidebarResizeHandle } from './SidebarResizeHandle';
 import { ThemeSourceProvider } from './ThemeSourceProvider';
+import { useCommentNavigation } from './useCommentNavigation';
 import { useDiffSearchController } from './useDiffSearchController';
 import { useDiffSearchUI } from './useDiffSearchUI';
 import { useGitHubDiffFileLoader } from './useGitHubDiffFileLoader';
@@ -73,7 +75,11 @@ import {
   parseCollapsePatterns,
   saveCollapsePatternsText,
 } from '@/lib/collapsePatterns';
-import { MOBILE_MEDIA_QUERY } from '@/lib/constants';
+import { MOBILE_MEDIA_QUERY, UNRESOLVED_COMMENTS_PARAM } from '@/lib/constants';
+import {
+  buildDetachedCommentSections,
+  mergeCommentSections,
+} from '@/lib/detachedCommentSections';
 import { describeDiffRefs, formatDiffSourceShorthand } from '@/lib/diffRefs';
 import {
   DEFAULT_DISPLAY_SETTINGS,
@@ -101,6 +107,7 @@ import { removeSavedCommentSidebarEntry } from '@/lib/removeSavedCommentSidebarE
 import { docCommentTarget } from '@/lib/renderedDocDom';
 import { buildDiffHeadTreePath } from '@/lib/repoBrowser';
 import { scrollDocTargetIntoView } from '@/lib/scrollDocTargetIntoView';
+import { consumeSearchParam } from '@/lib/searchParams';
 import type { DarkThemeName, LightThemeName } from '@/lib/themeNames';
 import { toastRequestError } from '@/lib/toastRequestError';
 import type {
@@ -215,6 +222,13 @@ function ReviewUIInner({
     setShowBackgrounds(value);
     updateDisplaySettings({ showBackgrounds: value });
   }, []);
+  const [stepThroughDrafts, setStepThroughDrafts] = useState<boolean>(
+    DEFAULT_DISPLAY_SETTINGS.stepThroughDrafts
+  );
+  const handleSetStepThroughDrafts = useCallback((value: boolean) => {
+    setStepThroughDrafts(value);
+    updateDisplaySettings({ stepThroughDrafts: value });
+  }, []);
   const {
     clearToken: clearGitHubToken,
     hasToken: hasGitHubToken,
@@ -322,7 +336,14 @@ function ReviewUIInner({
       recordRecentDiff({ path });
     }
   }, [domain, path]);
+  // Set when a ?comments=unresolved link opened the mobile overlay before the
+  // first load, so that load's reset doesn't immediately close it again.
+  const keepOverlayOnLoadRef = useRef(false);
   const handlePatchLoadStart = useCallback(() => {
+    if (keepOverlayOnLoadRef.current) {
+      keepOverlayOnLoadRef.current = false;
+      return;
+    }
     setFileTreeOverlayOpen(false);
   }, []);
   // On mobile the sidebar is an overlay, so opening its search tab also has
@@ -332,6 +353,22 @@ function ReviewUIInner({
       setFileTreeOverlayOpen(true);
     }
   }, []);
+  // The overview's Comments cell, and links that open the diff with
+  // ?comments=unresolved (the /pulls preview's), land on the sidebar's
+  // Comments tab filtered to unresolved threads.
+  const [unresolvedCommentsRequest, setUnresolvedCommentsRequest] = useState(0);
+  const openUnresolvedComments = useCallback(() => {
+    setUnresolvedCommentsRequest((request) => request + 1);
+    openSearchTabOverlay();
+  }, [openSearchTabOverlay]);
+  useEffect(() => {
+    // One-shot: the parameter is dropped as it's read, so a reload or a
+    // shared link opens the diff normally.
+    if (consumeSearchParam(UNRESOLVED_COMMENTS_PARAM) === 'unresolved') {
+      keepOverlayOnLoadRef.current = true;
+      openUnresolvedComments();
+    }
+  }, [openUnresolvedComments]);
   const {
     applyCollapseModeToLoaded,
     applyCollapsePatternsToLoaded,
@@ -525,6 +562,7 @@ function ReviewUIInner({
     setLineNumbers(stored.lineNumbers);
     setOverflow(stored.overflow);
     setShowBackgrounds(stored.showBackgrounds);
+    setStepThroughDrafts(stored.stepThroughDrafts);
   }, [applyCollapseModeToLoaded, applyMarkdownViewToLoaded]);
   useEffect(() => {
     restoreDisplaySettings();
@@ -692,7 +730,11 @@ function ReviewUIInner({
     () => setThreadsRefreshTick((tick) => tick + 1),
     []
   );
-  const reviewThreadsLoad = usePullReviewThreads({
+  const {
+    detachedThreads,
+    load: reviewThreadsLoad,
+    states: threadStates,
+  } = usePullReviewThreads({
     loadState,
     onDiscussionLoaded: setDiscussion,
     onThreadApplied: handleCommentSaved,
@@ -705,10 +747,29 @@ function ReviewUIInner({
     viewerReadyTick,
     viewerRef,
   });
+  // The Comments list's sections: the sidebar's entries (threads with a card
+  // in the diff, local drafts) plus the review threads without one, outdated
+  // or on files the diff doesn't show, so the list, its filters, the stepper,
+  // and the overview's count all see the same threads.
+  const pathToItemId = treeSource?.pathToItemId ?? null;
+  // Built apart from the merge so sidebar changes (threads landing, drafts)
+  // only redo the cheap merge, not every detached row.
+  const detachedCommentSections = useMemo(
+    () =>
+      buildDetachedCommentSections({
+        commentFileByItemId,
+        pathToItemId,
+        states: threadStates,
+        threads: detachedThreads,
+      }),
+    [commentFileByItemId, detachedThreads, pathToItemId, threadStates]
+  );
+  const listedCommentSections = useMemo(
+    () => mergeCommentSections(commentSections, detachedCommentSections),
+    [commentSections, detachedCommentSections]
+  );
   // Resolved vs total GitHub review conversations, for the pull overview's
-  // Comments bar: the sidebar's comment entries (threads in the diff, which
-  // resolves and replies keep current) plus the hook's counts for threads
-  // that can't be shown here, such as outdated ones. Waits for the hook, since
+  // Comments bar, counted from the listed threads. Waits for the hook, since
   // before the threads are in the diff an empty sidebar means "not loaded",
   // not "no conversations".
   const conversationCounts = useMemo((): ConversationCounts | null => {
@@ -718,17 +779,13 @@ function ReviewUIInner({
     if (reviewThreadsLoad.kind === 'unavailable') {
       return { kind: 'unavailable' };
     }
-    const inDiff = countSidebarConversations(commentSections);
-    const { detachedCounts } = reviewThreadsLoad;
-    const total = inDiff.total + detachedCounts.total;
+    const { resolved, total } = countSidebarConversations(
+      listedCommentSections
+    );
     return reviewThreadsLoad.resolvedKnown
-      ? {
-          kind: 'counted',
-          resolved: inDiff.resolved + detachedCounts.resolved,
-          total,
-        }
+      ? { kind: 'counted', resolved, total }
       : { kind: 'totalOnly', total };
-  }, [commentSections, reviewThreadsLoad]);
+  }, [listedCommentSections, reviewThreadsLoad]);
   // Shared by the header's PR chip and the sidebar's Overview tab.
   const pullDetailsModel = usePullDetailsModel({
     canWrite: hasGitHubToken,
@@ -896,6 +953,14 @@ function ReviewUIInner({
       if (viewer == null) {
         return;
       }
+      // A thread without a card in the diff can only go to its file, when
+      // the diff has it; the list row links to GitHub for the rest.
+      if (comment.detached != null) {
+        if (comment.detached.fileInDiff) {
+          handleFileHeaderSelect(comment.itemId);
+        }
+        return;
+      }
       // A file-level comment sits above the file's lines: go to the file.
       if (comment.lineType === 'file') {
         handleFileHeaderSelect(comment.itemId);
@@ -929,6 +994,20 @@ function ReviewUIInner({
     },
     [handleFileHeaderSelect, recordViewTarget]
   );
+  // Previous/next through the unresolved comment threads: the header
+  // stepper, n and p, and the palette. Sidebar clicks go through its
+  // `select`, so they move the stepper's position too.
+  const commentNavigation = useCommentNavigation(
+    listedCommentSections,
+    handleSelectComment,
+    { includeDrafts: stepThroughDrafts }
+  );
+  const {
+    goNext: goToNextComment,
+    goPrevious: goToPreviousComment,
+    select: selectComment,
+  } = commentNavigation;
+  const hasComments = commentNavigation.total > 0;
   const paletteCommands = useMemo((): PaletteRunnableEntry[] => {
     const commands: PaletteRunnableEntry[] = [
       {
@@ -969,6 +1048,34 @@ function ReviewUIInner({
         run: () => handleSetOverflow(overflow === 'wrap' ? 'scroll' : 'wrap'),
       },
     ];
+    if (hasComments) {
+      commands.push(
+        {
+          id: 'next-comment',
+          label: 'Next unresolved comment',
+          detail: 'n',
+          keywords: 'comment thread jump navigate down',
+          run: goToNextComment,
+        },
+        {
+          id: 'previous-comment',
+          label: 'Previous unresolved comment',
+          detail: 'p',
+          keywords: 'comment thread jump navigate up',
+          run: goToPreviousComment,
+        }
+      );
+    }
+    if (pullRequest != null) {
+      commands.push({
+        id: 'toggle-step-through-drafts',
+        label: stepThroughDrafts
+          ? 'Skip drafts when stepping through comments'
+          : 'Include drafts when stepping through comments',
+        keywords: 'comment draft pending next previous navigate',
+        run: () => handleSetStepThroughDrafts(!stepThroughDrafts),
+      });
+    }
     if (browseFilesPath != null) {
       commands.push({
         id: 'browse-head',
@@ -990,6 +1097,12 @@ function ReviewUIInner({
     return commands;
   }, [
     browseFilesPath,
+    goToNextComment,
+    goToPreviousComment,
+    handleSetStepThroughDrafts,
+    hasComments,
+    pullRequest,
+    stepThroughDrafts,
     collapseMode,
     diffStyle,
     handleSetDiffStyle,
@@ -1027,7 +1140,11 @@ function ReviewUIInner({
   // the sidebar's Overview tab. Memoized on the (memoized) model so the
   // memoized sidebar only re-renders when the overview has changed.
   const renderPullPanel = useCallback(
-    ({ footerSurfaceClassName, onMerged }: PullDetailsPanelHostOptions) =>
+    ({
+      footerSurfaceClassName,
+      onDismiss,
+      onMerged,
+    }: PullDetailsPanelHostOptions) =>
       pullDetailsModel == null || pullRequest == null ? null : (
         <PullDetailsPanel
           diffStats={diffStats}
@@ -1041,10 +1158,15 @@ function ReviewUIInner({
             onMerged();
             retryLoad();
           }}
+          onOpenComments={() => {
+            onDismiss?.();
+            openUnresolvedComments();
+          }}
         />
       ),
     [
       diffStats,
+      openUnresolvedComments,
       getGitHubToken,
       mergePullDetails,
       pullDetailsModel,
@@ -1151,6 +1273,7 @@ function ReviewUIInner({
                     onOpen={() => setConflictResolverOpen(true)}
                   />
                 )}
+                <CommentStepper navigation={commentNavigation} />
                 <PullCommitPanel
                   editSession={editSession}
                   pendingReviewCount={pendingReviewComments.size}
@@ -1184,12 +1307,17 @@ function ReviewUIInner({
           setOverflow={handleSetOverflow}
           setShowBackgrounds={handleSetShowBackgrounds}
           showBackgrounds={showBackgrounds}
+          // Comment stepping only exists on pull requests.
+          stepThroughDrafts={
+            pullRequest != null ? stepThroughDrafts : undefined
+          }
+          setStepThroughDrafts={handleSetStepThroughDrafts}
         />
         {viewerAvailable && treeSource != null ? (
           <>
             <DiffsHubSidebar
               className="[grid-area:viewer] md:[grid-area:tree]"
-              commentSections={commentSections}
+              commentSections={listedCommentSections}
               description={pullDescription}
               diffStats={diffStats}
               discussion={discussion}
@@ -1197,10 +1325,11 @@ function ReviewUIInner({
               mobileOverlayOpen={fileTreeOverlayOpen}
               onHiddenItemsChange={applyHiddenItemsToLoaded}
               onMobileClose={handleCloseFileTreeOverlay}
-              onSelectComment={handleSelectComment}
+              onSelectComment={selectComment}
               overviewPanel={overviewPanel}
               renderSearchPanel={renderSearchPanel}
               searchTabRequest={searchTabRequest}
+              unresolvedCommentsRequest={unresolvedCommentsRequest}
               scrollRef={scrollRef}
               source={treeSource}
               streaming={loadState === 'streaming'}

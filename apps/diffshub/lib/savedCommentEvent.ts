@@ -3,6 +3,7 @@ import type { DiffLineAnnotation, FileDiffMetadata } from '@pierre/diffs';
 import { classifyCommentLineType } from './classifyCommentLineType';
 import { createCommentSidebarPreview } from './commentSidebarPreview';
 import type {
+  CommentAuthor,
   DiffsHubSavedCommentEvent,
   PullReviewThread,
   SavedCommentMetadata,
@@ -21,14 +22,7 @@ export function createThreadSavedCommentEvent(
   thread: PullReviewThread
 ): DiffsHubSavedCommentEvent {
   const root = thread.comments[0];
-  const participants: DiffsHubSavedCommentEvent['participants'] = [];
-  const seenLogins = new Set<string>();
-  for (const comment of thread.comments) {
-    if (!seenLogins.has(comment.author.login)) {
-      seenLogins.add(comment.author.login);
-      participants.push(comment.author);
-    }
-  }
+  const participants = uniqueCommentAuthors(thread.comments);
   return {
     author: root.author,
     itemId,
@@ -43,6 +37,23 @@ export function createThreadSavedCommentEvent(
     reviewThread: true,
     side: thread.side,
   };
+}
+
+// A thread's participants, each once, in the order they first commented;
+// shared by the rows for threads in the diff and those listed without a card
+// (lib/detachedCommentSections), so both show the same avatars.
+export function uniqueCommentAuthors(
+  comments: readonly { author: CommentAuthor }[]
+): CommentAuthor[] {
+  const seen = new Set<string>();
+  const authors: CommentAuthor[] = [];
+  for (const { author } of comments) {
+    if (!seen.has(author.login)) {
+      seen.add(author.login);
+      authors.push(author);
+    }
+  }
+  return authors;
 }
 
 export function createLocalSavedCommentEvent(

@@ -5,6 +5,9 @@ const ANNOTATION_THEME_STYLE_KEYS = [
   '--diffshub-annotation-border',
   '--diffshub-annotation-fg',
   '--diffshub-annotation-hover-border',
+  '--diffshub-annotation-inset-bg',
+  '--diffshub-annotation-muted-fg',
+  '--diffshub-annotation-strong-fg',
   '--diffshub-annotation-shadow',
   '--diffshub-popover-muted-fg',
   // Inter-file separator hairline. Carries the themed border-opaque value

@@ -182,7 +182,7 @@ export const ThreadAnnotation = memo(function ThreadAnnotation({
               ))}
             </ol>
             <div
-              className={`flex flex-col gap-2.5 border-t ${annotationBorderColor} bg-black/[0.025] px-3 py-2.5 dark:bg-white/[0.025]`}
+              className={`flex flex-col gap-2.5 border-t ${annotationBorderColor} px-3 py-2.5`}
             >
               <div className="flex items-start gap-2.5">
                 {canWrite ? (
@@ -330,7 +330,7 @@ function ThreadComment({
       <CommentAuthorAvatar author={comment.author} className="size-6" />
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex min-h-6 items-center gap-1.5">
-          <strong className="truncate text-[13px] font-semibold">
+          <strong className="text-foreground truncate text-[13px] font-semibold">
             {comment.author.login}
           </strong>
           <CommentTimestamp htmlUrl={comment.htmlUrl} iso={comment.createdAt} />
@@ -440,7 +440,7 @@ function ReplyComposer({ state, onReply }: ReplyComposerProps) {
   if (!state.isOpen) {
     return (
       <ComposerTrigger
-        className={`${annotationBorderColor} bg-[var(--diffshub-annotation-bg,var(--color-card))]`}
+        className={`${annotationBorderColor} bg-muted`}
         label="Reply…"
         onOpen={state.open}
       />

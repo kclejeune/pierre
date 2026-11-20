@@ -79,15 +79,29 @@ function ButtonGroupItem({
     onClick?.(event);
   };
 
+  // A segmented group (the default outline variant) paints its selected
+  // segment with the theme's segment token (lib/theme/deriveChromeTokens),
+  // which stands clear of the track on light and dark themes alike, over
+  // the borderless ghost button rather than the outline variant, whose page
+  // background fill sank into the track on dark themes. Unselected labels
+  // dim, since many themes' muted text matches their body text.
+  const variant = context.variant ?? 'outline';
+  const segmented = variant === 'outline';
   return (
     <Button
       className={cn(
         'text-muted-foreground rounded-[calc(var(--radius-lg)-1px)] gap-1.5',
-        isSelected && 'text-foreground shadow-xs',
+        isSelected
+          ? cn(
+              'text-foreground shadow-xs',
+              segmented &&
+                'border-[var(--diffshub-popover-border,var(--color-border))] bg-[var(--diffshub-segment-selected-bg,var(--color-background))] font-medium hover:bg-[var(--diffshub-segment-selected-bg,var(--color-background))] dark:hover:bg-[var(--diffshub-segment-selected-bg,var(--color-background))]'
+            )
+          : segmented && 'opacity-70 hover:opacity-100',
         isSelected && selected == null && 'pointer-events-none',
         className
       )}
-      variant={isSelected ? (context.variant ?? 'outline') : 'ghost'}
+      variant={isSelected && !segmented ? variant : 'ghost'}
       size={context.size}
       onClick={handleClick}
       title={value}

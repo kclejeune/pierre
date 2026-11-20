@@ -6,13 +6,13 @@ import type { CSSProperties } from 'react';
 import { chromeThemeProps } from '../theme/chromeThemeProps';
 import { diffshubChromeMapping } from '../theme/diffshubChromeMapping';
 
-// Golden chrome styles captured from the pre-theming buildThemeChromeStyle for
-// the two default Pierre soft themes (plus the later --diffshub-editor-bg
-// addition). Locks that the chromeThemeProps + diffshubChromeMapping pipeline
-// stays byte-for-byte stable.
+// Golden chrome styles for the two default Pierre soft themes. Locks the
+// chromeThemeProps + diffshubChromeMapping output, so any change to the
+// derived palette shows up here (and in the app/globals.css bootstrap blocks,
+// which hand-copy these values for the frame before a theme loads).
 const LIGHT_SOFT_CHROME: Record<string, string> = {
-  backgroundColor: '#f7f7f7',
-  '--diffshub-sidebar-surface': '#f7f7f7',
+  backgroundColor: 'color-mix(in srgb, white 35%, #f7f7f7)',
+  '--diffshub-sidebar-surface': 'color-mix(in srgb, white 35%, #f7f7f7)',
   color: '#737373',
   '--color-foreground': '#737373',
   '--foreground': '#737373',
@@ -20,52 +20,80 @@ const LIGHT_SOFT_CHROME: Record<string, string> = {
   '--muted-foreground': '#737373',
   '--color-border': 'color-mix(in srgb, #737373 20%, transparent)',
   '--border': 'color-mix(in srgb, #737373 20%, transparent)',
-  '--color-border-opaque': 'color-mix(in srgb, #737373 22%, #f7f7f7)',
-  '--border-opaque': 'color-mix(in srgb, #737373 22%, #f7f7f7)',
-  '--diffshub-card-bg': 'color-mix(in srgb, #737373 6%, #f7f7f7)',
-  '--diffshub-card-hover-bg': 'color-mix(in srgb, #737373 12%, #f7f7f7)',
-  '--diffshub-card-border': 'color-mix(in srgb, #737373 12%, #f7f7f7)',
-  '--diffshub-popover-bg': 'color-mix(in srgb, #737373 7%, #f7f7f7)',
+  '--color-border-opaque':
+    'color-mix(in srgb, #737373 22%, color-mix(in srgb, white 35%, #f7f7f7))',
+  '--border-opaque':
+    'color-mix(in srgb, #737373 22%, color-mix(in srgb, white 35%, #f7f7f7))',
+  '--diffshub-card-bg':
+    'lch(from color-mix(in srgb, white 35%, #f7f7f7) calc(l + 2) c h)',
+  '--diffshub-card-hover-bg':
+    'color-mix(in srgb, #737373 4%, color-mix(in srgb, white 35%, #f7f7f7))',
+  '--diffshub-card-border':
+    'color-mix(in srgb, #737373 16%, color-mix(in srgb, white 35%, #f7f7f7))',
+  '--diffshub-segment-selected-bg':
+    'lch(from color-mix(in srgb, white 35%, #f7f7f7) calc(l + 3) c h)',
+  '--diffshub-popover-bg':
+    'lch(from color-mix(in srgb, white 35%, #f7f7f7) calc(l + 3) c h)',
   '--diffshub-popover-fg': '#737373',
   '--diffshub-popover-muted-fg': '#737373',
-  '--diffshub-popover-hover-bg': 'color-mix(in srgb, #737373 14%, #f7f7f7)',
-  '--diffshub-popover-selected-bg': 'color-mix(in srgb, #737373 20%, #f7f7f7)',
-  '--diffshub-popover-border': 'color-mix(in srgb, #737373 18%, #f7f7f7)',
+  '--diffshub-popover-hover-bg':
+    'color-mix(in srgb, #737373 14%, color-mix(in srgb, white 35%, #f7f7f7))',
+  '--diffshub-popover-selected-bg':
+    'color-mix(in srgb, #737373 20%, color-mix(in srgb, white 35%, #f7f7f7))',
+  '--diffshub-popover-border':
+    'color-mix(in srgb, #737373 18%, color-mix(in srgb, white 35%, #f7f7f7))',
   '--diffshub-popover-shadow':
-    '0 8px 16px rgb(0 0 0 / 0.07), 0 2px 4px rgb(0 0 0 / 0.05)',
-  '--diffshub-annotation-bg': 'color-mix(in srgb, #737373 7%, #f7f7f7)',
+    '0 8px 24px rgb(0 0 0 / 0.09), 0 2px 6px rgb(0 0 0 / 0.06)',
+  '--diffshub-annotation-bg': 'lch(from #ffffff calc(l + 2) c h)',
   '--diffshub-annotation-fg': '#737373',
-  '--diffshub-annotation-border': 'color-mix(in srgb, #737373 18%, #f7f7f7)',
+  '--diffshub-annotation-border':
+    'color-mix(in srgb, #737373 18%, color-mix(in srgb, white 35%, #f7f7f7))',
   '--diffshub-annotation-hover-border':
-    'color-mix(in srgb, #737373 28%, #f7f7f7)',
+    'color-mix(in srgb, #737373 28%, color-mix(in srgb, white 35%, #f7f7f7))',
+  '--diffshub-annotation-inset-bg':
+    'color-mix(in srgb, #737373 7%, lch(from #ffffff calc(l + 2) c h))',
+  '--diffshub-annotation-muted-fg':
+    'color-mix(in srgb, #737373 88%, lch(from #ffffff calc(l + 2) c h))',
+  '--diffshub-annotation-strong-fg': 'color-mix(in srgb, #737373 78%, black)',
   '--diffshub-annotation-shadow':
-    '0 8px 16px rgb(0 0 0 / 0.07), 0 2px 4px rgb(0 0 0 / 0.05)',
-  '--color-popover': 'color-mix(in srgb, #737373 7%, #f7f7f7)',
-  '--popover': 'color-mix(in srgb, #737373 7%, #f7f7f7)',
+    '0 8px 24px rgb(0 0 0 / 0.09), 0 2px 6px rgb(0 0 0 / 0.06)',
+  '--color-popover':
+    'lch(from color-mix(in srgb, white 35%, #f7f7f7) calc(l + 3) c h)',
+  '--popover':
+    'lch(from color-mix(in srgb, white 35%, #f7f7f7) calc(l + 3) c h)',
   '--color-popover-foreground': '#737373',
   '--popover-foreground': '#737373',
-  '--color-card': 'color-mix(in srgb, #737373 7%, #f7f7f7)',
-  '--card': 'color-mix(in srgb, #737373 7%, #f7f7f7)',
+  '--color-card':
+    'lch(from color-mix(in srgb, white 35%, #f7f7f7) calc(l + 3) c h)',
+  '--card': 'lch(from color-mix(in srgb, white 35%, #f7f7f7) calc(l + 3) c h)',
   '--color-card-foreground': '#737373',
   '--card-foreground': '#737373',
-  '--color-background': '#f7f7f7',
-  '--background': '#f7f7f7',
-  '--color-accent': 'color-mix(in srgb, #737373 14%, #f7f7f7)',
-  '--accent': 'color-mix(in srgb, #737373 14%, #f7f7f7)',
+  '--color-background': 'color-mix(in srgb, white 35%, #f7f7f7)',
+  '--background': 'color-mix(in srgb, white 35%, #f7f7f7)',
+  '--color-accent':
+    'color-mix(in srgb, #737373 14%, color-mix(in srgb, white 35%, #f7f7f7))',
+  '--accent':
+    'color-mix(in srgb, #737373 14%, color-mix(in srgb, white 35%, #f7f7f7))',
   '--color-accent-foreground': '#737373',
   '--accent-foreground': '#737373',
-  '--color-secondary': 'color-mix(in srgb, #737373 14%, #f7f7f7)',
-  '--secondary': 'color-mix(in srgb, #737373 14%, #f7f7f7)',
+  '--color-secondary':
+    'color-mix(in srgb, #737373 14%, color-mix(in srgb, white 35%, #f7f7f7))',
+  '--secondary':
+    'color-mix(in srgb, #737373 14%, color-mix(in srgb, white 35%, #f7f7f7))',
   '--color-secondary-foreground': '#737373',
   '--secondary-foreground': '#737373',
-  '--color-input': 'color-mix(in srgb, #737373 14%, #f7f7f7)',
-  '--input': 'color-mix(in srgb, #737373 14%, #f7f7f7)',
-  '--color-muted': 'color-mix(in srgb, #737373 14%, #f7f7f7)',
-  '--muted': 'color-mix(in srgb, #737373 14%, #f7f7f7)',
+  '--color-input':
+    'color-mix(in srgb, #737373 14%, color-mix(in srgb, white 35%, #f7f7f7))',
+  '--input':
+    'color-mix(in srgb, #737373 14%, color-mix(in srgb, white 35%, #f7f7f7))',
+  '--color-muted':
+    'color-mix(in srgb, #737373 14%, color-mix(in srgb, white 35%, #f7f7f7))',
+  '--muted':
+    'color-mix(in srgb, #737373 14%, color-mix(in srgb, white 35%, #f7f7f7))',
   '--color-primary': '#737373',
   '--primary': '#737373',
-  '--color-primary-foreground': '#f7f7f7',
-  '--primary-foreground': '#f7f7f7',
+  '--color-primary-foreground': 'color-mix(in srgb, white 35%, #f7f7f7)',
+  '--primary-foreground': 'color-mix(in srgb, white 35%, #f7f7f7)',
   '--color-ring': '#737373',
   '--ring': '#737373',
   '--diffshub-comment-add-fg': '#047857',
@@ -88,10 +116,11 @@ const DARK_SOFT_CHROME: Record<string, string> = {
   '--border': 'color-mix(in srgb, #8a8a8a 20%, transparent)',
   '--color-border-opaque': 'color-mix(in srgb, #8a8a8a 22%, #101010)',
   '--border-opaque': 'color-mix(in srgb, #8a8a8a 22%, #101010)',
-  '--diffshub-card-bg': 'color-mix(in srgb, #8a8a8a 6%, #101010)',
-  '--diffshub-card-hover-bg': 'color-mix(in srgb, #8a8a8a 12%, #101010)',
-  '--diffshub-card-border': 'color-mix(in srgb, #8a8a8a 12%, #101010)',
-  '--diffshub-popover-bg': 'color-mix(in srgb, #8a8a8a 7%, #101010)',
+  '--diffshub-card-bg': 'lch(from #101010 calc(l + 5) c h)',
+  '--diffshub-card-hover-bg': 'color-mix(in srgb, #8a8a8a 14%, #101010)',
+  '--diffshub-card-border': 'color-mix(in srgb, #8a8a8a 14%, #101010)',
+  '--diffshub-segment-selected-bg': 'color-mix(in srgb, #8a8a8a 30%, #101010)',
+  '--diffshub-popover-bg': 'lch(from #101010 calc(l + 8) c h)',
   '--diffshub-popover-fg': '#8a8a8a',
   '--diffshub-popover-muted-fg': '#7e7e7e',
   '--diffshub-popover-hover-bg': 'color-mix(in srgb, #8a8a8a 14%, #101010)',
@@ -99,19 +128,23 @@ const DARK_SOFT_CHROME: Record<string, string> = {
   '--diffshub-popover-border': 'color-mix(in srgb, #8a8a8a 18%, #101010)',
   '--diffshub-popover-shadow':
     '0 8px 16px rgb(0 0 0 / 0.07), 0 2px 4px rgb(0 0 0 / 0.05)',
-  '--diffshub-annotation-bg': 'color-mix(in srgb, #8a8a8a 7%, #101010)',
+  '--diffshub-annotation-bg': 'lch(from #171717 calc(l + 4) c h)',
   '--diffshub-annotation-fg': '#8a8a8a',
-  '--diffshub-annotation-border': 'color-mix(in srgb, #8a8a8a 18%, #101010)',
+  '--diffshub-annotation-border': 'color-mix(in srgb, #d4d4d4 24%, #171717)',
   '--diffshub-annotation-hover-border':
-    'color-mix(in srgb, #8a8a8a 28%, #101010)',
+    'color-mix(in srgb, #d4d4d4 34%, #171717)',
+  '--diffshub-annotation-inset-bg': '#171717',
+  '--diffshub-annotation-muted-fg':
+    'color-mix(in srgb, #8a8a8a 88%, lch(from #171717 calc(l + 4) c h))',
+  '--diffshub-annotation-strong-fg': 'color-mix(in srgb, #8a8a8a 60%, white)',
   '--diffshub-annotation-shadow':
     '0 8px 16px rgb(0 0 0 / 0.07), 0 2px 4px rgb(0 0 0 / 0.05)',
-  '--color-popover': 'color-mix(in srgb, #8a8a8a 7%, #101010)',
-  '--popover': 'color-mix(in srgb, #8a8a8a 7%, #101010)',
+  '--color-popover': 'lch(from #101010 calc(l + 8) c h)',
+  '--popover': 'lch(from #101010 calc(l + 8) c h)',
   '--color-popover-foreground': '#8a8a8a',
   '--popover-foreground': '#8a8a8a',
-  '--color-card': 'color-mix(in srgb, #8a8a8a 7%, #101010)',
-  '--card': 'color-mix(in srgb, #8a8a8a 7%, #101010)',
+  '--color-card': 'lch(from #101010 calc(l + 8) c h)',
+  '--card': 'lch(from #101010 calc(l + 8) c h)',
   '--color-card-foreground': '#8a8a8a',
   '--card-foreground': '#8a8a8a',
   '--color-background': '#101010',

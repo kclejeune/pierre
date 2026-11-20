@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
+import { isPullSearchQuery } from '@/components/usePalettePullSearch';
 import {
   buildRepoSections,
   buildRootSections,
@@ -137,6 +138,91 @@ describe('buildRootSections', () => {
       ['Commands', ['run:split']],
     ]);
     expect(root({ commands, query: '>nothing' })).toEqual([]);
+  });
+});
+
+describe('buildRootSections pull request search', () => {
+  test('hits list after the repositories, with repo and non-open state', () => {
+    const sections = root({
+      query: 'pierre',
+      pullHits: [
+        { number: 83, repo: 'kclejeune/pierre', state: 'open', title: 'Fix' },
+        { number: 9, repo: 'oven-sh/bun', state: 'merged', title: 'Ship' },
+      ],
+    });
+    expect(outline(sections).map(([heading]) => heading)).toEqual([
+      'Repositories',
+      'Pull requests',
+    ]);
+    const hits = sections[1].items;
+    expect(hits.map((item) => [item.label, item.detail])).toEqual([
+      ['#83 · Fix', 'kclejeune/pierre'],
+      ['#9 · Ship', 'oven-sh/bun, merged'],
+    ]);
+    expect(hits[1].action).toEqual({
+      type: 'navigate',
+      path: '/oven-sh/bun/pull/9',
+      recordTitle: 'Ship',
+    });
+  });
+
+  test('a recent view the search lists shows only as a hit', () => {
+    const sections = root({
+      query: 'fix',
+      pullHits: [
+        { number: 83, repo: 'kclejeune/pierre', state: 'open', title: 'Fix' },
+      ],
+      recentDiffs: [
+        { path: '/kclejeune/pierre/pull/83', title: 'Fix', viewedAt: 2 },
+        { path: '/kclejeune/pierre/pull/7', title: 'Fix more', viewedAt: 1 },
+      ],
+    });
+    expect(outline(sections)).toEqual([
+      ['Pull requests', ['pull-hit:kclejeune/pierre#83']],
+      ['Recently viewed', ['recent:/kclejeune/pierre/pull/7']],
+    ]);
+  });
+
+  test('a pasted link that is also a recent view shows once', () => {
+    const sections = root({
+      query: 'https://github.com/kclejeune/pierre/pull/7',
+      githubHost: 'github.com',
+      recentDiffs: [
+        { path: '/kclejeune/pierre/pull/7', title: 'Fix', viewedAt: 1 },
+      ],
+    });
+    expect(outline(sections)).toEqual([
+      ['Go to', ['open:/kclejeune/pierre/pull/7']],
+    ]);
+  });
+
+  test('a number with no repository match leads with its hits', () => {
+    const sections = root({
+      query: '#83',
+      pullHits: [
+        { number: 83, repo: 'kclejeune/pierre', state: 'closed', title: 'X' },
+      ],
+    });
+    expect(sections[0].heading).toBe('Pull requests');
+  });
+});
+
+describe('isPullSearchQuery', () => {
+  test('numbers at any length, title words from three characters', () => {
+    expect(isPullSearchQuery('8')).toBe(true);
+    expect(isPullSearchQuery('#8')).toBe(true);
+    expect(isPullSearchQuery('fi')).toBe(false);
+    expect(isPullSearchQuery('fix')).toBe(true);
+    // Links, owner/name, and paths have rows of their own.
+    expect(isPullSearchQuery('octo/demo')).toBe(false);
+    expect(isPullSearchQuery('https://github.com/a/b/pull/1')).toBe(false);
+    expect(isPullSearchQuery('octo/demo#12')).toBe(false);
+    // A slash inside title words is still a title search.
+    expect(isPullSearchQuery('fix CI/CD')).toBe(true);
+    expect(isPullSearchQuery('feat: real work')).toBe(true);
+    // A qualifier with a slash value is search text, not owner/name.
+    expect(isPullSearchQuery('head:feature/fix')).toBe(true);
+    expect(isPullSearchQuery('repo:octo/demo')).toBe(true);
   });
 });
 

@@ -91,14 +91,21 @@ export function parsePullDetails(data: unknown): PullDetails {
         ? record.mergeable_state
         : null,
     reviewers,
-    state:
-      record.merged_at != null
-        ? 'merged'
-        : record.state === 'closed'
-          ? 'closed'
-          : 'open',
+    state: restPullState(record.state, record.merged_at),
     title: typeof record.title === 'string' ? record.title : '',
   };
+}
+
+// A REST pull request's (or a pull search hit's) state: merged once it has
+// a merge time, closed or open otherwise.
+export function restPullState(
+  state: unknown,
+  mergedAt: unknown
+): 'open' | 'closed' | 'merged' {
+  if (mergedAt != null) {
+    return 'merged';
+  }
+  return state === 'closed' ? 'closed' : 'open';
 }
 
 export interface PullBodyRef {

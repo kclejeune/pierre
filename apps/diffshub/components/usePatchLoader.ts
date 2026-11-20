@@ -89,6 +89,9 @@ interface UsePatchLoaderOptions {
   // Whether markdown files should show their rendered document by default.
   markdownView?: 'rendered' | 'raw';
   onLoadStart(): void;
+  // Called once the current path's diff has fully loaded ('ready' or
+  // 'empty'); never for a failed or superseded load.
+  onLoaded?(): void;
   path: string;
   // Whether the viewer's place (a selected line or file) lives in the page
   // URL's hash: written as the reader moves, read back to restore it. True
@@ -141,6 +144,7 @@ export function usePatchLoader({
   githubTokenVersion = 0,
   markdownView = 'raw',
   onLoadStart,
+  onLoaded,
   path,
   syncLocationHash = true,
   tokenHydrated,
@@ -162,6 +166,8 @@ export function usePatchLoader({
     DiffsHubSavedCommentItem[]
   >([]);
   const [loadState, setLoadState] = useState<ViewerLoadState>('fetching');
+  // Stable, so a caller's inline callback doesn't restart the load.
+  const notifyLoaded = useStableCallback(() => onLoaded?.());
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [viewerKey, setViewerKey] = useState(0);
@@ -710,6 +716,7 @@ export function usePatchLoader({
           setLoadState(
             loadedData.diffStats.fileCount === 0 ? 'empty' : 'ready'
           );
+          notifyLoaded();
           await yieldToBrowser();
           if (isCurrentRequest()) {
             tryApplyLineHashTarget();
@@ -922,6 +929,9 @@ export function usePatchLoader({
         setCommentFileByItemId(new Map(accumulator.itemIdToFile));
         setDiffStats({ ...accumulator.diffStats });
         setLoadState(accumulator.diffStats.fileCount === 0 ? 'empty' : 'ready');
+        if (isCurrentRequest()) {
+          notifyLoaded();
+        }
       } catch (error) {
         if (!isCurrentRequest()) {
           return;

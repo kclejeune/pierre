@@ -15,12 +15,14 @@
 
 import {
   filterPullSuggestions,
+  type PullSearchHit,
   type PullSuggestion,
 } from './diffUrlSuggestions';
 import { filterFilePathsForSearch } from './fileSearchFilter';
 import { getPatchViewerHref } from './getPatchViewerHref';
 import { isRepoPinned, isValidRepoName, splitRepoName } from './pinnedRepos';
 import { buildPullsRepoPath } from './pullScopes';
+import { readPullNumberQuery } from './pullSearchQuery';
 import type { RecentDiff } from './recentDiffs';
 import {
   buildBrowseRepoPath,
@@ -301,6 +303,9 @@ export interface RootSectionsInput {
   // GitHub's repository-name search for the query, for repos outside the
   // viewer's orgs; possibly stale by a keystroke.
   remote: readonly string[];
+  // Pull requests the page's search found for the query (number or title),
+  // possibly stale by a keystroke.
+  pullHits?: readonly PullSearchHit[];
   // The page's own top-level entries (the /pulls scopes), shown idle.
   scopes?: readonly PaletteEntry[];
   commands: readonly PaletteEntry[];
@@ -358,6 +363,21 @@ function typedRootSections(input: RootSectionsInput): PaletteSection[] {
   const query = input.query.trim();
   const sections: PaletteSection[] = [];
 
+  // Paths a row above already opens: a later section (pull hits, recent
+  // views) leaves those out rather than listing the same view twice.
+  const opened = new Set<string>();
+  const unopened = (items: PaletteItem[]) =>
+    items.filter((item) => {
+      if (item.action.type !== 'navigate') {
+        return true;
+      }
+      if (opened.has(item.action.path)) {
+        return false;
+      }
+      opened.add(item.action.path);
+      return true;
+    });
+
   // Anything pasted that already names a view (a GitHub pull, commit,
   // compare, tree, or file URL, a bare "owner/repo/pull/12" path, or a link
   // to this app) opens directly. A bare "owner/name" is a repository, which
@@ -366,6 +386,7 @@ function typedRootSections(input: RootSectionsInput): PaletteSection[] {
     ? undefined
     : getPatchViewerHref(query, input.githubHost, input.appHost);
   if (directPath != null) {
+    opened.add(directPath);
     pushSection(sections, 'Go to', [linkItem(directPath)]);
   }
 
@@ -384,6 +405,11 @@ function typedRootSections(input: RootSectionsInput): PaletteSection[] {
     matches.map((repo) =>
       repoItem(repo, isRepoPinned(input.pinned, repo) ? 'Pinned' : undefined)
     )
+  );
+  pushSection(
+    sections,
+    'Pull requests',
+    unopened((input.pullHits ?? []).map(pullHitItem))
   );
   // Lowercase names a remote tier already added, so the next tier only adds
   // new repos (the org search caps its own results server-side).
@@ -409,12 +435,13 @@ function typedRootSections(input: RootSectionsInput): PaletteSection[] {
   pushSection(
     sections,
     'Recently viewed',
-    input.recentDiffs
-      .filter((recent) =>
-        `${recent.title ?? ''} ${recent.path}`.toLowerCase().includes(needle)
-      )
-      .slice(0, MAX_MATCHED_RECENT_DIFFS)
-      .map(recentDiffItem)
+    unopened(
+      input.recentDiffs
+        .filter((recent) =>
+          `${recent.title ?? ''} ${recent.path}`.toLowerCase().includes(needle)
+        )
+        .map(recentDiffItem)
+    ).slice(0, MAX_MATCHED_RECENT_DIFFS)
   );
   pushCommands(
     sections,
@@ -451,6 +478,22 @@ export interface RepoSectionsInput {
 
 function pullPath(repo: string, number: number): string {
   return `/${repo}/pull/${number}`;
+}
+
+// A pull request the top-level search found: its number and title, with
+// the repository (and its state, when not open) beside them.
+function pullHitItem(hit: PullSearchHit): PaletteItem {
+  return {
+    key: `pull-hit:${hit.repo}#${hit.number}`,
+    label: `#${hit.number} · ${hit.title}`,
+    detail: hit.state === 'open' ? hit.repo : `${hit.repo}, ${hit.state}`,
+    icon: 'pull',
+    action: {
+      type: 'navigate',
+      path: pullPath(hit.repo, hit.number),
+      recordTitle: hit.title,
+    },
+  };
 }
 
 function refItem(
@@ -499,7 +542,7 @@ export function buildRepoSections(input: RepoSectionsInput): PaletteSection[] {
   // can't show it); a sha-like query offers that commit. After "@", digits
   // are read as a ref first and the pull row moves below the refs.
   const goTo: PaletteItem[] = [];
-  const digits = /^#?(\d+)$/.exec(query)?.[1];
+  const digits = readPullNumberQuery(query);
   const openPull: PaletteItem | null =
     digits == null
       ? null

@@ -35,9 +35,12 @@ export function loadRecentDiffs(): RecentDiff[] {
       continue;
     }
     const record = value as Record<string, unknown>;
+    // Entries stored before a path stopped counting as a view (a
+    // /owner/repo/pulls list, once served by the viewer) drop out here.
     if (
       typeof record.path !== 'string' ||
       record.path === '' ||
+      !isRecentDiffPath(record.path) ||
       typeof record.viewedAt !== 'number'
     ) {
       continue;

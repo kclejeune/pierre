@@ -44,6 +44,7 @@ import { RepoName } from './RepoName';
 import { formatShortcut, useModifierKey } from './ShortcutHint';
 import { useGitHubToken } from './useGitHubToken';
 import { useLatestValueRef } from './useLatestValueRef';
+import { usePalettePullSearch } from './usePalettePullSearch';
 import { usePinnedRepos } from './usePinnedRepos';
 import { useRemoteRepoSearch } from './useRemoteRepoSearch';
 import { cn } from '@/lib/cn';
@@ -233,6 +234,14 @@ export function CommandPalette() {
     hasToken
   );
 
+  // The page's pull request search (the /pulls scope), for typed queries at
+  // the top level.
+  const pullHits = usePalettePullSearch(
+    typedQuery.startsWith(COMMAND_PREFIX) ? '' : typedQuery,
+    hasToken ? context?.pullSearchRepos : undefined,
+    tokenVersion
+  );
+
   // Inside a repository: its refs and open pull requests. A failed list
   // shows as empty rather than loading.
   const shownRepo = open ? level : null;
@@ -271,6 +280,7 @@ export function CommandPalette() {
       matches,
       orgMatches,
       pinned,
+      pullHits,
       query,
       recentDiffs,
       recentRepos,
@@ -292,6 +302,7 @@ export function CommandPalette() {
     orgMatches,
     pinned,
     prefer,
+    pullHits,
     pulls,
     query,
     recentDiffs,
@@ -306,11 +317,12 @@ export function CommandPalette() {
   // "Browse files" row, remote matches landing below local ones), the top
   // row is highlighted again, which is what Enter should pick.
   const layout = sections.map((section) => section.heading).join('\n');
-  const highlighted =
-    highlight.layout === layout &&
-    items.some((item) => item.key === highlight.value)
-      ? highlight.value
-      : (items[0]?.key ?? '');
+  const chosen =
+    highlight.layout === layout
+      ? items.find((item) => item.key === highlight.value)
+      : undefined;
+  const highlightedItem = chosen ?? items[0];
+  const highlighted = highlightedItem?.key ?? '';
 
   const runItem = (item: PaletteItem) => {
     const { action } = item;
@@ -320,10 +332,11 @@ export function CommandPalette() {
         if (level != null) {
           recordRecentRepo(level);
         }
-        // Recorded here as well as by the page: the palette knows titles the
-        // page doesn't (a pull's, a ref's), and patches from other domains
-        // are only recorded here.
-        recordRecentDiff({ path: action.path, title: action.recordTitle });
+        // The page records views once they load; the palette adds the
+        // titles it knows (a pull's, a ref's), which the page can't.
+        if (action.recordTitle != null) {
+          recordRecentDiff({ path: action.path, title: action.recordTitle });
+        }
         router.push(action.path);
         return;
       case 'select-repo':
@@ -352,24 +365,23 @@ export function CommandPalette() {
       leaveRepo();
       return;
     }
-    const item = items.find((entry) => entry.key === highlighted);
     if (
       event.key === 'Tab' &&
       !event.shiftKey &&
-      item?.repo != null &&
+      highlightedItem?.repo != null &&
       level == null
     ) {
       event.preventDefault();
-      stepInto(item.repo);
+      stepInto(highlightedItem.repo);
       return;
     }
     if (
       event.key === 'Enter' &&
       (event.metaKey || event.ctrlKey) &&
-      item?.repo != null
+      highlightedItem?.repo != null
     ) {
       event.preventDefault();
-      toggle(item.repo);
+      toggle(highlightedItem.repo);
     }
   };
 
@@ -395,8 +407,11 @@ export function CommandPalette() {
         <PaletteFooter
           atRoot={level == null}
           pinShortcut={pinShortcut}
+          // The page's label ("View pull requests") is for repository rows.
           enterLabel={
-            (level == null ? context?.selectRepoLabel : undefined) ?? 'Open'
+            (level == null && highlightedItem?.action.type === 'select-repo'
+              ? context?.selectRepoLabel
+              : undefined) ?? 'Open'
           }
         />
       }

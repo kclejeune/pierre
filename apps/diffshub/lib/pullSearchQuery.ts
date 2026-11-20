@@ -285,6 +285,12 @@ export function normalizeQualifierNegation(text: string): string {
   return out.join('');
 }
 
+// The pull number a query names, "83" or "#83", or undefined when it isn't
+// just a number.
+export function readPullNumberQuery(query: string): string | undefined {
+  return /^#?(\d+)$/.exec(query.trim())?.[1];
+}
+
 // Whether the text has an OR outside any group (an "OR" inside a quoted
 // value is just text), so appending terms would only bind its last branch.
 export function hasOrOperator(text: string): boolean {

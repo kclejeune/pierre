@@ -11,7 +11,8 @@ import { readSyncedItem, writeSyncedItem } from './preferenceSync';
 export const MAX_PINNED_REPOS = 10;
 export const PINNED_REPOS_EVENT = 'diffshub:pinned-repos';
 
-const REPO_PATTERN = /^[^/\s]+\/[^/\s]+$/;
+// No colon: GitHub names can't hold one, and "repo:a/b" is a qualifier.
+const REPO_PATTERN = /^[^/\s:]+\/[^/\s:]+$/;
 
 export function isValidRepoName(repo: string): boolean {
   return REPO_PATTERN.test(repo);

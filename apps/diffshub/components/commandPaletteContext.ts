@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
+import type { PullSearchRepos } from './usePalettePullSearch';
 import type { PaletteEntry } from '@/lib/paletteItems';
 
 // An entry a page contributes to the palette, with what running it does.
@@ -32,6 +33,10 @@ export interface CommandPaletteContextValue {
   // empty (the /pulls scopes).
   scopes?: readonly PaletteRunnableEntry[];
   commands?: readonly PaletteRunnableEntry[];
+  // Typed queries at the top level also search pull requests (by number or
+  // title, any state) within these repositories, or every one for 'all':
+  // the /pulls dashboard's scope. Absent, the top level doesn't.
+  pullSearchRepos?: PullSearchRepos;
 }
 
 interface ContextSlot {

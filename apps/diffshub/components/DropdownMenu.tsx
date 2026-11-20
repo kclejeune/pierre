@@ -18,6 +18,11 @@ const DropdownMenuSub = DropdownMenuPrimitive.Sub;
 
 const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup;
 
+// The unstyled radio item, for wrapping a custom control with `asChild` (a
+// segmented row's buttons): the control joins the menu's arrow-key
+// navigation and gets menuitemradio semantics without the list styling.
+const DropdownMenuBareRadioItem = DropdownMenuPrimitive.RadioItem;
+
 const DropdownMenuSubTrigger = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.SubTrigger>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubTrigger> & {
@@ -308,6 +313,7 @@ DropdownMenuShortcut.displayName = 'DropdownMenuShortcut';
 
 export {
   DropdownMenu,
+  DropdownMenuBareRadioItem,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,

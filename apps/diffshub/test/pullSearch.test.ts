@@ -137,7 +137,7 @@ describe('pulls page URL state', () => {
     const url = writePullsPageState(new URL('https://x.test/pulls'), {
       involves: [],
       reviewRequests: 'direct',
-      showMuted: false,
+      mutedView: 'hide',
       scope: { kind: 'all' },
       text: 'is:open',
     });
@@ -145,7 +145,7 @@ describe('pulls page URL state', () => {
     const repoUrl = writePullsPageState(new URL('https://x.test/pulls'), {
       involves: 'anyone',
       reviewRequests: 'direct',
-      showMuted: false,
+      mutedView: 'hide',
       scope: { kind: 'repo', repo: 'oven-sh/bun' },
       text: 'is:open',
     });
@@ -157,7 +157,7 @@ describe('pulls page URL state', () => {
       involves: [] as const,
       reviewRequests: 'teams' as const,
       scope: { kind: 'repo', repo: 'oven-sh/bun' } as const,
-      showMuted: true,
+      mutedView: 'show' as const,
       text: 'is:merged label:bug',
     };
     const url = writePullsPageState(new URL('https://x.test/pulls'), state);
@@ -167,11 +167,24 @@ describe('pulls page URL state', () => {
     expect(readPullsPageState(url.search)).toEqual(state);
   });
 
+  test('round-trips ?muted=only and ignores unknown values', () => {
+    const url = writePullsPageState(new URL('https://x.test/pulls'), {
+      involves: [],
+      mutedView: 'only',
+      reviewRequests: 'direct',
+      scope: { kind: 'all' },
+      text: 'is:open',
+    });
+    expect(url.search).toBe('?muted=only');
+    expect(readPullsPageState(url.search).mutedView).toBe('only');
+    expect(readPullsPageState('?muted=bogus').mutedView).toBe('hide');
+  });
+
   test('maps legacy ?bucket= links onto involvement chips', () => {
     expect(readPullsPageState('?bucket=created')).toEqual({
       involves: ['authored'],
       reviewRequests: 'direct',
-      showMuted: false,
+      mutedView: 'hide',
       scope: { kind: 'all' },
       text: 'is:open',
     });
@@ -215,7 +228,7 @@ describe('pulls page URL state', () => {
     const base = {
       involves: 'anyone' as const,
       reviewRequests: 'direct' as const,
-      showMuted: false,
+      mutedView: 'hide' as const,
       text: 'is:open',
     };
     expect(resolveAudience({ ...base, scope: { kind: 'all' } })).toEqual([]);

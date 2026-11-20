@@ -968,6 +968,44 @@ describe('muted branches and stale pulls', () => {
     expect(variables.withUnmuted).toBe(true);
   });
 
+  test('mutedOnly lists what muting would leave out, as one OR group', () => {
+    const variables = buildActivePullsVariables({
+      involves: 'anyone',
+      mutedAuthors: ['app/renovate'],
+      mutedBranches: ['dependabot'],
+      mutedOnly: true,
+      staleCutoff: '2026-09-20',
+      text: OPEN,
+    });
+    expect(variables.query).toBe(
+      'is:open is:pr archived:false (author:app/renovate OR head:dependabot OR updated:<2026-09-20) sort:updated-desc'
+    );
+    // Nothing is hidden, so there's no muted count to take.
+    expect(variables.withUnmuted).toBe(false);
+    // One rule needs no group; a typed author: lifts that author as usual.
+    expect(
+      buildActiveSearchQuery({
+        involves: 'anyone',
+        mutedAuthors: ['app/renovate', 'svc-bump'],
+        mutedOnly: true,
+        text: 'is:open author:svc-bump',
+      })
+    ).toBe('is:open author:svc-bump is:pr archived:false author:app/renovate');
+  });
+
+  test('the route answers mutedOnly with nothing muted as an empty page', async () => {
+    const body = { hiddenCount: 0, pulls: [], totalCount: 0 };
+    const list = (query: string) =>
+      GET(
+        new NextRequest(`https://diffshub.test/api/github-pulls?${query}`, {
+          headers: { authorization: 'Bearer test-token' },
+        })
+      );
+    const response = await list('involves=&muted=only&q=is%3Aopen');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(body);
+  });
+
   test('a typed head: term lifts that branch exclusion', () => {
     const query = buildActiveSearchQuery({
       involves: [],

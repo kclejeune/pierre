@@ -150,6 +150,9 @@ async function handleGET(request: NextRequest) {
       { status: 400 }
     );
   }
+  // ?muted=only lists only the pulls the mute params would leave out, as the
+  // /pulls page's own ?muted=only does.
+  const mutedOnly = params.get('muted') === 'only';
   const cursorParam = params.get('cursor');
   const cursor =
     cursorParam == null ? undefined : decodePullsCursor(cursorParam);
@@ -174,6 +177,7 @@ async function handleGET(request: NextRequest) {
     mutedBranches,
     repos,
     reviewRequests,
+    mutedOnly,
     staleCutoff:
       staleAfter == null ? undefined : staleCutoff(staleAfter, new Date()),
     text,

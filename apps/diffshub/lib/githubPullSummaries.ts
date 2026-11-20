@@ -292,6 +292,10 @@ interface PullSearchScope {
   // when staleness muting is on and the search allows it (see
   // staleMutingApplies).
   staleCutoff?: string;
+  // Lists only the pulls muting would leave out (any muted author or
+  // branch, or stale) instead of leaving them out. With nothing muted that
+  // is nothing, so buildActivePullsRequests sends no search.
+  mutedOnly?: boolean;
   // The query bar's GitHub search text, e.g. "is:open label:bug". Its last
   // sort: qualifier (if any) replaces the default recently-updated order.
   text?: string;
@@ -375,22 +379,41 @@ export function staleMutingApplies(text: string): boolean {
   );
 }
 
-// The terms muting adds to a search: muted authors, muted branches, and the
-// staleness cutoff.
-function scopeMuteTerms(scope: PullSearchScope): string[] {
+// What makes a pull muted for this search, one rule per muted author, muted
+// branch prefix, and the staleness cutoff: the term that matches the pulls
+// it mutes, and the term that leaves them out.
+function mutedPullRules(
+  scope: PullSearchScope
+): { exclude: string; match: string }[] {
   const text = scope.text ?? '';
-  const terms = [
-    ...effectiveMutedAuthors(scope.mutedAuthors ?? [], text).map(
-      (author) => `-author:${author}`
-    ),
+  const rules = [
+    ...effectiveMutedAuthors(scope.mutedAuthors ?? [], text).map((author) => ({
+      exclude: `-author:${author}`,
+      match: `author:${author}`,
+    })),
     ...effectiveMutedBranches(scope.mutedBranches ?? [], text).map(
-      (prefix) => `-head:${prefix}`
+      (prefix) => ({ exclude: `-head:${prefix}`, match: `head:${prefix}` })
     ),
   ];
   if (scope.staleCutoff != null && staleMutingApplies(text)) {
-    terms.push(`updated:>=${scope.staleCutoff}`);
+    rules.push({
+      exclude: `updated:>=${scope.staleCutoff}`,
+      match: `updated:<${scope.staleCutoff}`,
+    });
   }
-  return terms;
+  return rules;
+}
+
+// The terms muting adds to a search: normally every rule's exclusion, AND-ed;
+// for mutedOnly, the rules' matches as one OR group, which ISSUE_ADVANCED
+// search reads across qualifier types.
+function scopeMuteTerms(scope: PullSearchScope): string[] {
+  const rules = mutedPullRules(scope);
+  if (scope.mutedOnly !== true) {
+    return rules.map((rule) => rule.exclude);
+  }
+  const matches = rules.map((rule) => rule.match);
+  return matches.length <= 1 ? matches : [`(${matches.join(' OR ')})`];
 }
 
 // The dashboard search, minus its sort: the typed text first (grouped when it
@@ -551,6 +574,11 @@ export function buildActivePullsRequests(
   scope: PullSearchScope,
   cursor?: PullsPageCursor
 ): ActivePullsRequest[] {
+  // Only muted pulls, but nothing is muted: no search can express "match
+  // nothing", so none goes out and the page parses as empty.
+  if (scope.mutedOnly === true && mutedPullRules(scope).length === 0) {
+    return [];
+  }
   const variables = buildActivePullsVariables(scope, cursor);
   const requests: ActivePullsRequest[] = [
     {
@@ -715,7 +743,11 @@ export function buildActivePullsVariables(
     // Sort doesn't change a count, so the unmuted search runs unsorted.
     unmutedQuery: buildUnmutedSearchQuery(scope),
     withCommented: audienceCanComment && (cursor == null || window != null),
-    withUnmuted: cursor == null && scopeMuteTerms(scope).length > 0,
+    // Listing only muted pulls hides nothing, so there's no count to take.
+    withUnmuted:
+      cursor == null &&
+      scope.mutedOnly !== true &&
+      mutedPullRules(scope).length > 0,
   };
 }
 

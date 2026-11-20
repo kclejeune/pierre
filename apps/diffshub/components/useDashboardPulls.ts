@@ -15,11 +15,16 @@ import { requestJSON } from '@/lib/pullCommentsClient';
 // One /pulls list: who is involved, which repositories (none means every
 // repository the search can see), and the query bar's GitHub search text.
 // reviewRequests: 'teams' widens the review-request term; the dashboard only
-// passes it when that term is part of the search. mutedAuthors leaves those
-// authors' pulls out (lib/mutedAuthors).
+// passes it when that term is part of the search. mutedAuthors,
+// mutedBranches, and staleAfter leave out those authors' pulls
+// (lib/mutedAuthors), pulls from those branches, and open pulls not updated
+// within that duration (lib/muteRules).
 export interface PullSearchRequest {
   involves: PullAudience;
   mutedAuthors?: readonly string[];
+  mutedBranches?: readonly string[];
+  // A canonical duration such as "60d" (lib/muteRules formatStaleDuration).
+  staleAfter?: string;
   repos: readonly string[];
   reviewRequests?: ReviewRequestScope;
   text: string;
@@ -32,8 +37,8 @@ export interface DashboardPullsState {
   loading: boolean;
   loadingMore: boolean;
   loadMore(): void;
-  // How many pulls the muted authors hid from this search; undefined when
-  // nothing was muted (or the search names an author: itself).
+  // How many pulls muting (authors, branches, staleness) hid from this
+  // search; undefined when nothing was muted.
   mutedCount?: number;
   pulls: PullSummary[];
   // Refetches the first page, bypassing the browser cache, after a
@@ -67,6 +72,12 @@ function buildPullSearchParams(request: PullSearchRequest): URLSearchParams {
   }
   if (request.mutedAuthors != null && request.mutedAuthors.length > 0) {
     params.set('mute', request.mutedAuthors.join(','));
+  }
+  if (request.mutedBranches != null && request.mutedBranches.length > 0) {
+    params.set('muteHead', request.mutedBranches.join(','));
+  }
+  if (request.staleAfter != null) {
+    params.set('stale', request.staleAfter);
   }
   params.set('q', request.text.trim());
   return params;

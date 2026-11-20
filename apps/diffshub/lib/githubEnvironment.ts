@@ -24,9 +24,23 @@
 //                              credentials; see getTokenEncryptionKey.
 //   DIFFSHUB_AVATAR_TOKEN      Server-held token for GHES avatar lookups only;
 //                              see getAvatarLookupToken.
+//   DIFFSHUB_BOT_LOGIN_PATTERNS / DIFFSHUB_MUTE_BRANCH_PRESETS /
+//   DIFFSHUB_STALE_AFTER_DEFAULT
+//                              The /pulls muting presets; see
+//                              getPullMutingConfig.
 
 import { readNonEmptyString } from './githubOAuthGrant';
 import { createJSONResponse } from './jsonResponse';
+import {
+  type BranchMutePreset,
+  DEFAULT_BOT_LOGIN_PATTERNS,
+  DEFAULT_BRANCH_MUTE_PRESETS,
+  DEFAULT_STALE_AFTER,
+  formatStaleDuration,
+  parseBotLoginPatterns,
+  parseBranchMutePresets,
+  parseStaleDuration,
+} from './muteRules';
 import { parseBearerToken } from './parseBearerToken';
 import { isSealedToken } from './tokenEnvelope';
 
@@ -320,6 +334,52 @@ export interface GitHubClientEnvironment {
   // format. Clients clear older bare sessions and require a fresh OAuth login.
   tokenEncryptionRequired: boolean;
   webURL: string;
+  // The /pulls dashboard's muting presets (getPullMutingConfig).
+  muting: PullMutingConfig;
+}
+
+// What the /pulls dashboard offers for muting automation and stale pulls.
+// The built-ins hold on any GitHub instance; deployments replace them to
+// cover their own automation:
+//
+//   DIFFSHUB_BOT_LOGIN_PATTERNS   Comma-separated login globs the Muted menu
+//                                 suggests as bots, e.g.
+//                                 `*[bot],*-bot,*_bot,release-pd`. Replaces
+//                                 the built-ins, so list them too to keep
+//                                 them. GitHub App authors always count.
+//   DIFFSHUB_MUTE_BRANCH_PRESETS  Comma-separated `Label=prefix` branch mutes
+//                                 offered as one-click switches, e.g.
+//                                 `Renovate=renovate,Cherry-picks=cherrypick`.
+//                                 Replaces the built-in Renovate and
+//                                 Dependabot presets.
+//   DIFFSHUB_STALE_AFTER_DEFAULT  How long an open pull can go without an
+//                                 update before the list hides it, for
+//                                 viewers who haven't picked their own
+//                                 (`60d`, `2w`, `3mo`, `36h`, or `off`).
+//                                 Defaults to 60d.
+//
+// Statically prerendered pages read these at build time, like the OAuth
+// client id.
+export interface PullMutingConfig {
+  botLoginPatterns: readonly string[];
+  branchPresets: readonly BranchMutePreset[];
+  defaultStaleAfter: string;
+}
+
+export function getPullMutingConfig(): PullMutingConfig {
+  const stale = parseStaleDuration(
+    process.env.DIFFSHUB_STALE_AFTER_DEFAULT ?? DEFAULT_STALE_AFTER
+  );
+  return {
+    botLoginPatterns:
+      parseBotLoginPatterns(process.env.DIFFSHUB_BOT_LOGIN_PATTERNS) ??
+      DEFAULT_BOT_LOGIN_PATTERNS,
+    branchPresets:
+      parseBranchMutePresets(process.env.DIFFSHUB_MUTE_BRANCH_PRESETS) ??
+      DEFAULT_BRANCH_MUTE_PRESETS,
+    defaultStaleAfter:
+      stale == null ? DEFAULT_STALE_AFTER : formatStaleDuration(stale),
+  };
 }
 
 export interface GitHubOAuthConfig {
@@ -417,6 +477,7 @@ export function getGitHubClientEnvironment(): GitHubClientEnvironment {
     requireLogin: isLoginRequired(),
     tokenEncryptionRequired: getTokenEncryptionKey() != null,
     webURL: environment.webURL,
+    muting: getPullMutingConfig(),
   };
 }
 

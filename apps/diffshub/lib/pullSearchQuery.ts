@@ -294,13 +294,25 @@ export function hasOrOperator(text: string): boolean {
 const NARROWING_KEYS: ReadonlySet<string> = new Set(['repo', 'org', 'user']);
 
 // Whether every result the search can match is confined to the repositories
-// named by some repo:/org:/user: qualifier. Walks the boolean structure: a
-// run of terms (implicit AND) narrows when any un-negated term narrows, an OR
-// narrows only when every branch does, and NOT or a "-" in front of a group
-// cancels it. So "is:open org:acme" narrows, while "org:acme OR is:open" and
-// "is:open NOT org:acme" don't. Unbalanced parens count as not narrowing,
-// since there's no reliable reading of them.
+// named by some repo:/org:/user: qualifier. So "is:open org:acme" narrows,
+// while "org:acme OR is:open" and "is:open NOT org:acme" don't.
 export function hasNarrowingQualifier(text: string): boolean {
+  return everyBranchRequires(
+    text,
+    (token) =>
+      isPositiveQualifier(token, NARROWING_KEYS) && (token.value ?? '') !== ''
+  );
+}
+
+// Whether every result the search can match must satisfy some term that
+// `requires` accepts. Walks the boolean structure: a run of terms (implicit
+// AND) qualifies when any un-negated term does, an OR only when every branch
+// does, and NOT or a "-" in front of a group cancels it. Unbalanced parens
+// count as not qualifying, since there's no reliable reading of them.
+function everyBranchRequires(
+  text: string,
+  requires: (token: PullQueryToken) => boolean
+): boolean {
   const words = tokenizePullQuery(text).filter(
     (token) => token.kind !== 'space'
   );
@@ -330,9 +342,7 @@ export function hasNarrowingQualifier(text: string): boolean {
           balanced = false;
         }
       } else {
-        termNarrows =
-          isPositiveQualifier(token, NARROWING_KEYS) &&
-          (token.value ?? '') !== '';
+        termNarrows = requires(token);
       }
       narrows ||= termNarrows && !negated;
       negated = false;
@@ -646,6 +656,25 @@ export function readPullStateFilter(text: string): PullStateFilter {
         value === 'open' || value === 'closed' || value === 'merged'
     );
   return state ?? 'all';
+}
+
+// Whether the search lists only open pulls: every branch of it requires
+// is:open (everyBranchRequires), and no state it names is anything else. So
+// "is:merged OR is:open", "is:open OR label:bug", and "NOT is:open" don't
+// count, since staleness muting would hide the history they also ask for.
+export function listsOnlyOpenPulls(text: string): boolean {
+  const states = qualifierValues(tokenizePullQuery(text), STATE_KEYS).map(
+    (value) => value.toLowerCase()
+  );
+  return (
+    states.every((value) => value === 'open' || !STATE_VALUES.has(value)) &&
+    everyBranchRequires(
+      text,
+      (token) =>
+        isPositiveQualifier(token, STATE_KEYS) &&
+        token.value?.toLowerCase() === 'open'
+    )
+  );
 }
 
 export function writePullStateFilter(

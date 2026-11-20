@@ -6,12 +6,14 @@ import {
   GITHUB_DOTCOM_WEB_URL,
   type GitHubClientEnvironment,
 } from '@/lib/githubEnvironment';
+import { DEFAULT_PULL_MUTING_CONFIG } from '@/lib/muteRules';
 
 // Default matches a plain github.com deployment so components render sensibly
 // even if a caller forgets to mount the provider (e.g. isolated tests).
 const DEFAULT_CLIENT_ENVIRONMENT: GitHubClientEnvironment = {
   host: new URL(GITHUB_DOTCOM_WEB_URL).hostname,
   isGitHubDotCom: true,
+  muting: DEFAULT_PULL_MUTING_CONFIG,
   oauthEnabled: false,
   patInputEnabled: true,
   requireLogin: false,

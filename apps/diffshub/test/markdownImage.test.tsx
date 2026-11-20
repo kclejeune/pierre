@@ -9,6 +9,7 @@ import { GitHubEnvironmentProvider } from '../components/GitHubEnvironmentProvid
 import { MarkdownImage } from '../components/MarkdownContent';
 import { installJsdomGlobals } from '../lib/test/jsdomGlobals';
 import type { GitHubClientEnvironment } from '@/lib/githubEnvironment';
+import { DEFAULT_PULL_MUTING_CONFIG } from '@/lib/muteRules';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
   pretendToBeVisual: true,
@@ -16,6 +17,7 @@ const dom = new JSDOM('<!doctype html><html><body></body></html>', {
 });
 
 const environment: GitHubClientEnvironment = {
+  muting: DEFAULT_PULL_MUTING_CONFIG,
   host: 'ghe.example.com',
   isGitHubDotCom: false,
   oauthEnabled: false,

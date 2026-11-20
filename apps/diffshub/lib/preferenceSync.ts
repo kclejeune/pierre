@@ -39,6 +39,7 @@ const SYNCED_PREFERENCES = {
   displaySettings: 'diffshub.display-settings',
   lightTheme: 'diffshub-light-theme',
   mutedAuthors: 'diffshub.muted-authors',
+  muteRules: 'diffshub.mute-rules',
   pinnedRepos: 'diffshub.pinned-repos',
 } as const;
 

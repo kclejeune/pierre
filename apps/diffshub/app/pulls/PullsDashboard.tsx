@@ -2,6 +2,7 @@
 
 import { IconCheck, IconChevronSm, IconEyeSlash, IconPin } from '@pierre/icons';
 import {
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type RefObject,
   use,
@@ -39,6 +40,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/DropdownMenu';
+import { useGitHubEnvironment } from '@/components/GitHubEnvironmentProvider';
 import { GitHubTokenControl } from '@/components/GitHubTokenControl';
 import { PullBatchBar, usePullBatch } from '@/components/PullBatchBar';
 import { PullFilterMenus } from '@/components/PullFilterMenus';
@@ -63,6 +65,7 @@ import { useGitHubToken } from '@/components/useGitHubToken';
 import { useLatestValueRef } from '@/components/useLatestValueRef';
 import { useMediaQuery } from '@/components/useMediaQuery';
 import { useMutedAuthors } from '@/components/useMutedAuthors';
+import { useMuteRules } from '@/components/useMuteRules';
 import { usePinnedRepos } from '@/components/usePinnedRepos';
 import { usePullSelection } from '@/components/usePullSelection';
 import { usePullStatuses } from '@/components/usePullStatuses';
@@ -70,6 +73,7 @@ import { cn } from '@/lib/cn';
 import { GITHUB_APP_OWNER_FIX } from '@/lib/githubAppAccess';
 import {
   effectiveMutedAuthors,
+  effectiveMutedBranches,
   involvementsUseReviewRequests,
   normalizePullInvolvements,
   PULL_ACTIVITY_LABELS,
@@ -78,6 +82,7 @@ import {
   type PullInvolvement,
   pullKey,
   type PullSummary,
+  staleMutingApplies,
 } from '@/lib/githubPullSummaries';
 import {
   authorSearchName,
@@ -85,7 +90,21 @@ import {
   MAX_MUTED_AUTHORS,
   mutedAuthorLabel,
 } from '@/lib/mutedAuthors';
-import { isEditableEventTarget } from '@/lib/platform';
+import {
+  type BranchMutePreset,
+  describeStaleDuration,
+  formatStaleDuration,
+  isBranchMuted,
+  isLikelyBotAuthor,
+  isValidBranchPrefix,
+  matchesMutedBranch,
+  MAX_MUTED_BRANCHES,
+  parseStaleDuration,
+  resolveStaleAfter,
+  staleCutoff,
+  type StaleDuration,
+} from '@/lib/muteRules';
+import { isPageShortcutEvent } from '@/lib/platform';
 import { PrefetchGroup } from '@/lib/prefetchStore';
 import { buildPullRows, groupPulls } from '@/lib/pullGroups';
 import {
@@ -287,6 +306,8 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   const [page, updatePage] = usePullsPageState();
   const { hydrated, pinned, toggle } = usePinnedRepos();
   const mutedAuthors = useMutedAuthors();
+  const muteRules = useMuteRules();
+  const { muting: mutingConfig } = useGitHubEnvironment();
   // This view renders only after hydration (below), so the client value is
   // the first one painted.
   const previewLayout = useMediaQuery(PREVIEW_LAYOUT_QUERY, false);
@@ -458,9 +479,13 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   // pinned list, and fetching before it loads would search everything.
   // The muted list loads the same way, and searching before it does would
   // flash the bots it hides.
-  if (!hydrated || !mutedAuthors.hydrated) {
+  if (!hydrated || !mutedAuthors.hydrated || !muteRules.hydrated) {
     return null;
   }
+  const staleAfter = resolveStaleAfter(
+    muteRules.rules,
+    mutingConfig.defaultStaleAfter
+  );
 
   const involves = resolveAudience(page);
   const repos = scopeRepos(page.scope, pinned);
@@ -471,8 +496,13 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   const request: PullSearchRequest = {
     involves,
     mutedAuthors: page.showMuted ? undefined : mutedAuthors.muted,
+    mutedBranches: page.showMuted ? undefined : muteRules.rules.branches,
     repos,
     reviewRequests: usesReviewRequests ? page.reviewRequests : undefined,
+    staleAfter:
+      page.showMuted || staleAfter == null
+        ? undefined
+        : formatStaleDuration(staleAfter),
     text: page.text,
   };
 
@@ -549,13 +579,22 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
           fill={previewLayout}
           listVersion={listVersion}
           muting={{
+            botLoginPatterns: mutingConfig.botLoginPatterns,
+            branches: muteRules.rules.branches,
+            branchPresets: mutingConfig.branchPresets,
+            defaultStaleAfter: mutingConfig.defaultStaleAfter,
             full: mutedAuthors.muted.length >= MAX_MUTED_AUTHORS,
             muted: mutedAuthors.muted,
             showMuted: page.showMuted,
+            staleAfter,
+            staleAfterPicked: muteRules.rules.staleAfter != null,
             onMute: mutedAuthors.mute,
+            onMuteBranch: muteRules.muteBranch,
+            onSetStaleAfter: muteRules.setStaleAfter,
             onShowMutedChange: (showMuted) =>
               updatePage({ ...page, showMuted }),
             onUnmute: mutedAuthors.unmute,
+            onUnmuteBranch: muteRules.unmuteBranch,
           }}
           request={request}
           scope={page.scope}
@@ -810,9 +849,10 @@ function AudienceFilter({
           isSelected &&
             'bg-accent dark:bg-accent border-transparent font-medium shadow-none'
         )
-      : // Slightly tighter than the sm default so the team-requests switch
-        // fits on the same row at laptop widths.
-        'px-2.5';
+      : // Slightly tighter than the sm default so more chips fit a row.
+        // Unselected chips keep a transparent border so selecting one
+        // doesn't shift its neighbors.
+        cn('px-2.5', !isSelected && 'border border-transparent');
   const selected: readonly PullInvolvement[] = value === 'anyone' ? [] : value;
   const toggle = (involvement: PullInvolvement) =>
     onChange(
@@ -825,10 +865,13 @@ function AudienceFilter({
   return (
     <ButtonGroup
       aria-label="Filter by involvement"
+      // Inline, the involvements are separate chips rather than one
+      // segmented tray: they toggle independently, and a tray that wraps
+      // reads as a ragged block, where chips wrap into clean rows.
       className={
         vertical
           ? 'w-full flex-col gap-0.5 self-stretch bg-transparent'
-          : 'flex-wrap'
+          : 'flex-wrap gap-1 bg-transparent'
       }
       size="sm"
     >
@@ -1034,6 +1077,26 @@ function PullList({
       ),
     [muting.muted, text]
   );
+  // What else dims a row while muted pulls are shown: a muted branch, or no
+  // update since the staleness cutoff (when the search would hide stale
+  // pulls). ISO timestamps compare as strings, and a date-only cutoff sorts
+  // before every time on its own day.
+  const dimmedBranches = useMemo(
+    () => effectiveMutedBranches(muting.branches, text),
+    [muting.branches, text]
+  );
+  // Tokenizes the query, so it runs per search rather than per render (the
+  // list re-renders on every selection step).
+  const staleApplies = useMemo(() => staleMutingApplies(text), [text]);
+  const dimBefore =
+    muting.staleAfter != null && staleApplies
+      ? // oxlint-disable-next-line react/purity -- the cutoff is rounded to the hour or day (staleCutoff), so reading the clock per render only moves it when the search's own cutoff would move too.
+        staleCutoff(muting.staleAfter, new Date())
+      : undefined;
+  const isRowMuted = (pull: PullSummary) =>
+    mutedNames.has(authorKey(pull)) ||
+    matchesMutedBranch(dimmedBranches, pull.headRefName) ||
+    (dimBefore != null && pull.updatedAt < dimBefore);
   // Every muted author, for the rows' mute buttons: unlike mutedNames, it
   // includes an author the query names, who is still muted.
   const allMutedNames = useMemo(
@@ -1204,10 +1267,11 @@ function PullList({
               text={text}
               onApplyText={onApplyText}
             />
-            <MutedAuthorsMenu
+            <MuteMenu
               muting={muting}
               mutedCount={mutedCount}
               pulls={pulls}
+              text={text}
             />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -1275,7 +1339,7 @@ function PullList({
               groupExpanded={expanded.has(row.group.key)}
               groupKey={row.lead ? row.group.key : undefined}
               groupSize={row.group.pulls.length}
-              muted={muting.showMuted && mutedNames.has(authorKey(row.pull))}
+              muted={muting.showMuted && isRowMuted(row.pull)}
               actionsBusy={batch.running != null}
               authorMuted={allMutedNames.has(authorKey(row.pull))}
               muteFull={muting.full}
@@ -1359,14 +1423,7 @@ function usePreviewKeyboard(
       return;
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.defaultPrevented ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey ||
-        isEditableEventTarget(event) ||
-        document.querySelector('[role="dialog"], [role="menu"]') != null
-      ) {
+      if (!isPageShortcutEvent(event)) {
         return;
       }
       const {
@@ -1481,17 +1538,35 @@ function usePreviewKeyboard(
   }, [selectedKey]);
 }
 
-// The muted-author list and its controls, handed from the page (which owns
-// the list and the ?muted= switch) to the list card's Muted menu.
+// The list's muting state and controls, handed from the page (which owns
+// the muted authors, the mute rules, and the ?muted= switch) to the list
+// card's Muted menu and its rows.
 interface MutingControls {
+  // Login globs that mark machine users as bots (deployment config).
+  botLoginPatterns: readonly string[];
+  // Muted head-branch prefixes (lib/muteRules).
+  branches: readonly string[];
+  // The deployment's one-click branch mutes.
+  branchPresets: readonly BranchMutePreset[];
+  // The deployment's staleness default, as a duration ("60d", "off").
+  defaultStaleAfter: string;
   // The muted list is at MAX_MUTED_AUTHORS, so no one else can be muted.
   full: boolean;
   muted: readonly string[];
-  // Muted authors' pulls are listed (dimmed) instead of excluded.
+  // Muted pulls are listed (dimmed) instead of excluded.
   showMuted: boolean;
+  // How long an open pull can go without an update and still be listed;
+  // undefined when stale pulls aren't hidden.
+  staleAfter: StaleDuration | undefined;
+  // The viewer picked their own staleness rather than the default.
+  staleAfterPicked: boolean;
   onMute(authors: readonly string[]): void;
+  onMuteBranch(prefix: string): void;
+  // A duration or "off"; undefined returns to the deployment default.
+  onSetStaleAfter(value: string | undefined): void;
   onShowMutedChange(showMuted: boolean): void;
   onUnmute(author: string): void;
+  onUnmuteBranch(prefix: string): void;
 }
 
 // A list's rows as diff-view queue entries (lib/pullQueue).
@@ -1506,18 +1581,21 @@ function authorKey(pull: PullSummary): string {
 }
 
 // Bot authors among the loaded rows that aren't muted yet, in list order:
-// the Muted menu offers them as one-click mutes, so the common case (bumps
-// from renovate or dependabot burying everything) needs no typing.
+// GitHub App bots and machine users whose logins match the deployment's bot
+// patterns (renovate-bot, release_bot). The Muted menu offers them as
+// one-click mutes, so the common case (bumps burying everything) needs no
+// typing.
 function unmutedBotAuthors(
   pulls: readonly PullSummary[],
-  muted: readonly string[]
+  muted: readonly string[],
+  patterns: readonly string[]
 ): string[] {
   const authors: string[] = [];
   for (const pull of pulls) {
     const author = authorSearchName(pull);
     if (
-      pull.authorIsBot === true &&
       author != null &&
+      isLikelyBotAuthor(pull, patterns) &&
       !isAuthorMuted(muted, author) &&
       !isAuthorMuted(authors, author)
     ) {
@@ -1527,35 +1605,51 @@ function unmutedBotAuthors(
   return authors;
 }
 
-// The list header's Muted menu: how many pulls muted authors hid, a switch
-// to list them anyway, and a shortcut to mute every bot in view. Hidden when
-// nothing is muted and no bot is in view. Muting and unmuting individual
-// authors happens where they're seen: the rows' mute buttons and the Author
-// filter menu, which also lists who is muted.
-function MutedAuthorsMenu({
+// The staleness choices the Muted menu offers as one click; any other
+// duration can be typed.
+const STALE_PRESETS = ['1w', '30d', '60d', '90d', '6mo', 'off'] as const;
+
+// The list header's Muted menu: how many pulls muting hid, a switch to list
+// them anyway (dimmed), the staleness cutoff, branch mutes (the deployment's
+// presets and the viewer's own prefixes), and a shortcut to mute the bots in
+// view. Muting and unmuting individual authors happens where they're seen:
+// the rows' mute buttons and the Author filter menu, which also lists who is
+// muted.
+function MuteMenu({
   muting,
   mutedCount,
   pulls,
+  text,
 }: {
   muting: MutingControls;
   mutedCount: number | undefined;
   pulls: readonly PullSummary[];
+  text: string;
 }) {
-  const { muted, showMuted } = muting;
-  const bots = useMemo(() => unmutedBotAuthors(pulls, muted), [muted, pulls]);
+  const { branches, branchPresets, muted, showMuted, staleAfter } = muting;
+  const bots = useMemo(
+    () => unmutedBotAuthors(pulls, muted, muting.botLoginPatterns),
+    [muted, muting.botLoginPatterns, pulls]
+  );
   const room = MAX_MUTED_AUTHORS - muted.length;
-  if (muted.length === 0 && bots.length === 0) {
-    return null;
-  }
-  const triggerLabel =
-    muted.length === 0
-      ? 'Mute bots'
-      : showMuted
-        ? 'Showing muted'
-        : mutedCount != null && mutedCount > 0
-          ? // Counts pulls, not authors: "63 muted pulls" from one bot.
-            `${mutedCount.toLocaleString()} muted ${mutedCount === 1 ? 'pull' : 'pulls'}`
-          : 'Muted';
+  const customBranches = branches.filter(
+    (prefix) =>
+      !branchPresets.some((preset) => isBranchMuted([preset.prefix], prefix))
+  );
+  const staleValue =
+    staleAfter == null ? 'off' : formatStaleDuration(staleAfter);
+  const defaultStale = parseStaleDuration(muting.defaultStaleAfter);
+  const triggerLabel = showMuted
+    ? 'Showing muted'
+    : mutedCount != null && mutedCount > 0
+      ? // Counts pulls, not rules: "63 muted pulls" from one bot.
+        `${mutedCount.toLocaleString()} muted ${mutedCount === 1 ? 'pull' : 'pulls'}`
+      : 'Muted';
+  const stopTypeahead = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    // Keep typing inside the field instead of triggering the menu's
+    // typeahead or item activation.
+    event.stopPropagation();
+  };
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -1563,33 +1657,110 @@ function MutedAuthorsMenu({
           variant="ghost"
           size="xs"
           className="text-muted-foreground h-7 tabular-nums"
-          title="Authors whose pull requests this list leaves out"
+          title="What this list leaves out: muted authors and branches, and stale pulls"
         >
           <IconEyeSlash className="size-3" />
           {triggerLabel}
           <IconChevronSm className="size-3" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-56">
-        {muted.length > 0 && (
-          <>
+      <DropdownMenuContent align="end" className="w-72">
+        <DropdownMenuCheckboxItem
+          checked={showMuted}
+          onCheckedChange={(checked) =>
+            muting.onShowMutedChange(checked === true)
+          }
+        >
+          Show muted pulls
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
+          Hide open pulls not updated in
+          {!staleMutingApplies(text) && staleAfter != null && (
+            <span className="block">
+              (not applied: this search filters or sorts by update time, or
+              isn&apos;t limited to open pulls)
+            </span>
+          )}
+        </DropdownMenuLabel>
+        <div className="flex flex-wrap items-center gap-1 px-2 pb-1.5">
+          {STALE_PRESETS.map((preset) => (
+            <Button
+              key={preset}
+              type="button"
+              variant={staleValue === preset ? 'secondary' : 'ghost'}
+              size="xs"
+              className="h-6 px-1.5 tabular-nums"
+              onClick={() => muting.onSetStaleAfter(preset)}
+            >
+              {preset === 'off' ? 'Off' : preset}
+            </Button>
+          ))}
+          <StaleDurationInput
+            key={staleValue}
+            value={staleValue}
+            onKeyDown={stopTypeahead}
+            onCommit={muting.onSetStaleAfter}
+          />
+        </div>
+        {muting.staleAfterPicked && defaultStale != null && (
+          <DropdownMenuItem
+            className="text-muted-foreground text-xs"
+            onSelect={() => muting.onSetStaleAfter(undefined)}
+          >
+            Use the default (
+            {defaultStale === 'off'
+              ? 'off'
+              : describeStaleDuration(defaultStale)}
+            )
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
+          Branches
+        </DropdownMenuLabel>
+        {branchPresets.map((preset) => {
+          const checked = isBranchMuted(branches, preset.prefix);
+          return (
             <DropdownMenuCheckboxItem
-              checked={showMuted}
-              onCheckedChange={(checked) =>
-                muting.onShowMutedChange(checked === true)
+              key={preset.prefix}
+              checked={checked}
+              disabled={!checked && branches.length >= MAX_MUTED_BRANCHES}
+              onSelect={(event) => event.preventDefault()}
+              onCheckedChange={(next) =>
+                next === true
+                  ? muting.onMuteBranch(preset.prefix)
+                  : muting.onUnmuteBranch(preset.prefix)
               }
             >
-              Show muted authors&apos; pulls
+              <span className="flex-1">{preset.label}</span>
+              <span className="text-muted-foreground font-mono text-xs">
+                {preset.prefix}*
+              </span>
             </DropdownMenuCheckboxItem>
-            <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
-              {muted.length} muted {muted.length === 1 ? 'author' : 'authors'},
-              listed in the Author filter
-            </DropdownMenuLabel>
-          </>
+          );
+        })}
+        {customBranches.map((prefix) => (
+          <DropdownMenuCheckboxItem
+            key={prefix}
+            checked
+            onSelect={(event) => event.preventDefault()}
+            onCheckedChange={() => muting.onUnmuteBranch(prefix)}
+          >
+            <span className="font-mono text-xs">{prefix}*</span>
+          </DropdownMenuCheckboxItem>
+        ))}
+        {branches.length < MAX_MUTED_BRANCHES && (
+          <div className="px-2 pt-0.5 pb-1.5">
+            <BranchPrefixInput
+              onKeyDown={stopTypeahead}
+              onAdd={muting.onMuteBranch}
+            />
+          </div>
         )}
         {bots.length > 0 && room > 0 && (
           <>
-            {muted.length > 0 && <DropdownMenuSeparator />}
+            <DropdownMenuSeparator />
             <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
               Bots in this list
             </DropdownMenuLabel>
@@ -1602,7 +1773,87 @@ function MutedAuthorsMenu({
             </DropdownMenuItem>
           </>
         )}
+        {muted.length > 0 && (
+          <DropdownMenuLabel className="text-muted-foreground border-t text-xs font-normal">
+            {muted.length} muted {muted.length === 1 ? 'author' : 'authors'},
+            listed in the Author filter
+          </DropdownMenuLabel>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+// The Muted menu's typed staleness: any duration parseStaleDuration reads
+// ("36h", "2 weeks", "3mo", "off"), applied on Enter or blur. An unreadable
+// entry stays in the field, outlined, until it's fixed or the menu closes.
+function StaleDurationInput({
+  onCommit,
+  onKeyDown,
+  value,
+}: {
+  onCommit(value: string): void;
+  onKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void;
+  value: string;
+}) {
+  const [draft, setDraft] = useState(value);
+  const valid = parseStaleDuration(draft) != null;
+  const commit = () => {
+    if (valid && draft.trim() !== value) {
+      onCommit(draft);
+    }
+  };
+  return (
+    <input
+      aria-label="Hide open pulls not updated in (a duration like 36h, 2w, or 3mo)"
+      value={draft}
+      placeholder="36h, 2w, 3mo"
+      spellCheck={false}
+      className={cn(
+        'h-6 w-20 rounded-md border bg-transparent px-1.5 font-mono text-xs focus:outline-none',
+        !valid && 'border-destructive'
+      )}
+      onChange={({ currentTarget }) => setDraft(currentTarget.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        onKeyDown(event);
+        if (event.key === 'Enter') {
+          commit();
+        }
+      }}
+    />
+  );
+}
+
+// The Muted menu's field for muting another branch prefix, added on Enter.
+function BranchPrefixInput({
+  onAdd,
+  onKeyDown,
+}: {
+  onAdd(prefix: string): void;
+  onKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void;
+}) {
+  const [draft, setDraft] = useState('');
+  const prefix = draft.trim();
+  const valid = prefix === '' || isValidBranchPrefix(prefix);
+  return (
+    <input
+      aria-label="Mute pulls from branches starting with"
+      value={draft}
+      placeholder="Branch prefix, e.g. release/"
+      spellCheck={false}
+      className={cn(
+        'h-7 w-full rounded-md border bg-transparent px-2 font-mono text-xs focus:outline-none',
+        !valid && 'border-destructive'
+      )}
+      onChange={({ currentTarget }) => setDraft(currentTarget.value)}
+      onKeyDown={(event) => {
+        onKeyDown(event);
+        if (event.key === 'Enter' && prefix !== '' && valid) {
+          onAdd(prefix);
+          setDraft('');
+        }
+      }}
+    />
   );
 }

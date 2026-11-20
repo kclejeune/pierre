@@ -16,6 +16,12 @@ import {
   createPrivateJSONResponse,
 } from '@/lib/jsonResponse';
 import { isValidMutedAuthor, MAX_MUTED_AUTHORS } from '@/lib/mutedAuthors';
+import {
+  isValidBranchPrefix,
+  MAX_MUTED_BRANCHES,
+  parseStaleDuration,
+  staleCutoff,
+} from '@/lib/muteRules';
 import { isValidRepoName, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
 import { DEFAULT_QUERY_TEXT } from '@/lib/pullScopes';
 import { hasNarrowingQualifier } from '@/lib/pullSearchQuery';
@@ -118,6 +124,32 @@ async function handleGET(request: NextRequest) {
       { status: 400 }
     );
   }
+  const muteHeadParam = params.get('muteHead') ?? '';
+  const mutedBranches = muteHeadParam === '' ? [] : muteHeadParam.split(',');
+  if (
+    mutedBranches.length > MAX_MUTED_BRANCHES ||
+    !mutedBranches.every(isValidBranchPrefix)
+  ) {
+    return createJSONResponse(
+      {
+        error: `muteHead must list at most ${MAX_MUTED_BRANCHES} branch prefixes.`,
+      },
+      { status: 400 }
+    );
+  }
+  // How long an open pull can go without an update and still be listed,
+  // e.g. 60d; the cutoff date is computed here so every page of a search
+  // uses the server's clock.
+  const staleParam = params.get('stale');
+  const parsedStale =
+    staleParam == null ? undefined : parseStaleDuration(staleParam);
+  const staleAfter = parsedStale === 'off' ? undefined : parsedStale;
+  if (staleParam != null && staleAfter == null) {
+    return createJSONResponse(
+      { error: 'stale must be a duration like 36h, 60d, 2w, 3mo, or 1y.' },
+      { status: 400 }
+    );
+  }
   const cursorParam = params.get('cursor');
   const cursor =
     cursorParam == null ? undefined : decodePullsCursor(cursorParam);
@@ -136,7 +168,16 @@ async function handleGET(request: NextRequest) {
       { status: 401 }
     );
   }
-  const scope = { involves, mutedAuthors, repos, reviewRequests, text };
+  const scope = {
+    involves,
+    mutedAuthors,
+    mutedBranches,
+    repos,
+    reviewRequests,
+    staleCutoff:
+      staleAfter == null ? undefined : staleCutoff(staleAfter, new Date()),
+    text,
+  };
   // The short-lived page cache (see PULLS_PAGE_CACHE_FRESH_MS): a fresh hit
   // answers outright, a stale one answers flagged `stale` (and uncacheable
   // by the browser) so the client shows it and refetches with no-cache.
@@ -211,6 +252,8 @@ async function handleGET(request: NextRequest) {
       hiddenCount,
       level: 'info',
       mutedAuthors: mutedAuthors.length,
+      mutedBranches: mutedBranches.length,
+      stale: staleParam ?? undefined,
       pulls: page.pulls.length,
       repos: repos.length,
       requestMs,

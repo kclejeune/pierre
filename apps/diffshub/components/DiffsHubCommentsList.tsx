@@ -1,7 +1,13 @@
 'use client';
 
 import type { AnnotationSide } from '@pierre/diffs';
-import { IconCheck, IconConvoFill, IconPlus } from '@pierre/icons';
+import {
+  IconArrowUpRight,
+  IconCheck,
+  IconConvoFill,
+  IconPlus,
+} from '@pierre/icons';
+import { ChevronDown } from 'lucide-react';
 import {
   createContext,
   type HTMLAttributes,
@@ -12,10 +18,13 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
 
+import { Button } from './Button';
+import { ButtonGroup, ButtonGroupItem } from './ButtonGroup';
 import { CommentHeaderActions, CommentTimestamp } from './CommentActions';
 import { CommentAuthorAvatar } from './CommentAuthorAvatar';
 import { CommentComposer, ComposerTrigger } from './CommentComposer';
@@ -26,10 +35,14 @@ import {
 } from './CommentModeration';
 import { ReactionChipList, useCommentReactions } from './CommentReactions';
 import { MarkdownContent, RawMarkdownFallback } from './MarkdownContent';
+import { SidebarPanelHeader } from './SidebarPanelHeader';
 import { useGitHubUser } from './useGitHubUser';
 import { cn } from '@/lib/cn';
 import { readCommentDraft } from '@/lib/commentDrafts';
-import { createCommentSidebarPreview } from '@/lib/commentSidebarPreview';
+import {
+  createCommentSidebarPreview,
+  summarizeCommentBody,
+} from '@/lib/commentSidebarPreview';
 import type {
   CommentAuthor,
   CommentLineType,
@@ -48,6 +61,20 @@ import type {
 // render.
 const CARD_CLASS =
   'rounded-lg border border-[var(--diffshub-card-border,rgb(0_0_0_/_0.1))] bg-[var(--diffshub-card-bg,var(--color-card))] dark:border-[var(--diffshub-card-border,rgb(255_255_255_/_0.15))]';
+
+// Divides the list's two groups (the pull's conversation, its code
+// comments) when both are present: a small muted label, its count, and a
+// hairline rule, so it reads as a section break under the panel's own
+// "Comments" title rather than a second title.
+function GroupHeading({ count, label }: { count: number; label: string }) {
+  return (
+    <h3 className="text-muted-foreground flex items-center gap-2 pt-2 pb-2 text-xs font-medium">
+      {label}
+      <span className="tabular-nums">{count}</span>
+      <span aria-hidden="true" className="bg-border h-px flex-1" />
+    </h3>
+  );
+}
 
 // The gapped stack of cards under each section heading.
 const CARD_STACK_CLASS = 'flex flex-col gap-2';
@@ -82,9 +109,10 @@ function CardHeader({
 const SIDEBAR_MARKDOWN_CLASS =
   'text-foreground w-full text-[14px] leading-normal [&_p]:my-0! [&_p+p]:mt-2! [&_pre]:my-1.5! [&_ul]:my-1! [&_ol]:my-1! [&_blockquote]:my-1! [&_img]:max-h-40 [&_h1]:text-[1.15em]! [&_h2]:text-[1.1em]! [&_h3]:text-[1em]! [&_:is(h1,h2,h3)]:my-1.5!';
 
-// Rows that are not expanded clamp the rendered body to a few lines so long
-// descriptions do not swallow the list while the formatting still reads at a
-// glance. `-webkit-line-clamp` counts lines across the nested markdown blocks,
+// Code comment cards clamp the rendered body to a few lines so long
+// comments do not swallow the list while the formatting still reads at a
+// glance (conversation rows collapse to a summary instead; see
+// ConversationBody). `-webkit-line-clamp` counts lines across the nested markdown blocks,
 // so paragraphs, lists, and code all clamp together. Merged once here so the
 // per-row `className` stays referentially stable across list re-renders.
 const COLLAPSED_SIDEBAR_MARKDOWN_CLASS = cn(
@@ -187,6 +215,93 @@ function DeferredMarkdown({
   );
 }
 
+// A conversation row's body. Collapsed, a row whose comment holds more
+// than its summary (summarizeCommentBody: the first line of text, as plain
+// text) shows just that summary, so every collapsed row is the same compact
+// height whatever the comment's markdown (a bot's headings and checklists
+// clamp to most of a card otherwise). Expanded, or when the summary is the
+// whole comment, the full markdown renders.
+function ConversationBody({
+  expanded,
+  markdown,
+  summary,
+}: {
+  expanded: boolean;
+  markdown: string;
+  summary: { hasMore: boolean; summary: string };
+}) {
+  if (summary.hasMore && !expanded) {
+    return (
+      <p className="text-foreground/80 m-0 line-clamp-2 w-full text-[13px] leading-5">
+        {summary.summary === '' ? 'Show comment' : summary.summary}
+      </p>
+    );
+  }
+  return (
+    <div className="w-full">
+      <DeferredMarkdown
+        className={SIDEBAR_MARKDOWN_CLASS}
+        markdown={markdown}
+      />
+    </div>
+  );
+}
+
+// A conversation row's collapse state: expanded or not, the body's summary
+// (summarizeCommentBody), and a toggle that only acts when there's more to
+// show and `canToggle` allows (not mid-edit). `rowProps` wires the toggle to
+// the row's click and announces the state only on rows that can expand.
+function useCollapsibleSummary(preview: string, canToggle = true) {
+  const [expanded, setExpanded] = useState(false);
+  const summary = useMemo(() => summarizeCommentBody(preview), [preview]);
+  const toggle = () => {
+    if (summary.hasMore && canToggle) {
+      setExpanded((prev) => !prev);
+    }
+  };
+  return {
+    expanded,
+    rowProps: {
+      'aria-expanded': summary.hasMore ? expanded : undefined,
+      onActivate: toggle,
+    },
+    setExpanded,
+    summary,
+    toggle,
+  };
+}
+
+// The accordion chevron at a collapsible row's header edge: points down
+// while the row shows its summary and turns up once it's expanded. A button of
+// its own (the row's click toggles too) so the affordance is keyboard
+// reachable and announced.
+function ExpandChevron({
+  expanded,
+  onToggle,
+}: {
+  expanded: boolean;
+  onToggle(): void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={expanded}
+      aria-label={expanded ? 'Collapse comment' : 'Expand comment'}
+      title={expanded ? 'Collapse' : 'Expand'}
+      className="text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md outline-none hover:bg-[var(--diffshub-card-hover-bg,var(--color-muted))] focus-visible:ring-2"
+      onClick={onToggle}
+    >
+      <ChevronDown
+        aria-hidden
+        className={cn(
+          'size-3.5 motion-safe:transition-transform',
+          expanded && 'rotate-180'
+        )}
+      />
+    </button>
+  );
+}
+
 // Write access to the PR-level conversation, provided only on pull-request
 // views. `canWrite` mirrors the thread cards' meaning: a token is saved, so
 // writes can be attempted at all. Edit/delete only apply to issue comments
@@ -207,8 +322,18 @@ export interface PullDescription {
   body: string;
 }
 
+// Which comments the list shows, as on GitHub's PR comments panel:
+// everything, the threads still open (no PR-level conversation, which can't
+// be resolved), or the viewer's own (threads they started or replied in, and
+// their conversation comments).
+export type CommentFilter = 'all' | 'unresolved' | 'mine';
+
 interface DiffsHubCommentsListProps {
   commentSections: readonly DiffsHubSavedCommentItem[];
+  // Controlled by the sidebar, so the overview's Comments cell can open the
+  // list on Unresolved.
+  filter?: CommentFilter;
+  onFilterChange?(filter: CommentFilter): void;
   description?: PullDescription | null;
   // PR-level conversation (issue comments, review summaries) shown in its own
   // section above the per-file threads.
@@ -216,6 +341,38 @@ interface DiffsHubCommentsListProps {
   discussionActions?: DiscussionActions;
   onSelectComment?(comment: DiffsHubSavedCommentEntry): void;
   onSelectItem?(itemId: string): void;
+  // The count the panel's title shows (the sidebar tab badge's number).
+  totalCount?: number;
+}
+
+// GitHub logins compare case-insensitively.
+function isViewer(login: string, viewerLogin: string | undefined): boolean {
+  return (
+    viewerLogin != null && login.toLowerCase() === viewerLogin.toLowerCase()
+  );
+}
+
+// The review threads a filter keeps, with files left out once none of
+// theirs remain.
+function filterCommentSections(
+  sections: readonly DiffsHubSavedCommentItem[],
+  filter: CommentFilter,
+  viewerLogin: string | undefined
+): readonly DiffsHubSavedCommentItem[] {
+  if (filter === 'all') {
+    return sections;
+  }
+  const keep = (comment: DiffsHubSavedCommentEntry) =>
+    filter === 'unresolved'
+      ? comment.resolved !== true
+      : isViewer(comment.author.login, viewerLogin) ||
+        comment.participants.some((participant) =>
+          isViewer(participant.login, viewerLogin)
+        );
+  return sections.flatMap((section) => {
+    const comments = section.comments.filter(keep);
+    return comments.length === 0 ? [] : [{ ...section, comments }];
+  });
 }
 
 // The action phrase after a discussion row's @handle. Review verdicts get
@@ -381,7 +538,6 @@ function DiscussionRow({
   actions?: DiscussionActions;
   comment: PullDiscussionComment;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const moderation = useCommentModeration(async () => {
     await actions?.onDelete(comment.id);
   });
@@ -399,28 +555,38 @@ function DiscussionRow({
     reactions: comment.reactions,
   });
 
-  const toggleExpanded = () => {
-    if (!moderation.isEditing && !moderation.isConfirmingDelete) {
-      setExpanded((prev) => !prev);
-    }
-  };
+  const {
+    expanded,
+    rowProps,
+    setExpanded,
+    summary,
+    toggle: toggleExpanded,
+  } = useCollapsibleSummary(
+    preview,
+    !moderation.isEditing && !moderation.isConfirmingDelete
+  );
 
   return (
-    <CommentRow aria-expanded={expanded} onActivate={toggleExpanded}>
+    <CommentRow {...rowProps}>
       <CardHeader
         author={comment.author}
         trailing={
-          <CommentHeaderActions
-            authorLogin={comment.author.login}
-            editing={moderation.isEditing}
-            menu={{
-              canModify,
-              htmlUrl: comment.htmlUrl,
-              moderation,
-              onBeginEdit: () => setExpanded(true),
-            }}
-            reactions={reactions}
-          />
+          <span className="flex shrink-0 items-center gap-0.5">
+            <CommentHeaderActions
+              authorLogin={comment.author.login}
+              editing={moderation.isEditing}
+              menu={{
+                canModify,
+                htmlUrl: comment.htmlUrl,
+                moderation,
+                onBeginEdit: () => setExpanded(true),
+              }}
+              reactions={reactions}
+            />
+            {summary.hasMore && !moderation.isEditing && (
+              <ExpandChevron expanded={expanded} onToggle={toggleExpanded} />
+            )}
+          </span>
         }
       >
         <span className="text-foreground font-medium">
@@ -447,13 +613,10 @@ function DiscussionRow({
         </div>
       ) : (
         preview !== '' && (
-          <DeferredMarkdown
-            className={
-              expanded
-                ? SIDEBAR_MARKDOWN_CLASS
-                : COLLAPSED_SIDEBAR_MARKDOWN_CLASS
-            }
+          <ConversationBody
+            expanded={expanded}
             markdown={preview}
+            summary={summary}
           />
         )
       )}
@@ -470,14 +633,21 @@ function DiscussionRow({
 // Conversation's first row: the description, collapsed until clicked. Editing
 // lives in the header's pull request panel.
 function DescriptionRow({ description }: { description: PullDescription }) {
-  const [expanded, setExpanded] = useState(false);
   const preview = createCommentSidebarPreview(description.body);
+  const {
+    expanded,
+    rowProps,
+    summary,
+    toggle: toggleExpanded,
+  } = useCollapsibleSummary(preview);
   return (
-    <CommentRow
-      aria-expanded={expanded}
-      onActivate={() => setExpanded((prev) => !prev)}
-    >
+    <CommentRow {...rowProps}>
       <CardHeader
+        trailing={
+          summary.hasMore && (
+            <ExpandChevron expanded={expanded} onToggle={toggleExpanded} />
+          )
+        }
         author={
           description.authorLogin != null
             ? { avatarUrl: '', login: description.authorLogin }
@@ -500,11 +670,10 @@ function DescriptionRow({ description }: { description: PullDescription }) {
           No description provided.
         </p>
       ) : (
-        <DeferredMarkdown
-          className={
-            expanded ? SIDEBAR_MARKDOWN_CLASS : COLLAPSED_SIDEBAR_MARKDOWN_CLASS
-          }
+        <ConversationBody
+          expanded={expanded}
           markdown={preview}
+          summary={summary}
         />
       )}
     </CommentRow>
@@ -577,36 +746,78 @@ function DiscussionComposerFooter({ actions }: { actions: DiscussionActions }) {
 }
 
 export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
-  commentSections,
-  description,
-  discussion = [],
+  commentSections: allSections,
+  description: fullDescription,
+  discussion: allDiscussion = [],
   discussionActions,
+  filter = 'all',
+  onFilterChange,
   onSelectComment,
   onSelectItem,
+  totalCount,
 }: DiffsHubCommentsListProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const observeRow = useRowVisibilityObserver(scrollerRef);
+  const viewerLogin = useGitHubUser()?.login;
+  // Mine needs to know who the viewer is; without a signed-in user it reads
+  // as All.
+  const activeFilter =
+    filter === 'mine' && viewerLogin == null ? 'all' : filter;
+  const unresolvedCount = useMemo(
+    () =>
+      allSections.reduce(
+        (count, section) =>
+          count +
+          section.comments.filter((comment) => comment.resolved !== true)
+            .length,
+        0
+      ),
+    [allSections]
+  );
+  const commentSections = useMemo(
+    () => filterCommentSections(allSections, activeFilter, viewerLogin),
+    [activeFilter, allSections, viewerLogin]
+  );
+  const discussion =
+    activeFilter === 'all'
+      ? allDiscussion
+      : activeFilter === 'mine'
+        ? allDiscussion.filter((comment) =>
+            isViewer(comment.author.login, viewerLogin)
+          )
+        : [];
+  const description = activeFilter === 'all' ? fullDescription : null;
   const showConversation = discussion.length > 0 || description != null;
+  // With only one group, the panel's title already names it.
+  const showGroupHeadings = showConversation && commentSections.length > 0;
+  // The filter only matters once there are review threads to narrow.
+  const showFilter = onFilterChange != null && allSections.length > 0;
+  const filteredEmpty =
+    activeFilter !== 'all' && commentSections.length === 0 && !showConversation;
   // On pull-request views the composer footer is how PR-level comments get
   // written, so the empty state only applies when there is nothing to show
   // AND nothing to write.
   if (
+    activeFilter === 'all' &&
     commentSections.length === 0 &&
     !showConversation &&
     discussionActions == null
   ) {
     return (
-      <div className="text-muted-foreground flex h-full min-h-0 flex-col items-center justify-center gap-2 px-7 text-center text-sm">
-        <IconConvoFill size={24} className="mb-2" />
-        <div className="flex flex-col">
-          <strong className="font-medium">No comments yet</strong>
-          <p>
-            Hover over a line and click the{' '}
-            <span className="light:text-white light:bg-[rgb(0,159,255)] inline-flex h-[20px] w-[20px] items-center justify-center rounded-[4px] align-top dark:bg-[rgb(0,159,255)] dark:text-black">
-              <IconPlus />
-            </span>{' '}
-            button to add code comments.
-          </p>
+      <div className="flex h-full min-h-0 flex-col">
+        <SidebarPanelHeader title="Comments" />
+        <div className="text-muted-foreground flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-7 text-center text-sm">
+          <IconConvoFill size={24} className="mb-2" />
+          <div className="flex flex-col">
+            <strong className="font-medium">No comments yet</strong>
+            <p>
+              Hover over a line and click the{' '}
+              <span className="light:text-white light:bg-[rgb(0,159,255)] inline-flex h-[20px] w-[20px] items-center justify-center rounded-[4px] align-top dark:bg-[rgb(0,159,255)] dark:text-black">
+                <IconPlus />
+              </span>{' '}
+              button to add code comments.
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -615,6 +826,29 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
   return (
     <RowVisibilityContext value={observeRow}>
       <div className="flex h-full min-h-0 flex-col">
+        <SidebarPanelHeader title="Comments" count={totalCount}>
+          {showFilter && (
+            <ButtonGroup
+              size="xs"
+              aria-label="Show comments"
+              value={activeFilter}
+              onValueChange={(value) => onFilterChange(value as CommentFilter)}
+            >
+              <ButtonGroupItem value="all">All</ButtonGroupItem>
+              <ButtonGroupItem value="unresolved" className="gap-1">
+                Unresolved
+                {unresolvedCount > 0 && (
+                  <span className="text-muted-foreground tabular-nums">
+                    {unresolvedCount}
+                  </span>
+                )}
+              </ButtonGroupItem>
+              {viewerLogin != null && (
+                <ButtonGroupItem value="mine">Mine</ButtonGroupItem>
+              )}
+            </ButtonGroup>
+          )}
+        </SidebarPanelHeader>
         <div
           ref={scrollerRef}
           className={cn(
@@ -622,11 +856,32 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
             'min-h-0 flex-1 overflow-auto overscroll-contain pl-3 pb-3 pr-[max(0px,calc(12px-var(--cv-mini-gutter-vertical)))]'
           )}
         >
+          {filteredEmpty && (
+            <div className="text-muted-foreground flex flex-col items-center gap-2 px-4 py-8 text-center text-sm">
+              <p>
+                {activeFilter === 'unresolved'
+                  ? 'Every thread is resolved.'
+                  : 'You haven’t commented on this pull request yet.'}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={() => onFilterChange?.('all')}
+              >
+                Show all comments
+              </Button>
+            </div>
+          )}
           {showConversation && (
             <section>
-              <div className="text-muted-foreground p-3 pb-2 text-sm font-medium">
-                Conversation
-              </div>
+              {showGroupHeadings && (
+                <GroupHeading
+                  // Comments only, like the tab badge; the description isn't one.
+                  count={discussion.length}
+                  label="Conversation"
+                />
+              )}
               <div className={CARD_STACK_CLASS}>
                 {description != null && (
                   <DescriptionRow description={description} />
@@ -641,9 +896,25 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
               </div>
             </section>
           )}
+          {showGroupHeadings && (
+            <div className="mt-2">
+              <GroupHeading
+                count={commentSections.reduce(
+                  (total, section) => total + section.comments.length,
+                  0
+                )}
+                label="Code comments"
+              />
+            </div>
+          )}
           {commentSections.map((section) => (
             <section key={section.itemId}>
-              {onSelectItem != null ? (
+              {/* A file the diff doesn't show (its threads are listed from
+                  GitHub only) has nothing to scroll to. */}
+              {onSelectItem != null &&
+              section.comments.some(
+                (comment) => comment.detached?.fileInDiff !== false
+              ) ? (
                 <button
                   type="button"
                   className="text-muted-foreground hover:text-foreground focus-visible:ring-ring block w-full cursor-pointer p-3 pb-2 text-left text-sm font-medium break-all outline-none focus-visible:ring-2"
@@ -667,10 +938,23 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
                     <CardHeader
                       author={comment.author}
                       trailing={
-                        comment.resolved === true && (
-                          <span className="inline-flex shrink-0 items-center gap-1 text-[12px]">
-                            <IconCheck size={12} aria-hidden />
-                            Resolved
+                        (comment.detached?.outdated === true ||
+                          comment.resolved === true) && (
+                          <span className="inline-flex shrink-0 items-center gap-2 text-[12px]">
+                            {comment.detached?.outdated === true && (
+                              <span
+                                className="rounded-full border px-1.5 leading-4"
+                                title="The line this thread is on has changed since it was written"
+                              >
+                                Outdated
+                              </span>
+                            )}
+                            {comment.resolved === true && (
+                              <span className="inline-flex items-center gap-1">
+                                <IconCheck size={12} aria-hidden />
+                                Resolved
+                              </span>
+                            )}
                           </span>
                         )
                       }
@@ -699,6 +983,19 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
                       className={COLLAPSED_SIDEBAR_MARKDOWN_CLASS}
                       markdown={comment.message}
                     />
+                    {comment.detached?.htmlUrl != null && (
+                      // Threads without a card in the diff are read and
+                      // answered on GitHub.
+                      <a
+                        className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[12px] underline-offset-2 hover:underline"
+                        href={comment.detached.htmlUrl}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        View on GitHub
+                        <IconArrowUpRight size={12} aria-hidden />
+                      </a>
+                    )}
                     {comment.replyCount > 0 && (
                       <div className="text-muted-foreground flex items-center gap-1.5 text-[12px]">
                         <span className="flex -space-x-1.5">

@@ -11,8 +11,9 @@ import {
   type PullRequestRef,
 } from '@/lib/pullCommentsClient';
 import {
+  anchorReviewThreads,
   createThreadAnnotation,
-  groupPullReviewThreads,
+  groupReviewCommentsByRoot,
 } from '@/lib/pullReviewThreads';
 import {
   describeReviewThreadsLoad,
@@ -27,6 +28,7 @@ import type {
   CommentMetadata,
   DiffsHubSavedCommentEvent,
   PullDiscussionComment,
+  PullReviewComment,
   PullReviewThread,
   PullReviewThreadState,
   ViewerLoadState,
@@ -63,7 +65,9 @@ interface UsePullReviewThreadsOptions {
 // Re-applies after every fetch: already-injected threads are deduped by key,
 // so only new threads and changed states land. Returns how far loading has
 // got, with counts for threads that can't be shown (see
-// PullReviewThreadsLoad).
+// PullReviewThreadsLoad), and those threads themselves (`detachedThreads`,
+// each its root comment then replies) with the fetched resolution states,
+// so the Comments list can show them without a card in the diff.
 export function usePullReviewThreads({
   loadState,
   onDiscussionLoaded,
@@ -76,12 +80,21 @@ export function usePullReviewThreads({
   viewerKey,
   viewerReadyTick,
   viewerRef,
-}: UsePullReviewThreadsOptions): PullReviewThreadsLoad {
-  // The comment fetch's outcome: null while in flight. `rootIds` holds every
-  // thread's root comment id, including outdated threads, which grouping
-  // drops from `threads` because they have no current line to anchor to.
+}: UsePullReviewThreadsOptions): {
+  detachedThreads: readonly (readonly PullReviewComment[])[];
+  load: PullReviewThreadsLoad;
+  states: ReadonlyMap<number, PullReviewThreadState> | null;
+} {
+  // The comment fetch's outcome: null while in flight. `byRoot` holds every
+  // thread's comments by root comment id, including outdated threads, which
+  // `threads` leaves out because they have no current line to anchor to.
   const [fetched, setFetched] = useState<
-    { rootIds: number[]; threads: PullReviewThread[] } | 'failed' | null
+    | {
+        byRoot: ReadonlyMap<number, PullReviewComment[]>;
+        threads: PullReviewThread[];
+      }
+    | 'failed'
+    | null
   >(null);
   // The resolution request's outcome: null while in flight (or never sent,
   // without a token).
@@ -112,12 +125,8 @@ export function usePullReviewThreads({
     void fetchPullComments(pullRequest, token, controller.signal).then(
       ({ comments, discussion }) => {
         if (!controller.signal.aborted) {
-          setFetched({
-            rootIds: comments
-              .filter((comment) => comment.inReplyToId == null)
-              .map((comment) => comment.id),
-            threads: groupPullReviewThreads(comments),
-          });
+          const byRoot = groupReviewCommentsByRoot(comments);
+          setFetched({ byRoot, threads: anchorReviewThreads(byRoot) });
           onDiscussionLoadedRef.current(discussion);
         }
       },
@@ -238,13 +247,16 @@ export function usePullReviewThreads({
       ),
     [loadState, pathToItemId, threads]
   );
-  const rootIds =
-    typeof fetched === 'object' ? (fetched?.rootIds ?? null) : null;
+  const byRoot = typeof fetched === 'object' ? (fetched?.byRoot ?? null) : null;
+  const rootIds = useMemo(
+    () => (byRoot == null ? null : [...byRoot.keys()]),
+    [byRoot]
+  );
   const threadsFailed = fetched === 'failed';
   const statesSettled = token === '' || fetchedStates != null;
   // Every input is state or memoized, so the result keeps its identity until
   // something it reports from changes.
-  return useMemo(
+  const load = useMemo(
     () =>
       describeReviewThreadsLoad({
         attachableRootIds,
@@ -264,5 +276,20 @@ export function usePullReviewThreads({
       threadsApplied,
       threadsFailed,
     ]
+  );
+  // The detached threads' comments and resolution, for the Comments list.
+  const detachedThreads = useMemo(
+    () =>
+      load.kind !== 'ready' || byRoot == null
+        ? []
+        : load.detachedRootIds.flatMap((rootId) => {
+            const comments = byRoot.get(rootId);
+            return comments == null ? [] : [comments];
+          }),
+    [byRoot, load]
+  );
+  return useMemo(
+    () => ({ detachedThreads, load, states: threadStates }),
+    [detachedThreads, load, threadStates]
   );
 }

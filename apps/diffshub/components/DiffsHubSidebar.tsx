@@ -1,11 +1,11 @@
 'use client';
 
 import {
-  IconBranch,
   IconCodeSearch,
   IconComment,
   IconFileTree,
   IconFilter,
+  IconInfo,
   IconSearch,
   IconXSquircle,
 } from '@pierre/icons';
@@ -27,6 +27,7 @@ import {
 import { revealScrollbarWhileScrolling } from './autoHideScrollbar';
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
 import {
+  type CommentFilter,
   DiffsHubCommentsList,
   type DiscussionActions,
   type PullDescription,
@@ -34,6 +35,8 @@ import {
 import { DiffsHubDiffStats } from './DiffsHubDiffStats';
 import { DiffsHubFileTree } from './DiffsHubFileTree';
 import { PoweredBy } from './PoweredBy';
+import { PANEL_GUTTERED_INSET_CLASS } from './PullDetailsControl';
+import { CountChip, SidebarPanelHeader } from './SidebarPanelHeader';
 import { StressTestControls } from './StressTestControls';
 import { useChromeThemeProps } from './useChromeThemeProps';
 import { useMediaQuery } from './useMediaQuery';
@@ -93,6 +96,9 @@ interface DiffsHubSidebarProps {
   renderSearchPanel?(visible: boolean): ReactNode;
   // Bumped to switch to the search tab (Ctrl+Shift+F, find usages).
   searchTabRequest?: number;
+  // Bumped to open the Comments tab on its Unresolved filter (the
+  // overview's Comments cell).
+  unresolvedCommentsRequest?: number;
   scrollRef: RefObject<HTMLDivElement | null>;
   source: DiffsHubFileTreeSource;
   streaming: boolean;
@@ -115,6 +121,7 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
   renderSearchPanel,
   scrollRef,
   searchTabRequest = 0,
+  unresolvedCommentsRequest = 0,
   source,
   streaming,
   stressTest,
@@ -147,6 +154,16 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
   if (searchTabRequest !== seenSearchTabRequest) {
     setSeenSearchTabRequest(searchTabRequest);
     selectTab('search');
+  }
+  const [commentFilter, setCommentFilter] = useState<CommentFilter>('all');
+  // Starts at 0, not the current value: a request made before the sidebar
+  // mounted (a link that opens the diff on its unresolved threads) still
+  // applies.
+  const [seenCommentsRequest, setSeenCommentsRequest] = useState(0);
+  if (unresolvedCommentsRequest !== seenCommentsRequest) {
+    setSeenCommentsRequest(unresolvedCommentsRequest);
+    setCommentFilter('unresolved');
+    selectTab('comments');
   }
   let totalCommentCount = discussion.length;
   for (const section of commentSections) {
@@ -318,6 +335,7 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
               value="files"
               size="icon-only"
               className="shadow-none"
+              title="Files"
             >
               <IconFileTree className="size-4 md:size-3" />
               <span className="sr-only">Files</span>
@@ -333,57 +351,50 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
                 <span className="sr-only">Search</span>
               </ButtonGroupItem>
             )}
+            {/* A rule sets the diff's own tabs (files, search) apart from
+                the pull request's, which Details leads; plain diffs have
+                only the former. */}
+            {overviewPanel != null && (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="bg-border h-3.5 w-px self-center"
+                />
+                <ButtonGroupItem
+                  value="overview"
+                  size="icon-only"
+                  className="shadow-none"
+                  title="Pull request details: status, checks, reviewers, and actions"
+                >
+                  <IconInfo className="size-4 md:size-3" />
+                  <span className="sr-only">Pull request details</span>
+                </ButtonGroupItem>
+              </>
+            )}
             <ButtonGroupItem
               value="comments"
               size="icon-only"
+              title={
+                totalCommentCount > 0
+                  ? `Comments (${totalCommentCount})`
+                  : 'Comments'
+              }
               className={cn(
                 'shadow-none',
-                totalCommentCount > 0 && 'w-auto gap-1 pr-1'
+                // Matches the square tabs' 2px inset on both ends (1px
+                // padding inside the 1px border), so every gap in the strip
+                // is the same. The icon-to-pill gap matches the panel
+                // headers' title-to-count gap (SidebarPanelHeader).
+                totalCommentCount > 0 && 'w-auto gap-1.5 px-px'
               )}
             >
               <IconComment className="size-4 md:size-3" />
               <span className="sr-only">Comments</span>
               {totalCommentCount > 0 && (
-                <span
-                  aria-hidden="true"
-                  // Tint the badge with the chrome's current text color so
-                  // it follows the active Shiki theme instead of staying
-                  // on hardcoded neutral grays. `currentColor` resolves to
-                  // whichever fg the button inherits (chrome primaryFg
-                  // for the unselected ghost variant, accent-foreground
-                  // when this tab is selected), so the pill stays
-                  // on-palette in both states.
-                  className="inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[color-mix(in_srgb,currentColor_18%,transparent)] px-1 text-[10px] leading-none font-medium tabular-nums"
-                >
-                  {totalCommentCount}
-                </span>
+                <CountChip aria-hidden="true">{totalCommentCount}</CountChip>
               )}
             </ButtonGroupItem>
-            {overviewPanel != null && (
-              <ButtonGroupItem
-                value="overview"
-                size="icon-only"
-                className="shadow-none"
-                title="Pull request overview"
-              >
-                <IconBranch className="size-4 md:size-3" />
-                <span className="sr-only">Overview</span>
-              </ButtonGroupItem>
-            )}
           </ButtonGroup>
-          {activeTab === 'files' && fileTreeModel != null && (
-            <FileTreeSearchToggle model={fileTreeModel} />
-          )}
-          {activeTab === 'files' && availableStatuses.size > 1 && (
-            <FileTreeFilterButton
-              availableStatuses={availableStatuses}
-              selectedStatuses={selectedStatuses}
-              onClear={clearStatusFilter}
-              onToggle={toggleSelectedStatus}
-              onIsolate={isolateStatus}
-              dropdownThemeStyle={dropdownThemeStyle}
-            />
-          )}
           {onMobileClose != null && (
             <Button
               variant="ghost"
@@ -396,29 +407,51 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
             </Button>
           )}
         </div>
-        <div className="mt-3 min-h-0 flex-1">
+        <div className="mt-2 min-h-0 flex-1">
           <div
             role="region"
             aria-label="Files"
             hidden={activeTab !== 'files'}
-            className="h-full min-h-0"
+            className="flex h-full min-h-0 flex-col"
           >
-            <DiffsHubFileTree
-              source={filteredSource}
-              onModelReady={handleModelReady}
-              onSearchMatchesChange={setSearchMatchPaths}
-              onSelectItem={onSelectItem}
-            />
+            {/* The tree's own tools sit in its title row, like the
+                Comments filter, so the tab strip above is only tabs. */}
+            <SidebarPanelHeader title="Files" count={diffStats?.fileCount}>
+              {fileTreeModel != null && (
+                <FileTreeSearchToggle model={fileTreeModel} />
+              )}
+              {availableStatuses.size > 1 && (
+                <FileTreeFilterButton
+                  availableStatuses={availableStatuses}
+                  selectedStatuses={selectedStatuses}
+                  onClear={clearStatusFilter}
+                  onToggle={toggleSelectedStatus}
+                  onIsolate={isolateStatus}
+                  dropdownThemeStyle={dropdownThemeStyle}
+                />
+              )}
+            </SidebarPanelHeader>
+            <div className="min-h-0 flex-1">
+              <DiffsHubFileTree
+                source={filteredSource}
+                onModelReady={handleModelReady}
+                onSearchMatchesChange={setSearchMatchPaths}
+                onSelectItem={onSelectItem}
+              />
+            </div>
           </div>
           {renderSearchPanel != null && (
             <div
               role="region"
               aria-label="Search"
               hidden={activeTab !== 'search'}
-              className="h-full min-h-0"
+              className="flex h-full min-h-0 flex-col"
             >
-              {visitedTabs.has('search') &&
-                renderSearchPanel(activeTab === 'search')}
+              <SidebarPanelHeader title="Search" />
+              <div className="min-h-0 flex-1">
+                {visitedTabs.has('search') &&
+                  renderSearchPanel(activeTab === 'search')}
+              </div>
             </div>
           )}
           <div
@@ -430,9 +463,12 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
             {visitedTabs.has('comments') && (
               <DiffsHubCommentsList
                 commentSections={commentSections}
+                totalCount={totalCommentCount}
                 description={description}
                 discussion={discussion}
                 discussionActions={discussionActions}
+                filter={commentFilter}
+                onFilterChange={setCommentFilter}
                 onSelectComment={onSelectComment}
                 onSelectItem={onSelectItem}
               />
@@ -443,14 +479,21 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
               role="region"
               aria-label="Overview"
               hidden={activeTab !== 'overview'}
-              // Unpadded scroller, as in PullPreviewPane, so the panel's
-              // sticky footer reaches the bottom edge.
-              className="cv-autohide-scrollbar h-full min-h-0 overflow-y-auto"
-              onScroll={revealScrollbarWhileScrolling}
+              className="flex h-full min-h-0 flex-col"
             >
-              {visitedTabs.has('overview') && (
-                <div className="px-3 pb-3">{overviewPanel}</div>
-              )}
+              <SidebarPanelHeader title="Pull request" />
+              {/* Unpadded scroller, as in PullPreviewPane, so the panel's
+                  sticky footer reaches the bottom edge. */}
+              <div
+                className="cv-autohide-scrollbar min-h-0 flex-1 overflow-y-auto"
+                onScroll={revealScrollbarWhileScrolling}
+              >
+                {visitedTabs.has('overview') && (
+                  <div className={cn('pb-3', PANEL_GUTTERED_INSET_CLASS)}>
+                    {overviewPanel}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

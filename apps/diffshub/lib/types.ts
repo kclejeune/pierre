@@ -86,6 +86,9 @@ export interface PullReviewComment {
   // GraphQL node id, the subject reactions are added to; absent on payloads
   // that don't carry it.
   nodeId?: string;
+  // The line the comment was written on, in the commit it was written
+  // against. The only anchor an outdated comment (`line` null) still has.
+  originalLine?: number;
   path: string;
   // Non-zero emoji reaction tallies, in GitHub's picker order.
   reactions?: CommentReaction[];
@@ -212,8 +215,20 @@ export interface DiffsHubDeletedCommentEvent {
   key: string;
 }
 
+// A GitHub review thread the diff has no card for: outdated (its line is
+// gone from the current diff) or on a file the diff doesn't show. The
+// Comments list still shows it, so its counts match the overview's.
+export interface DetachedCommentThread {
+  // Whether the thread's file is in the diff (selecting it can go there).
+  fileInDiff: boolean;
+  htmlUrl: string | null;
+  outdated: boolean;
+}
+
 export interface DiffsHubSavedCommentEntry {
   author: CommentAuthor;
+  // Set for a thread listed without a card in the diff.
+  detached?: DetachedCommentThread;
   itemId: string;
   key: string;
   lineNumber: number;

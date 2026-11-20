@@ -192,33 +192,54 @@ export function createPullReviewThread(
 }
 
 // Groups a flat review-comment list (as returned by the GitHub API, in
-// creation order) into anchored threads. Replies join the thread of the
-// comment they answer, following reply-to chains to the root. Threads whose
-// root is outdated (no current line anchor) are dropped along with their
-// replies — they cannot be rendered against the current diff.
-export function groupPullReviewThreads(
+// creation order) by thread: each root comment's id maps to the root
+// followed by its replies, following reply-to chains to the root. Keeps
+// every thread, outdated ones included; replies whose root is missing are
+// dropped.
+export function groupReviewCommentsByRoot(
   comments: readonly PullReviewComment[]
-): PullReviewThread[] {
-  const threads: PullReviewThread[] = [];
-  const threadByCommentId = new Map<number, PullReviewThread>();
-
+): Map<number, PullReviewComment[]> {
+  const threads = new Map<number, PullReviewComment[]>();
+  const threadByCommentId = new Map<number, PullReviewComment[]>();
   for (const comment of comments) {
-    if (comment.inReplyToId == null) {
-      const thread = createPullReviewThread(comment);
-      if (thread != null) {
-        threads.push(thread);
-        threadByCommentId.set(comment.id, thread);
-      }
-      continue;
-    }
-
-    const thread = threadByCommentId.get(comment.inReplyToId);
+    const thread =
+      comment.inReplyToId == null
+        ? []
+        : threadByCommentId.get(comment.inReplyToId);
     if (thread == null) {
       continue;
     }
-    thread.comments.push(comment);
+    if (comment.inReplyToId == null) {
+      threads.set(comment.id, thread);
+    }
+    thread.push(comment);
     threadByCommentId.set(comment.id, thread);
   }
+  return threads;
+}
 
+// Groups a flat review-comment list into anchored threads (see
+// groupReviewCommentsByRoot). Threads whose root is outdated (no current
+// line anchor) are dropped along with their replies: they cannot be
+// rendered against the current diff.
+export function groupPullReviewThreads(
+  comments: readonly PullReviewComment[]
+): PullReviewThread[] {
+  return anchorReviewThreads(groupReviewCommentsByRoot(comments));
+}
+
+// The anchored threads among comments already grouped by root
+// (groupReviewCommentsByRoot), in root order; outdated roots are skipped.
+export function anchorReviewThreads(
+  byRoot: ReadonlyMap<number, readonly PullReviewComment[]>
+): PullReviewThread[] {
+  const threads: PullReviewThread[] = [];
+  for (const [root, ...replies] of byRoot.values()) {
+    const thread = root == null ? null : createPullReviewThread(root);
+    if (thread != null) {
+      thread.comments.push(...replies);
+      threads.push(thread);
+    }
+  }
   return threads;
 }

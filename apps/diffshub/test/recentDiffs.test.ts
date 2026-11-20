@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { createFakeWindow } from './helpers/fakeWindow';
 import {
+  addRecentDiffTitle,
+  canonicalRecentPath,
   isRecentDiffPath,
   loadRecentDiffs,
   MAX_RECENT_DIFFS,
@@ -100,6 +102,117 @@ describe('loadRecentDiffs / recordRecentDiff', () => {
     );
     expect(loadRecentDiffs()).toEqual([
       { path: '/octo/demo/pull/9', viewedAt: 1, title: 'Fix' },
+    ]);
+  });
+});
+
+describe('canonicalRecentPath', () => {
+  test('keeps one form per view', () => {
+    expect(canonicalRecentPath('/octo/demo/pull/9/files')).toBe(
+      '/octo/demo/pull/9'
+    );
+    expect(canonicalRecentPath('/octo/demo/pull/9/?queue=q1#diff-a')).toBe(
+      '/octo/demo/pull/9'
+    );
+    expect(canonicalRecentPath('/octo/demo/pull/9/changes/abc1234')).toBe(
+      '/octo/demo/commit/abc1234'
+    );
+    expect(canonicalRecentPath('/a.patch?domain=x.test&queue=q')).toBe(
+      '/a.patch?domain=x.test'
+    );
+    // A commit view keeps its way back to the pull it was opened from.
+    expect(
+      canonicalRecentPath(
+        '/octo/demo/commit/c2?fromPull=%2Focto%2Fdemo%2Fpull%2F12'
+      )
+    ).toBe('/octo/demo/commit/c2?fromPull=%2Focto%2Fdemo%2Fpull%2F12');
+  });
+
+  test('a bare revisit keeps the way back to the pull', () => {
+    const fromPull = '/octo/demo/commit/c2?fromPull=%2Focto%2Fdemo%2Fpull%2F12';
+    const merged = mergeRecentDiff(
+      [{ path: fromPull, title: 'Range', viewedAt: 1 }],
+      { path: '/octo/demo/commit/c2' },
+      2
+    );
+    expect(merged).toEqual([{ path: fromPull, title: 'Range', viewedAt: 2 }]);
+  });
+
+  test('a malformed stored path is kept apart without breaking the list', () => {
+    fake.store.set(
+      'diffshub.recent-diffs',
+      JSON.stringify([
+        { path: '//[', viewedAt: 2 },
+        { path: '/octo/demo/pull/9', viewedAt: 1 },
+      ])
+    );
+    expect(() => loadRecentDiffs()).not.toThrow();
+  });
+
+  test("another host's paths keep their case apart", () => {
+    const merged = mergeRecentDiff(
+      [{ path: '/@a.example/Demo/pull/9?domain=t.org', viewedAt: 1 }],
+      { path: '/@a.example/demo/pull/9?domain=t.org' },
+      2
+    );
+    expect(merged.map((entry) => entry.path)).toEqual([
+      '/@a.example/demo/pull/9?domain=t.org',
+      '/@a.example/Demo/pull/9?domain=t.org',
+    ]);
+  });
+
+  test('a title alone fills in a listed entry and never adds one', () => {
+    addRecentDiffTitle({ path: '/octo/demo/pull/9', title: 'Fix' });
+    expect(loadRecentDiffs()).toEqual([]);
+    recordRecentDiff({ path: '/octo/demo/pull/9' });
+    recordRecentDiff({ path: '/octo/demo/pull/7' });
+    addRecentDiffTitle({ path: '/octo/demo/pull/9/files', title: 'Fix' });
+    expect(loadRecentDiffs().map((entry) => [entry.path, entry.title])).toEqual(
+      [
+        ['/octo/demo/pull/7', undefined],
+        ['/octo/demo/pull/9', 'Fix'],
+      ]
+    );
+  });
+
+  test('merges stored duplicates, keeping the newest and any title', () => {
+    fake.store.set(
+      'diffshub.recent-diffs',
+      JSON.stringify([
+        { path: '/Octo/Demo/pull/9#diff-a', viewedAt: 3 },
+        { path: '/octo/demo/pull/9/files', viewedAt: 2, title: 'Fix' },
+        { path: '/octo/demo/pull/7', viewedAt: 1 },
+      ])
+    );
+    expect(loadRecentDiffs()).toEqual([
+      { path: '/Octo/Demo/pull/9', title: 'Fix', viewedAt: 3 },
+      { path: '/octo/demo/pull/7', viewedAt: 1 },
+    ]);
+  });
+
+  test('merging stored duplicates keeps an older way back to the pull', () => {
+    const withReturn =
+      '/octo/demo/commit/abcdef1?fromPull=%2Focto%2Fdemo%2Fpull%2F12';
+    fake.store.set(
+      'diffshub.recent-diffs',
+      JSON.stringify([
+        { path: '/octo/demo/commit/abcdef1', viewedAt: 2 },
+        { path: withReturn, title: 'octo/demo#12 @ abcdef1', viewedAt: 1 },
+      ])
+    );
+    expect(loadRecentDiffs()).toEqual([
+      { path: withReturn, title: 'octo/demo#12 @ abcdef1', viewedAt: 2 },
+    ]);
+  });
+
+  test('a revisit through another link replaces the entry', () => {
+    const merged = mergeRecentDiff(
+      [{ path: '/octo/demo/pull/9', title: 'Fix', viewedAt: 1 }],
+      { path: '/OCTO/demo/pull/9/files' },
+      2
+    );
+    expect(merged).toEqual([
+      { path: '/OCTO/demo/pull/9', title: 'Fix', viewedAt: 2 },
     ]);
   });
 });

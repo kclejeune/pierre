@@ -470,6 +470,10 @@ export interface RepoSectionsInput {
   // What the page is showing, marked "Current" in the lists.
   currentPull?: number;
   currentRef?: string;
+  // Pull requests in this repository (any state) that the palette's search
+  // found for the query; the open list above only holds its first page of
+  // open pulls.
+  pullHits?: readonly PullSearchHit[];
   commands: readonly PaletteEntry[];
   githubHost?: string;
   // This app's host, so a pasted link to it opens in place.
@@ -496,6 +500,31 @@ function pullHitItem(hit: PullSearchHit): PaletteItem {
   };
 }
 
+// A pull row inside its own repository: the number and title, with its
+// state (when not open) or "Current" beside them.
+function repoPullItem(
+  repo: string,
+  pull: PullSuggestion & { state?: PullSearchHit['state'] },
+  currentPull: number | undefined
+): PaletteItem {
+  return {
+    key: `pull:${pull.number}`,
+    label: `#${pull.number} · ${pull.title}`,
+    detail:
+      pull.number === currentPull
+        ? 'Current'
+        : pull.state === 'open'
+          ? undefined
+          : pull.state,
+    icon: 'pull',
+    action: {
+      type: 'navigate',
+      path: pullPath(repo, pull.number),
+      recordTitle: pull.title,
+    },
+  };
+}
+
 function refItem(
   repo: string,
   ref: string,
@@ -514,6 +543,24 @@ function refItem(
       recordTitle: formatBrowseRecentTitle(github, ref),
     },
   };
+}
+
+// The part of a repository-level query worth a pull request search, or ''
+// for text this level already answers: a commit sha, a listed branch or
+// tag, or the number of a pull in the open list.
+export function repoPullSearchText(
+  query: string,
+  refs: RepoRefsData | null,
+  pulls: readonly PullSuggestion[] | null
+): string {
+  const number = readPullNumberQuery(query);
+  const answered =
+    isCommitShaLike(query) ||
+    refs?.branches.includes(query) === true ||
+    refs?.tags.includes(query) === true ||
+    (number != null &&
+      pulls?.some((pull) => String(pull.number) === number) === true);
+  return answered ? '' : query;
 }
 
 export function buildRepoSections(input: RepoSectionsInput): PaletteSection[] {
@@ -543,18 +590,43 @@ export function buildRepoSections(input: RepoSectionsInput): PaletteSection[] {
   // are read as a ref first and the pull row moves below the refs.
   const goTo: PaletteItem[] = [];
   const digits = readPullNumberQuery(query);
+  const pullNumber = digits == null ? undefined : Number(digits);
+  // The repository's pulls for this query, one row per number: the open
+  // list's matches (shown at once), then what the search found beyond them
+  // (merged, closed, or past the list's first page). A search hit carries
+  // the pull's state, so it wins over the open list's copy.
+  const hitsByNumber = new Map(
+    (input.pullHits ?? []).map((hit) => [hit.number, hit])
+  );
+  const openMatches = filterPullSuggestions(input.pulls ?? [], digits ?? query)
+    .slice(0, MAX_PULLS)
+    .map((pull) => hitsByNumber.get(pull.number) ?? pull);
+  const listedNumbers = new Set(openMatches.map((pull) => pull.number));
+  const repoPulls: (PullSuggestion & { state?: PullSearchHit['state'] })[] = [
+    ...openMatches,
+    ...[...hitsByNumber.values()].filter(
+      (hit) => !listedNumbers.has(hit.number)
+    ),
+  ];
+  // The typed number's own row, titled when either list knows it; a bare
+  // "Open #N" otherwise, since the pull may still exist.
+  const numberPull = repoPulls.find((pull) => pull.number === pullNumber);
   const openPull: PaletteItem | null =
-    digits == null
+    pullNumber == null
       ? null
       : {
-          key: `open-pull:${digits}`,
-          label: `Open #${digits}`,
-          detail: input.repo,
-          icon: 'pull',
-          action: {
-            type: 'navigate',
-            path: pullPath(input.repo, Number(digits)),
-          },
+          ...(numberPull != null
+            ? repoPullItem(input.repo, numberPull, input.currentPull)
+            : {
+                label: `Open #${pullNumber}`,
+                detail: input.repo,
+                icon: 'pull' as const,
+                action: {
+                  type: 'navigate' as const,
+                  path: pullPath(input.repo, pullNumber),
+                },
+              }),
+          key: `open-pull:${pullNumber}`,
         };
   // Whether the query is read as a pull number (and refs aren't matched).
   const pullLeads =
@@ -572,22 +644,16 @@ export function buildRepoSections(input: RepoSectionsInput): PaletteSection[] {
   pushSection(sections, 'Go to', goTo);
 
   const pullSection: PaletteSection = {
-    heading: 'Open pull requests',
-    items: filterPullSuggestions(input.pulls ?? [], digits ?? query)
-      .slice(0, MAX_PULLS)
-      .map(
-        (pull): PaletteItem => ({
-          key: `pull:${pull.number}`,
-          label: `#${pull.number} · ${pull.title}`,
-          detail: pull.number === input.currentPull ? 'Current' : undefined,
-          icon: 'pull',
-          action: {
-            type: 'navigate',
-            path: pullPath(input.repo, pull.number),
-            recordTitle: pull.title,
-          },
-        })
-      ),
+    // "Open" while the open list is all it shows.
+    heading: repoPulls.every(
+      (pull) => pull.state !== 'closed' && pull.state !== 'merged'
+    )
+      ? 'Open pull requests'
+      : 'Pull requests',
+    // The typed number's pull already leads in "Go to".
+    items: repoPulls
+      .filter((pull) => !pullLeads || pull.number !== pullNumber)
+      .map((pull) => repoPullItem(input.repo, pull, input.currentPull)),
   };
 
   // A number is a pull request; matching it against ref names only adds

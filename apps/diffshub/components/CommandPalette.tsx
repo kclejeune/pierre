@@ -44,7 +44,10 @@ import { RepoName } from './RepoName';
 import { formatShortcut, useModifierKey } from './ShortcutHint';
 import { useGitHubToken } from './useGitHubToken';
 import { useLatestValueRef } from './useLatestValueRef';
-import { usePalettePullSearch } from './usePalettePullSearch';
+import {
+  type PullSearchRepos,
+  usePalettePullSearch,
+} from './usePalettePullSearch';
 import { usePinnedRepos } from './usePinnedRepos';
 import { useRemoteRepoSearch } from './useRemoteRepoSearch';
 import { cn } from '@/lib/cn';
@@ -58,6 +61,7 @@ import {
   type PaletteIcon,
   type PaletteItem,
   parseRepoShorthand,
+  repoPullSearchText,
 } from '@/lib/paletteItems';
 import { isRepoPinned, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
 import {
@@ -215,8 +219,8 @@ export function CommandPalette() {
   // Local matches are ranked once per keystroke; remote tiers only add repos
   // outside the known set, so they're skipped when local matches already
   // fill the list.
-  const atRoot = open && level == null;
-  const typedQuery = atRoot ? query.trim() : '';
+  const openQuery = open ? query.trim() : '';
+  const typedQuery = level == null ? openQuery : '';
   const matches = useMemo(
     () =>
       typedQuery === '' || typedQuery.startsWith(COMMAND_PREFIX)
@@ -234,14 +238,6 @@ export function CommandPalette() {
     hasToken
   );
 
-  // The page's pull request search (the /pulls scope), for typed queries at
-  // the top level.
-  const pullHits = usePalettePullSearch(
-    typedQuery.startsWith(COMMAND_PREFIX) ? '' : typedQuery,
-    hasToken ? context?.pullSearchRepos : undefined,
-    tokenVersion
-  );
-
   // Inside a repository: its refs and open pull requests. A failed list
   // shows as empty rather than loading.
   const shownRepo = open ? level : null;
@@ -251,6 +247,24 @@ export function CommandPalette() {
   const pulls =
     pullsResult == null ? null : pullsResult.ok ? pullsResult.value : NO_PULLS;
   const prefer = repoLevel?.prefer ?? context?.prefer ?? 'pulls';
+
+  // Pull request search (number or title, any state) for typed queries:
+  // inside a repository, that repository (minus text its refs and open list
+  // already answer); at the top level, the page's scope (the /pulls
+  // dashboard's), or every repository.
+  const levelRepos = useMemo(
+    (): PullSearchRepos | undefined => (level == null ? undefined : [level]),
+    [level]
+  );
+  const pullHits = usePalettePullSearch(
+    openQuery.startsWith(COMMAND_PREFIX)
+      ? ''
+      : level == null
+        ? openQuery
+        : repoPullSearchText(openQuery, refs, pulls),
+    hasToken ? (levelRepos ?? context?.pullSearchRepos ?? 'all') : undefined,
+    tokenVersion
+  );
 
   const sections = useMemo(() => {
     if (!open) {
@@ -264,6 +278,7 @@ export function CommandPalette() {
         currentRef: isPageRepo ? context?.currentRef : undefined,
         githubHost: host,
         prefer,
+        pullHits,
         pulls,
         query,
         refs,

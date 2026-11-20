@@ -37,8 +37,9 @@ export function isPullSearchQuery(query: string): boolean {
   );
 }
 
-// The palette's top-level pull request search, for pages that offer one
-// (the /pulls dashboard's scope; undefined means no search). Debounced,
+// The palette's pull request search within `repos` (the repository it
+// stepped into, or the top level's scope; undefined means no search, as
+// when signed out). Debounced,
 // with a superseded request aborted; the previous results stay while the
 // next search runs so rows don't flicker. `repos` must keep its identity
 // while the scope is unchanged.

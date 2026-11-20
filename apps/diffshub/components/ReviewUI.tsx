@@ -86,6 +86,7 @@ import {
   loadDisplaySettings,
   updateDisplaySettings,
 } from '@/lib/displaySettings';
+import { domainViewerHref } from '@/lib/getPatchViewerHref';
 import { parseGitHubDiffSource } from '@/lib/githubDiffSource';
 import { incrementItemVersion } from '@/lib/incrementItemVersion';
 import { getOpenDocDiff } from '@/lib/isDocAnnotation';
@@ -328,14 +329,6 @@ function ReviewUIInner({
     githubSource == null
       ? undefined
       : (buildDiffHeadTreePath(githubSource) ?? undefined);
-  // Record the visit for the recents list (dashboard + command palette). The
-  // patch stream has no PR title, so this records path-only; entries clicked
-  // from surfaces that know the title merge it in without clobbering.
-  useEffect(() => {
-    if (domain == null || domain === '') {
-      recordRecentDiff({ path });
-    }
-  }, [domain, path]);
   // Set when a ?comments=unresolved link opened the mobile overlay before the
   // first load, so that load's reset doesn't immediately close it again.
   const keepOverlayOnLoadRef = useRef(false);
@@ -399,6 +392,15 @@ function ReviewUIInner({
     githubTokenVersion,
     markdownView,
     onLoadStart: handlePatchLoadStart,
+    // Recents list only views that loaded, so a path GitHub can't serve (a
+    // typo, a deleted pull) never shows as recently viewed.
+    onLoaded: () =>
+      recordRecentDiff({
+        path:
+          domain == null || domain === ''
+            ? path
+            : domainViewerHref(path, domain),
+      }),
     path,
     tokenHydrated: githubTokenHydrated,
     viewerRef,

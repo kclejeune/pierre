@@ -5,6 +5,13 @@ export interface PullSuggestion {
   title: string;
 }
 
+// A pull request found by the command palette's search (number or title)
+// across one or more repositories, in any state.
+export interface PullSearchHit extends PullSuggestion {
+  repo: string;
+  state: 'open' | 'closed' | 'merged';
+}
+
 // Client-side narrowing of the fetched open-PR list as the user types:
 // digits narrow by number prefix, text by title.
 export function filterPullSuggestions(

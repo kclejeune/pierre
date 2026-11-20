@@ -1,3 +1,4 @@
+import { domainViewerHref } from './getPatchViewerHref';
 import { GITHUB_DOTCOM_WEB_URL } from './githubEnvironment';
 import { normalizeGitHubPath } from './normalizeGitHubPath';
 
@@ -68,8 +69,11 @@ export function resolveDiffshubViewerRoute(
     domain == null ? normalizeGitHubPath(joinedPath) : joinedPath;
 
   if (upstreamPath !== joinedPath) {
-    const query = domain == null ? '' : `?domain=${encodeURIComponent(domain)}`;
-    return { kind: 'redirect', target: `${upstreamPath}${query}` };
+    return {
+      kind: 'redirect',
+      target:
+        domain == null ? upstreamPath : domainViewerHref(upstreamPath, domain),
+    };
   }
 
   if (domain == null) {

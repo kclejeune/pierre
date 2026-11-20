@@ -74,6 +74,7 @@ import { useLatestValueRef } from '@/components/useLatestValueRef';
 import { useMediaQuery } from '@/components/useMediaQuery';
 import { useMutedAuthors } from '@/components/useMutedAuthors';
 import { useMuteRules } from '@/components/useMuteRules';
+import type { PullSearchRepos } from '@/components/usePalettePullSearch';
 import { usePinnedRepos } from '@/components/usePinnedRepos';
 import { usePullSelection } from '@/components/usePullSelection';
 import { usePullStatuses } from '@/components/usePullStatuses';
@@ -485,7 +486,7 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
     updatePage({ ...page, involves: defaultAudience(scope), scope }, 'push');
   };
   const applyText = (text: string) => updatePage({ ...page, text });
-  usePullsPaletteContext(pinned.length, selectScope, page.text, applyText);
+  usePullsPaletteContext(pinned, page.scope, selectScope, page.text, applyText);
 
   // Wait for the single post-mount pin read: the pinned scope searches the
   // pinned list, and fetching before it loads would search everything.
@@ -729,17 +730,25 @@ function RailSection({
 }
 
 // Tells the command palette that picking a repository here scopes the list
-// to it, offers the broad scopes first, and adds the state toggle and sort
-// menu as commands. The callbacks are read through refs so the context
-// object only changes when the pin count or the search text does.
+// to it, offers the broad scopes first, adds the state toggle and sort menu
+// as commands, and scopes its pull request search to the list's
+// repositories. The callbacks are read through refs so the context object
+// only changes with the pins, the scope, or the search text.
 function usePullsPaletteContext(
-  pinnedCount: number,
+  pinned: readonly string[],
+  scope: PullScope,
   selectScope: (scope: PullScope) => void,
   text: string,
   applyText: (text: string) => void
 ) {
   const select = useLatestValueRef(selectScope);
   const apply = useLatestValueRef(applyText);
+  // Kept as one value per scope, which the palette's pull search keys on.
+  const searchRepos = useMemo(
+    (): PullSearchRepos =>
+      scope.kind === 'all' ? 'all' : scopeRepos(scope, pinned),
+    [pinned, scope]
+  );
   const context = useMemo((): CommandPaletteContextValue => {
     const state = readPullStateFilter(text);
     const sort = readPullSort(text);
@@ -773,6 +782,7 @@ function usePullsPaletteContext(
         run: () => select.current({ kind: 'all' }),
       },
     ];
+    const pinnedCount = pinned.length;
     if (pinnedCount > 0) {
       scopes.push({
         id: 'scope-pinned',
@@ -786,10 +796,13 @@ function usePullsPaletteContext(
     return {
       commands,
       onSelectRepo: (repo) => select.current({ kind: 'repo', repo }),
+      // Typed queries also find pull requests by number or title in the
+      // list's scope: its repository, the pinned ones, or every one.
+      pullSearchRepos: searchRepos,
       scopes,
       selectRepoLabel: 'View pull requests',
     };
-  }, [apply, pinnedCount, select, text]);
+  }, [apply, pinned.length, searchRepos, select, text]);
   useCommandPaletteContext(context);
 }
 
@@ -1256,6 +1269,14 @@ function PullList({
             // Adds every loaded pull, keeping pulls checked from earlier
             // pages (a batch's failures) selected.
             onSelectAll={() => selection.set([...selection.checked, ...pulls])}
+            // Unchecks every loaded pull; pulls kept from earlier pages stay
+            // checked, as Select all left them.
+            onDeselectAll={() => {
+              const loaded = new Set(pulls.map(pullKey));
+              selection.set(
+                selection.checked.filter((pull) => !loaded.has(pullKey(pull)))
+              );
+            }}
           />
         ) : (
           <div className="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1">

@@ -210,4 +210,9 @@ describe('getPatchViewerHref', () => {
       ).toBe('/a.patch?domain=other.example');
     });
   });
+
+  test('a "word:" prefix is text, not a URL scheme', () => {
+    expect(getPatchViewerHref('feat: real work')).toBeUndefined();
+    expect(getPatchViewerHref('is:merged')).toBeUndefined();
+  });
 });

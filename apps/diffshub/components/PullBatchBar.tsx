@@ -1,6 +1,11 @@
 'use client';
 
-import { IconCheckbox, IconCheckCircle, IconMerged } from '@pierre/icons';
+import {
+  IconCheckbox,
+  IconCheckboxFill,
+  IconCheckCircle,
+  IconMerged,
+} from '@pierre/icons';
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -143,14 +148,16 @@ export function usePullBatch(onFinished: (outcome: PullBatchOutcome) => void): {
 }
 
 // The strip that replaces the list header's filters while rows are checked
-// or a batch runs: how many, select every loaded row, approve, merge (with a
-// confirm step, since merging can't be undone), and clear. While a batch
-// runs it shows progress instead of actions.
+// or a batch runs: how many, select (or, once all are checked, deselect)
+// every loaded row, approve, merge (with a confirm step, since merging can't
+// be undone), and clear. While a batch runs it shows progress instead of
+// actions.
 export function PullBatchBar({
   allLoadedChecked,
   checked,
   loadedCount,
   onClear,
+  onDeselectAll,
   onRun,
   onSelectAll,
   running,
@@ -159,6 +166,7 @@ export function PullBatchBar({
   checked: readonly PullSummary[];
   loadedCount: number;
   onClear(): void;
+  onDeselectAll(): void;
   onRun(action: PullBatchAction): void;
   onSelectAll(): void;
   running: PullBatchProgress | null;
@@ -176,6 +184,9 @@ export function PullBatchBar({
   };
 
   const count = checked.length;
+  const toggleAll = allLoadedChecked
+    ? { Icon: IconCheckboxFill, run: onDeselectAll, verb: 'Deselect' }
+    : { Icon: IconCheckbox, run: onSelectAll, verb: 'Select' };
   return (
     <div
       role="toolbar"
@@ -192,15 +203,15 @@ export function PullBatchBar({
         <span className="text-foreground px-1.5 font-medium tabular-nums">
           {running == null ? `${count} selected` : `${running.total} in batch`}
         </span>
-        {!allLoadedChecked && running == null && (
+        {running == null && (
           <Button
             size="toolbar"
             variant="outline"
             className="px-2"
-            onClick={onSelectAll}
+            onClick={toggleAll.run}
           >
-            <IconCheckbox className="size-3.5" />
-            Select all {loadedCount}
+            <toggleAll.Icon className="size-3.5" />
+            {toggleAll.verb} all {loadedCount}
           </Button>
         )}
       </div>

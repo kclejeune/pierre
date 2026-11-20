@@ -430,6 +430,16 @@ export function buildActiveSearchQuery(
   );
 }
 
+// The dashboard's search for typed `text` within `repos` (every repository
+// when empty), without its audience or muting terms: the command palette's
+// pull request search, so it matches what the list would for that text.
+export function buildPullTextSearch(
+  text: string,
+  repos: readonly string[]
+): string {
+  return buildUnmutedSearchQuery({ involves: 'anyone', repos, text });
+}
+
 // buildActiveSearchQuery without the muting terms, whose hit count tells how
 // many pulls muting hides.
 function buildUnmutedSearchQuery(

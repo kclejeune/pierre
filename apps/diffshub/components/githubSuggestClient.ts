@@ -1,7 +1,7 @@
 'use client';
 
 import { storedGitHubTokenHeaders } from './githubSession';
-import type { PullSuggestion } from '@/lib/diffUrlSuggestions';
+import type { PullSearchHit, PullSuggestion } from '@/lib/diffUrlSuggestions';
 import { splitRepoName } from '@/lib/pinnedRepos';
 import { fetchReportingRejection } from '@/lib/rejectedCredential';
 
@@ -9,10 +9,14 @@ import { fetchReportingRejection } from '@/lib/rejectedCredential';
 // lookups. Successful responses are cached privately by the browser
 // according to the route's response headers, so repeating a query is free.
 
-function fetchSuggestPayload(params: Record<string, string>): Promise<unknown> {
+function fetchSuggestPayload(
+  params: Record<string, string>,
+  signal?: AbortSignal
+): Promise<unknown> {
   const search = new URLSearchParams(params);
   return fetchReportingRejection(`/api/github-suggest?${search}`, {
     headers: storedGitHubTokenHeaders(),
+    signal,
   })
     .then((response) => (response.ok ? response.json() : null))
     .catch(() => null);
@@ -44,4 +48,22 @@ export async function loadOpenPulls(
     repo: name,
   })) as { pulls?: PullSuggestion[] } | null;
   return payload?.pulls ?? null;
+}
+
+// Pull requests in any state matching `query` (a number, "#123", or title
+// words) within `repos`, or every repository the viewer can see for 'all'.
+// Empty on any failure. `signal` drops a superseded search.
+export async function searchPulls(
+  query: string,
+  repos: readonly string[] | 'all',
+  signal?: AbortSignal
+): Promise<PullSearchHit[]> {
+  const params: Record<string, string> = { kind: 'pull-search', q: query };
+  if (repos !== 'all') {
+    params.repos = repos.join(',');
+  }
+  const payload = (await fetchSuggestPayload(params, signal)) as {
+    pulls?: PullSearchHit[];
+  } | null;
+  return payload?.pulls ?? [];
 }

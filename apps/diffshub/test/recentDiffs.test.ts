@@ -87,6 +87,21 @@ describe('loadRecentDiffs / recordRecentDiff', () => {
       { path: '/ok/path', viewedAt: 1, title: 'Ok' },
     ]);
   });
+
+  test('drops stored entries that are no longer views', () => {
+    // A /owner/repo/pulls list the viewer once recorded, before the
+    // dashboard served that path.
+    fake.store.set(
+      'diffshub.recent-diffs',
+      JSON.stringify([
+        { path: '/octo/demo/pulls', viewedAt: 2 },
+        { path: '/octo/demo/pull/9', viewedAt: 1, title: 'Fix' },
+      ])
+    );
+    expect(loadRecentDiffs()).toEqual([
+      { path: '/octo/demo/pull/9', viewedAt: 1, title: 'Fix' },
+    ]);
+  });
 });
 
 describe('isRecentDiffPath', () => {

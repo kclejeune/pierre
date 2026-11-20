@@ -2,11 +2,12 @@ import { getGitHubPathFromURL } from './getGitHubPathFromURL';
 import { normalizeGitHubPath } from './normalizeGitHubPath';
 
 // Matches GitHub shorthand "owner/repo#123" -> /owner/repo/pull/123.
-const GITHUB_SHORTHAND_PATTERN = /^([^/\s]+)\/([^/\s#]+)#(\d+)$/;
+const GITHUB_SHORTHAND_PATTERN = /^([^/\s:]+)\/([^/\s#:]+)#(\d+)$/;
 
 // Matches bare paths like "owner/repo/pull/123" where neither of the first two
 // segments contains a dot; a dot would indicate a domain like "github.com".
-const BARE_GITHUB_PATH_PATTERN = /^([^/\s.]+)\/([^/\s.]+)(\/[^\s]*)?$/;
+// Nor a colon, which GitHub names can't hold: "repo:a/b" is a qualifier.
+const BARE_GITHUB_PATH_PATTERN = /^([^/\s.:]+)\/([^/\s.:]+)(\/[^\s]*)?$/;
 
 // Resolves a user-supplied string into a viewer href, or undefined if the
 // input can't be mapped to a supported diff URL. Accepts full URLs, URLs
@@ -29,9 +30,14 @@ export function getPatchViewerHref(
     return `/${shorthandMatch[1]}/${shorthandMatch[2]}/pull/${shorthandMatch[3]}`;
   }
 
-  // Full URL with protocol (most common case).
+  // Full URL with protocol (most common case). Only web links count: any
+  // "word:" parses as a URL scheme, so a title like "feat: fix it" or a
+  // qualifier like "is:merged" would otherwise read as a link.
   try {
-    return resolveParsedURL(new URL(trimmed), githubHost, appHost);
+    const url = new URL(trimmed);
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      return resolveParsedURL(url, githubHost, appHost);
+    }
   } catch {
     // Not a fully-qualified URL; try other interpretations.
   }
@@ -83,5 +89,11 @@ function resolveParsedURL(
   if (appHost != null && url.host === appHost) {
     return `${url.pathname}${url.search}${url.hash}`;
   }
-  return `${url.pathname}?domain=${encodeURIComponent(url.hostname)}`;
+  return domainViewerHref(url.pathname, url.hostname);
+}
+
+// The viewer's path for a patch served by another host: the upstream path,
+// with the host in ?domain=.
+export function domainViewerHref(path: string, domain: string): string {
+  return `${path}?domain=${encodeURIComponent(domain)}`;
 }

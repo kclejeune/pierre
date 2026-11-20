@@ -18,9 +18,11 @@ import { requestJSON } from '@/lib/pullCommentsClient';
 // passes it when that term is part of the search. mutedAuthors,
 // mutedBranches, and staleAfter leave out those authors' pulls
 // (lib/mutedAuthors), pulls from those branches, and open pulls not updated
-// within that duration (lib/muteRules).
+// within that duration (lib/muteRules); with mutedOnly, the list holds only
+// those pulls instead.
 export interface PullSearchRequest {
   involves: PullAudience;
+  mutedOnly?: boolean;
   mutedAuthors?: readonly string[];
   mutedBranches?: readonly string[];
   // A canonical duration such as "60d" (lib/muteRules formatStaleDuration).
@@ -78,6 +80,9 @@ function buildPullSearchParams(request: PullSearchRequest): URLSearchParams {
   }
   if (request.staleAfter != null) {
     params.set('stale', request.staleAfter);
+  }
+  if (request.mutedOnly === true) {
+    params.set('muted', 'only');
   }
   params.set('q', request.text.trim());
   return params;

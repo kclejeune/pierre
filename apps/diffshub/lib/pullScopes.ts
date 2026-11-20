@@ -61,14 +61,23 @@ export function audienceAnyoneAllowed(scope: PullScope, text: string): boolean {
   return scope.kind !== 'all' || hasNarrowingQualifier(text);
 }
 
+export type MutedView = 'hide' | 'show' | 'only';
+
+function parseMutedView(value: string | null): MutedView {
+  return value === 'show' || value === 'only' ? value : 'hide';
+}
+
 export interface PullsPageState {
   involves: PullAudience;
   // Whether review requests to the viewer's teams count; only consulted
   // when the audience includes the review-request term.
   reviewRequests: ReviewRequestScope;
   scope: PullScope;
-  // Lists muted authors' pulls too (?muted=show) instead of excluding them.
-  showMuted: boolean;
+  // What the list does with muted pulls (muted authors and branches, and
+  // stale pulls): leaves them out ('hide', the default), lists them too,
+  // dimmed (?muted=show), or lists only them (?muted=only), e.g. to batch
+  // approve the bots' pulls.
+  mutedView: MutedView;
   text: string;
 }
 
@@ -135,7 +144,7 @@ export function readPullsPageState(search: string): PullsPageState {
         ? requests
         : DEFAULT_REVIEW_REQUESTS,
     scope,
-    showMuted: params.get('muted') === 'show',
+    mutedView: parseMutedView(params.get('muted')),
     text: params.get('q') ?? DEFAULT_QUERY_TEXT,
   };
 }
@@ -183,8 +192,8 @@ export function writePullsPageState(url: URL, state: PullsPageState): URL {
   } else {
     params.set('requests', state.reviewRequests);
   }
-  if (state.showMuted) {
-    params.set('muted', 'show');
+  if (state.mutedView !== 'hide') {
+    params.set('muted', state.mutedView);
   } else {
     params.delete('muted');
   }
@@ -201,7 +210,7 @@ export function buildPullsRepoPath(repo: string): string {
       involves: defaultAudience(scope),
       reviewRequests: DEFAULT_REVIEW_REQUESTS,
       scope,
-      showMuted: false,
+      mutedView: 'hide',
       text: DEFAULT_QUERY_TEXT,
     }
   );

@@ -33,10 +33,12 @@ import {
 } from '@/components/DashboardShell';
 import {
   DropdownMenu,
+  DropdownMenuBareRadioItem,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/DropdownMenu';
@@ -117,6 +119,7 @@ import {
   audienceAnyoneAllowed,
   DEFAULT_QUERY_TEXT,
   defaultAudience,
+  type MutedView,
   type PullScope,
   type PullsPageState,
   readPreviewPullKey,
@@ -493,14 +496,18 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
   // flipping it doesn't refetch (or re-key the cache for) the others.
   const usesReviewRequests =
     involves !== 'anyone' && involvementsUseReviewRequests(involves);
+  // Showing muted pulls (dimmed) sends no mute rules at all; listing only
+  // them sends the rules to match instead of exclude.
+  const showMuted = page.mutedView === 'show';
   const request: PullSearchRequest = {
     involves,
-    mutedAuthors: page.showMuted ? undefined : mutedAuthors.muted,
-    mutedBranches: page.showMuted ? undefined : muteRules.rules.branches,
+    mutedAuthors: showMuted ? undefined : mutedAuthors.muted,
+    mutedBranches: showMuted ? undefined : muteRules.rules.branches,
+    mutedOnly: page.mutedView === 'only',
     repos,
     reviewRequests: usesReviewRequests ? page.reviewRequests : undefined,
     staleAfter:
-      page.showMuted || staleAfter == null
+      showMuted || staleAfter == null
         ? undefined
         : formatStaleDuration(staleAfter),
     text: page.text,
@@ -585,14 +592,14 @@ function SignedInDashboard({ tokenVersion }: { tokenVersion: number }) {
             defaultStaleAfter: mutingConfig.defaultStaleAfter,
             full: mutedAuthors.muted.length >= MAX_MUTED_AUTHORS,
             muted: mutedAuthors.muted,
-            showMuted: page.showMuted,
+            mutedView: page.mutedView,
             staleAfter,
             staleAfterPicked: muteRules.rules.staleAfter != null,
             onMute: mutedAuthors.mute,
             onMuteBranch: muteRules.muteBranch,
             onSetStaleAfter: muteRules.setStaleAfter,
-            onShowMutedChange: (showMuted) =>
-              updatePage({ ...page, showMuted }),
+            onMutedViewChange: (mutedView) =>
+              updatePage({ ...page, mutedView }),
             onUnmute: mutedAuthors.unmute,
             onUnmuteBranch: muteRules.unmuteBranch,
           }}
@@ -1339,7 +1346,7 @@ function PullList({
               groupExpanded={expanded.has(row.group.key)}
               groupKey={row.lead ? row.group.key : undefined}
               groupSize={row.group.pulls.length}
-              muted={muting.showMuted && isRowMuted(row.pull)}
+              muted={muting.mutedView === 'show' && isRowMuted(row.pull)}
               actionsBusy={batch.running != null}
               authorMuted={allMutedNames.has(authorKey(row.pull))}
               muteFull={muting.full}
@@ -1553,8 +1560,8 @@ interface MutingControls {
   // The muted list is at MAX_MUTED_AUTHORS, so no one else can be muted.
   full: boolean;
   muted: readonly string[];
-  // Muted pulls are listed (dimmed) instead of excluded.
-  showMuted: boolean;
+  // Muted pulls are left out, listed dimmed, or the only ones listed.
+  mutedView: MutedView;
   // How long an open pull can go without an update and still be listed;
   // undefined when stale pulls aren't hidden.
   staleAfter: StaleDuration | undefined;
@@ -1564,7 +1571,7 @@ interface MutingControls {
   onMuteBranch(prefix: string): void;
   // A duration or "off"; undefined returns to the deployment default.
   onSetStaleAfter(value: string | undefined): void;
-  onShowMutedChange(showMuted: boolean): void;
+  onMutedViewChange(mutedView: MutedView): void;
   onUnmute(author: string): void;
   onUnmuteBranch(prefix: string): void;
 }
@@ -1605,12 +1612,113 @@ function unmutedBotAuthors(
   return authors;
 }
 
+// One choice in the Muted menu's segmented rows: its label, the longer
+// description shown on hover, and the value it picks.
+interface MenuSegment<T extends string> {
+  label: string;
+  title: string;
+  value: T;
+}
+
+// The Muted menu's choices for what the list does with muted pulls.
+const MUTED_VIEW_OPTIONS: readonly MenuSegment<MutedView>[] = [
+  { label: 'Hide', title: 'Leave muted pulls out', value: 'hide' },
+  {
+    label: 'Show dimmed',
+    title: 'List muted pulls along with the rest, dimmed',
+    value: 'show',
+  },
+  {
+    label: 'Only muted',
+    title: 'List only muted pulls, e.g. to approve bot pulls in a batch',
+    value: 'only',
+  },
+];
+
 // The staleness choices the Muted menu offers as one click; any other
 // duration can be typed.
-const STALE_PRESETS = ['1w', '30d', '60d', '90d', '6mo', 'off'] as const;
+const STALE_OPTIONS: readonly MenuSegment<string>[] = [
+  { label: '1w', title: 'Hide open pulls not updated in 1 week', value: '1w' },
+  {
+    label: '30d',
+    title: 'Hide open pulls not updated in 30 days',
+    value: '30d',
+  },
+  {
+    label: '60d',
+    title: 'Hide open pulls not updated in 60 days',
+    value: '60d',
+  },
+  {
+    label: '90d',
+    title: 'Hide open pulls not updated in 90 days',
+    value: '90d',
+  },
+  {
+    label: '6mo',
+    title: 'Hide open pulls not updated in 6 months',
+    value: '6mo',
+  },
+  { label: 'Off', title: 'Keep stale pulls listed', value: 'off' },
+];
 
-// The list header's Muted menu: how many pulls muting hid, a switch to list
-// them anyway (dimmed), the staleness cutoff, branch mutes (the deployment's
+// A segmented row of exclusive choices inside the Muted menu: equal-width
+// segments filling the menu on the shared ButtonGroup track. Each segment is
+// also a menu radio item, so arrow keys reach it like the rest of the menu
+// (which traps Tab), and choosing one keeps the menu open. A value that
+// matches no segment (a typed duration) leaves every segment unpicked.
+function MenuSegments<T extends string>({
+  label,
+  onChange,
+  options,
+  value,
+}: {
+  label: string;
+  onChange(value: T): void;
+  options: readonly MenuSegment<T>[];
+  value: string;
+}) {
+  return (
+    <DropdownMenuRadioGroup
+      asChild
+      value={value}
+      onValueChange={(next) => {
+        const picked = options.find((option) => option.value === next);
+        if (picked != null) {
+          onChange(picked.value);
+        }
+      }}
+    >
+      <ButtonGroup
+        aria-label={label}
+        className="w-full self-stretch border p-0.5"
+        size="xs"
+        value={value}
+      >
+        {options.map((option) => (
+          <DropdownMenuBareRadioItem
+            key={option.value}
+            asChild
+            value={option.value}
+            onSelect={(event) => event.preventDefault()}
+          >
+            <ButtonGroupItem
+              className="data-[highlighted]:ring-ring h-6 flex-1 px-1.5 tabular-nums outline-none data-[highlighted]:ring-2"
+              title={option.title}
+              value={option.value}
+            >
+              {option.label}
+            </ButtonGroupItem>
+          </DropdownMenuBareRadioItem>
+        ))}
+      </ButtonGroup>
+    </DropdownMenuRadioGroup>
+  );
+}
+
+// The list header's Muted menu: how many pulls muting hid, whether the list
+// hides muted pulls, shows them dimmed, or shows only them, the staleness
+// cutoff, branch mutes (the deployment's
 // presets and the viewer's own prefixes), and a shortcut to mute the bots in
 // view. Muting and unmuting individual authors happens where they're seen:
 // the rows' mute buttons and the Author filter menu, which also lists who is
@@ -1626,7 +1734,7 @@ function MuteMenu({
   pulls: readonly PullSummary[];
   text: string;
 }) {
-  const { branches, branchPresets, muted, showMuted, staleAfter } = muting;
+  const { branches, branchPresets, muted, mutedView, staleAfter } = muting;
   const bots = useMemo(
     () => unmutedBotAuthors(pulls, muted, muting.botLoginPatterns),
     [muted, muting.botLoginPatterns, pulls]
@@ -1639,12 +1747,15 @@ function MuteMenu({
   const staleValue =
     staleAfter == null ? 'off' : formatStaleDuration(staleAfter);
   const defaultStale = parseStaleDuration(muting.defaultStaleAfter);
-  const triggerLabel = showMuted
-    ? 'Showing muted'
-    : mutedCount != null && mutedCount > 0
-      ? // Counts pulls, not rules: "63 muted pulls" from one bot.
-        `${mutedCount.toLocaleString()} muted ${mutedCount === 1 ? 'pull' : 'pulls'}`
-      : 'Muted';
+  const triggerLabel =
+    mutedView === 'show'
+      ? 'Showing muted'
+      : mutedView === 'only'
+        ? 'Only muted'
+        : mutedCount != null && mutedCount > 0
+          ? // Counts pulls, not rules: "63 muted pulls" from one bot.
+            `${mutedCount.toLocaleString()} muted ${mutedCount === 1 ? 'pull' : 'pulls'}`
+          : 'Muted';
   // Shift-click range selection over the branch items (presets, then the
   // viewer's own prefixes), as on the pull rows: shift-clicking an item sets
   // every item between it and the last one clicked to the clicked item's new
@@ -1703,14 +1814,17 @@ function MuteMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-72">
-        <DropdownMenuCheckboxItem
-          checked={showMuted}
-          onCheckedChange={(checked) =>
-            muting.onShowMutedChange(checked === true)
-          }
-        >
-          Show muted pulls
-        </DropdownMenuCheckboxItem>
+        <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
+          Muted pulls
+        </DropdownMenuLabel>
+        <div className="px-2 pb-2">
+          <MenuSegments
+            label="Muted pulls"
+            options={MUTED_VIEW_OPTIONS}
+            value={mutedView}
+            onChange={muting.onMutedViewChange}
+          />
+        </div>
         <DropdownMenuSeparator />
         <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
           Hide open pulls not updated in
@@ -1721,19 +1835,13 @@ function MuteMenu({
             </span>
           )}
         </DropdownMenuLabel>
-        <div className="flex flex-wrap items-center gap-1 px-2 pb-1.5">
-          {STALE_PRESETS.map((preset) => (
-            <Button
-              key={preset}
-              type="button"
-              variant={staleValue === preset ? 'secondary' : 'ghost'}
-              size="xs"
-              className="h-6 px-1.5 tabular-nums"
-              onClick={() => muting.onSetStaleAfter(preset)}
-            >
-              {preset === 'off' ? 'Off' : preset}
-            </Button>
-          ))}
+        <div className="flex flex-col gap-1.5 px-2 pb-2">
+          <MenuSegments
+            label="Hide open pulls not updated in"
+            options={STALE_OPTIONS}
+            value={staleValue}
+            onChange={muting.onSetStaleAfter}
+          />
           <StaleDurationInput
             key={staleValue}
             value={staleValue}
@@ -1839,10 +1947,10 @@ function StaleDurationInput({
     <input
       aria-label="Hide open pulls not updated in (a duration like 36h, 2w, or 3mo)"
       value={draft}
-      placeholder="36h, 2w, 3mo"
+      placeholder="Any duration, e.g. 36h, 2w, 3mo"
       spellCheck={false}
       className={cn(
-        'h-6 w-20 rounded-md border bg-transparent px-1.5 font-mono text-xs focus:outline-none',
+        'h-7 w-full rounded-md border bg-transparent px-2 font-mono text-xs focus:outline-none',
         !valid && 'border-destructive'
       )}
       onChange={({ currentTarget }) => setDraft(currentTarget.value)}

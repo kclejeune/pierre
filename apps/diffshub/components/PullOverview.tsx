@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  IconArrowUpRight,
   IconCheck,
   IconChevronSm,
   IconClockArrow,
@@ -203,6 +204,9 @@ interface MergeStatusCardProps {
   checksExpanded: boolean;
   comments: OverviewCell;
   headline: OverviewHeadline;
+  // Opens the pull's review threads on their Unresolved filter (the diff
+  // view's Comments tab); the Comments cell is plain text without it.
+  onOpenComments?(): void;
   onToggleChecks(): void;
 }
 
@@ -216,6 +220,7 @@ export function MergeStatusCard({
   checksExpanded,
   comments,
   headline,
+  onOpenComments,
   onToggleChecks,
 }: MergeStatusCardProps) {
   const display = HEADLINE_DISPLAY[headline.tone];
@@ -245,7 +250,12 @@ export function MergeStatusCard({
           onToggle={onToggleChecks}
           expanded={checksExpanded}
         />
-        <MetricCell cell={comments} label="Comments" />
+        <MetricCell
+          cell={comments}
+          label="Comments"
+          onOpen={onOpenComments}
+          openLabel="Show unresolved comments"
+        />
         <MetricCell cell={approvals} label="Approvals" />
       </div>
       {checksExpanded && checksDetail != null && (
@@ -258,17 +268,23 @@ export function MergeStatusCard({
 }
 
 // One Checks / Comments / Approvals cell: label, summary, and bar. Passing
-// `onToggle` makes the cell a disclosure button (Checks expands its list).
+// `onToggle` makes the cell a disclosure button (Checks expands its list);
+// `onOpen` makes it a link-like button to where the cell's items live
+// (Comments opens the unresolved threads), marked with an arrow.
 function MetricCell({
   cell,
   expanded = false,
   label,
+  onOpen,
   onToggle,
+  openLabel,
 }: {
   cell: OverviewCell;
   expanded?: boolean;
   label: string;
+  onOpen?(): void;
   onToggle?(): void;
+  openLabel?: string;
 }) {
   const summary =
     cell.kind === 'metric'
@@ -291,6 +307,12 @@ function MetricCell({
         >
           {summary}
         </span>
+        {onOpen != null && onToggle == null && (
+          <IconArrowUpRight
+            aria-hidden="true"
+            className="text-muted-foreground ml-auto size-3 shrink-0"
+          />
+        )}
         {onToggle != null && (
           <IconChevronSm
             aria-hidden="true"
@@ -305,18 +327,20 @@ function MetricCell({
     </>
   );
   const className = `flex min-w-0 flex-col gap-1.5 p-2.5 not-first:border-l text-left ${annotationBorderColor}`;
-  if (onToggle == null) {
+  const onClick = onToggle ?? onOpen;
+  if (onClick == null) {
     return <div className={className}>{content}</div>;
   }
   return (
     <button
       type="button"
-      aria-expanded={expanded}
+      aria-expanded={onToggle != null ? expanded : undefined}
+      title={onToggle == null ? openLabel : undefined}
       className={cn(
         className,
         'outline-none hover:bg-[color-mix(in_srgb,currentColor_5%,transparent)] focus-visible:bg-[color-mix(in_srgb,currentColor_5%,transparent)]'
       )}
-      onClick={onToggle}
+      onClick={onClick}
     >
       {content}
     </button>

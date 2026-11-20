@@ -2,6 +2,8 @@ import type { CodeViewLayout } from '@pierre/diffs';
 import type { FileTreeOptions } from '@pierre/trees';
 import type { CSSProperties } from 'react';
 
+import { withSearchParam } from './searchParams';
+
 export const CODE_VIEW_LAYOUT: CodeViewLayout = {
   paddingTop: 0,
   gap: 1,
@@ -236,3 +238,14 @@ export const BASE_FILE_TREE_OPTIONS = {
   stickyFolders: true,
   unsafeCSS: `${HIDDEN_SEARCH_UNSAFE_CSS}\n${SIDEBAR_VIRTUALIZED_SCROLL_UNSAFE_CSS}\n${SUPPRESS_FOLDER_DOT_UNSAFE_CSS}\n${FOLDER_LABEL_UNSAFE_CSS}`,
 } as const satisfies Omit<FileTreeOptions, 'paths' | 'preparedInput'>;
+
+// Query parameter that opens a diff on its sidebar's Comments tab, filtered
+// to unresolved threads (`?comments=unresolved`). Read once on load by the
+// review page, which then drops it.
+export const UNRESOLVED_COMMENTS_PARAM = 'comments';
+
+// `path` (a diff view path, possibly with its own query) with
+// UNRESOLVED_COMMENTS_PARAM set.
+export function withUnresolvedComments(path: string): string {
+  return withSearchParam(path, UNRESOLVED_COMMENTS_PARAM, 'unresolved');
+}

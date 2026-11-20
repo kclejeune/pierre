@@ -2,6 +2,7 @@
 
 import {
   IconCheck,
+  IconChevronSm,
   IconCircleFill,
   IconClockArrow,
   IconComment,
@@ -24,11 +25,12 @@ import { toast } from 'sonner';
 
 import { useAppPermissionBlock } from './AppPermissionsContext';
 import { Button } from './Button';
-import { ButtonGroup, ButtonGroupItem } from './ButtonGroup';
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './DropdownMenu';
 import { InlineConfirm } from './InlineConfirm';
@@ -117,16 +119,13 @@ interface PullDetailsControlProps {
 export interface PullDetailsPanelHostOptions {
   footerSurfaceClassName: string;
   onMerged(): void;
+  // Closes the host, if it can be closed (the popover), before the panel
+  // sends the viewer elsewhere on the page.
+  onDismiss?(): void;
 }
 
-// The method picker's options, and the merge button's label for each, as
-// GitHub names them, so the button says what it will do instead of
-// repeating "Merge" beside a "Merge" option.
-const MERGE_METHOD_LABELS: Record<PullMergeMethod, string> = {
-  merge: 'Merge commit',
-  rebase: 'Rebase',
-  squash: 'Squash',
-};
+// The merge button's label (and its menu's option names) for each method,
+// as GitHub names them, so the button says what it will do.
 const MERGE_ACTION_LABELS: Record<PullMergeMethod, string> = {
   merge: 'Create merge commit',
   rebase: 'Rebase and merge',
@@ -469,6 +468,7 @@ export function PullDetailsControl({
           {renderPanel({
             footerSurfaceClassName:
               'bg-[var(--diffshub-popover-bg,var(--color-popover))]',
+            onDismiss: () => setOpen(false),
             onMerged: () => setOpen(false),
           })}
         </div>
@@ -476,6 +476,14 @@ export function PullDetailsControl({
     </DropdownMenu>
   );
 }
+
+// The horizontal padding for a PullDetailsPanel host whose scroller keeps a
+// stable gutter for its auto-hiding scrollbar (cv-autohide-scrollbar, 10px):
+// the right side's padding gives that space back, so the content sits the
+// same 12px from both edges, and the panel's footer reads the inset to span
+// the same width.
+export const PANEL_GUTTERED_INSET_CLASS =
+  'pl-3 pr-0.5 [--panel-inset-right:0.125rem]';
 
 // The pull's overview, laid out after GitHub's PR overview: title,
 // author/branches/diffstat line, a merge-status card (headline, Checks /
@@ -492,6 +500,7 @@ export function PullDetailsPanel({
   model,
   onDetailsEdited,
   onMerged,
+  onOpenComments,
   pullInfo,
   pullRequest,
 }: {
@@ -501,6 +510,8 @@ export function PullDetailsPanel({
   model: PullDetailsModel;
   onDetailsEdited(pull: PullRequestRef, fields: Partial<PullDetails>): void;
   onMerged(): void;
+  // Where the Comments cell leads: the diff view's unresolved threads.
+  onOpenComments?(): void;
   pullInfo: PullInfo | null;
   pullRequest: PullRequestRef;
 }) {
@@ -644,6 +655,7 @@ export function PullDetailsPanel({
         checksExpanded={model.checksExpanded}
         comments={model.commentsCell}
         headline={model.headline}
+        onOpenComments={onOpenComments}
         onToggleChecks={() => model.setChecksExpanded((current) => !current)}
       />
       <div className={cn('flex flex-col gap-3', !editing && PANEL_GRID_CLASS)}>
@@ -674,22 +686,22 @@ export function PullDetailsPanel({
         </div>
         {!editing && (
           <div className={PANEL_MAIN_CLASS}>
-            <PanelSection heading="Description">
-              {model.details.body.trim() === '' ? (
-                <p className="text-muted-foreground text-xs">
-                  No description provided.
-                </p>
-              ) : (
-                <div
-                  className={`rounded-md border ${annotationBorderColor} px-3 py-2 text-[13px]`}
-                >
-                  <MarkdownContent
-                    flavor="comment"
-                    markdown={model.details.body}
-                  />
-                </div>
-              )}
-            </PanelSection>
+            {/* No "Description" heading: the bordered card already sets the
+                body apart, and many bodies open with their own heading. */}
+            {model.details.body.trim() === '' ? (
+              <p className="text-muted-foreground text-xs">
+                No description provided.
+              </p>
+            ) : (
+              <div
+                className={`rounded-md border ${annotationBorderColor} px-3 py-2 text-[13px]`}
+              >
+                <MarkdownContent
+                  flavor="comment"
+                  markdown={model.details.body}
+                />
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -699,7 +711,7 @@ export function PullDetailsPanel({
         // padding, and the surface background hides what scrolls under.
         <div
           className={cn(
-            'sticky bottom-0 -mx-3 -mb-3 flex flex-col gap-2 border-t px-3 py-2.5',
+            'sticky bottom-0 -mb-3 -ml-3 mr-[calc(var(--panel-inset-right,0.75rem)*-1)] flex flex-col gap-2 border-t py-2.5 pl-3 pr-[var(--panel-inset-right,0.75rem)]',
             annotationBorderColor,
             footerSurfaceClassName
           )}
@@ -778,15 +790,18 @@ function MergeCapabilitySection({
       details,
       getGitHubToken,
       headSha,
+      onMerged,
       pullRequest,
       secondaryActions,
     } = controls;
     return (
       <MergeQueueControls
         baseRef={baseRef}
+        capabilities={capabilities}
         details={details}
         getGitHubToken={getGitHubToken}
         headSha={headSha}
+        onMerged={onMerged}
         onStatusChange={onMergeQueueChange}
         pullRequest={pullRequest}
         secondaryActions={secondaryActions}
@@ -810,14 +825,29 @@ function FooterActionRow({
   secondary?: ReactNode;
 }) {
   return (
+    // Laid out by the footer's own width rather than by wrapping, which
+    // stranded the primary button alone on a row. Narrow (the /pulls
+    // preview pane): the secondary actions share one row in equal widths
+    // and the primary takes the full row under them. From 28rem: one row,
+    // right-aligned, after the lead text (which wraps above when long).
     // min-h-8 is the action buttons' height, so the "Checking merge
     // permissions…" line that stands in for them takes the same room.
-    <div className="flex min-h-8 flex-wrap items-center justify-between gap-2">
-      {lead}
-      <span className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
-        {secondary}
-        {primary}
-      </span>
+    <div className="@container/footer">
+      <div className="flex min-h-8 flex-wrap items-center justify-between gap-2">
+        {lead}
+        <span className="flex w-full flex-wrap items-center gap-1.5 @md/footer:ml-auto @md/footer:w-auto @md/footer:justify-end">
+          {secondary != null && (
+            <span className="flex flex-1 items-center gap-1.5 *:flex-1 @md/footer:flex-none @md/footer:*:flex-none">
+              {secondary}
+            </span>
+          )}
+          {primary != null && (
+            <span className="flex basis-full *:flex-1 @md/footer:basis-auto @md/footer:*:flex-none">
+              {primary}
+            </span>
+          )}
+        </span>
+      </div>
     </div>
   );
 }
@@ -1114,13 +1144,18 @@ function PullLabels({
   const pickerToggle = editable ? (
     <PanelPickerToggle
       addLabel="Add labels"
+      addText="Add"
       empty={empty}
       open={picker.open}
       onToggle={picker.toggle}
     />
   ) : null;
   return (
-    <PanelSection action={!empty && pickerToggle} heading="Labels">
+    <PanelSection
+      action={!empty && pickerToggle}
+      heading="Labels"
+      inline={empty && !picker.open}
+    >
       <div className="flex flex-wrap items-center gap-1">
         {labels.map((label) => (
           <LabelChip key={label.name} label={label}>
@@ -1346,16 +1381,22 @@ function describeQueueChange(
 // onStatusChange, so reopening the panel shows it too.
 function MergeQueueControls({
   baseRef,
+  capabilities,
   details,
   getGitHubToken,
   headSha,
+  onMerged,
   onStatusChange,
   pullRequest,
   secondaryActions,
   status,
 }: {
   baseRef: string | undefined;
+  // For the bypass: whether the viewer may merge directly, and with which
+  // method (the queue picks its own).
+  capabilities: PullMergeCapabilities;
   details: PullDetails;
+  onMerged(): void;
   getGitHubToken(): string | undefined;
   headSha: string | undefined;
   onStatusChange(status: PullMergeQueueStatus | null): void;
@@ -1366,6 +1407,16 @@ function MergeQueueControls({
 }) {
   const blockedReason = useMergeBlockedReason(details);
   const { busy, run } = useMergeAction(getGitHubToken);
+  const merge = useDirectMerge({
+    getGitHubToken,
+    headSha,
+    onMerged,
+    pullRequest,
+  });
+  // Merging around the queue needs a direct method; the repo's first one is
+  // what GitHub's bypass would use.
+  const [bypassMethod] =
+    capabilities.canBypass === true ? capabilities.methods : [];
   const queueAction = (action: MergeQueueAction) =>
     void run(async (token) => {
       const next = await updateMergeQueue(pullRequest, token, action, headSha);
@@ -1423,19 +1474,51 @@ function MergeQueueControls({
         }
         secondary={secondaryActions}
         primary={
-          <Button
-            type="button"
-            variant="default"
-            size="sm"
-            disabled={blockedReason != null || busy}
-            className="bg-emerald-600 hover:bg-emerald-700"
-            onClick={() => queueAction('enqueue')}
-          >
-            <IconMerged className="size-3.5" />
-            {busy ? 'Queueing…' : 'Merge when ready'}
-          </Button>
+          <span className="flex">
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              disabled={blockedReason != null || busy || merge.busy}
+              className={cn(
+                // Fills a split button stretched by the narrow footer
+                // (FooterActionRow).
+                'flex-1 bg-emerald-600 hover:bg-emerald-700 @md/footer:flex-none',
+                bypassMethod != null && 'rounded-r-none'
+              )}
+              onClick={() => queueAction('enqueue')}
+            >
+              <IconMerged className="size-3.5" />
+              {busy ? 'Queueing…' : 'Merge when ready'}
+            </Button>
+            {bypassMethod != null && (
+              <MergeMenu
+                bypassMethod={bypassMethod}
+                disabled={
+                  blockedReason != null ||
+                  busy ||
+                  merge.busy ||
+                  merge.confirming != null
+                }
+                method={undefined}
+                methods={[]}
+                onBypass={() => merge.confirm('bypass')}
+              />
+            )}
+          </span>
         }
       />
+      {merge.confirming != null && bypassMethod != null && (
+        <MergeConfirmRow
+          baseRef={baseRef}
+          bypass
+          busy={merge.busy}
+          method={bypassMethod}
+          pullNumber={pullRequest.number}
+          onCancel={merge.cancel}
+          onConfirm={() => merge.submit(bypassMethod)}
+        />
+      )}
       {blockedReason != null && (
         <p className="text-muted-foreground text-xs">{blockedReason}</p>
       )}
@@ -1443,10 +1526,19 @@ function MergeQueueControls({
   );
 }
 
-// The merge affordance: method picker (when the repo allows more than one
-// method) plus a two-step confirm. The merge is
-// pinned to the head sha the viewer loaded, so a branch that moved since
-// fails with a stale-head error instead of merging unseen commits.
+// What each merge method does, under its name in the merge button's menu.
+const MERGE_METHOD_DESCRIPTIONS: Record<PullMergeMethod, string> = {
+  merge: 'All commits are added to the base branch with a merge commit.',
+  rebase: 'The commits are rebased and added to the base branch one by one.',
+  squash: 'The commits are combined into one commit on the base branch.',
+};
+
+// The merge affordance: the merge button names the chosen method, its menu
+// switches methods (when the repo allows more than one) and, for viewers
+// GitHub lets skip unmet requirements, offers that as a separate, red
+// choice. Either goes through a confirm step. The merge is pinned to the
+// head sha the viewer loaded, so a branch that moved since fails with a
+// stale-head error instead of merging unseen commits.
 function MergeControls({
   baseRef,
   capabilities,
@@ -1470,11 +1562,102 @@ function MergeControls({
   const [method, setMethod] = useState<PullMergeMethod>(
     capabilities.methods[0] ?? 'merge'
   );
-  const [confirming, setConfirming] = useState(false);
   const blockedReason = useMergeBlockedReason(details);
-  const { busy: isMerging, run } = useMergeAction(getGitHubToken);
+  const merge = useDirectMerge({
+    getGitHubToken,
+    headSha,
+    onMerged,
+    pullRequest,
+  });
+  const canBypass = capabilities.canBypass === true;
+  const hasMenu = capabilities.methods.length > 1 || canBypass;
+  return (
+    <div className="flex flex-col gap-2">
+      <FooterActionRow
+        secondary={secondaryActions}
+        primary={
+          // Why it's disabled, on hover (on a wrapper: a disabled button
+          // takes no pointer events); the same reason shows under the row.
+          <span className="flex" title={blockedReason ?? undefined}>
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              disabled={
+                blockedReason != null || merge.busy || merge.confirming != null
+              }
+              className={cn(
+                'flex-1 bg-emerald-600 hover:bg-emerald-700 @md/footer:flex-none',
+                hasMenu && 'rounded-r-none'
+              )}
+              onClick={() => merge.confirm('merge')}
+            >
+              <IconMerged className="size-3.5" />
+              {merge.busy ? 'Merging…' : MERGE_ACTION_LABELS[method]}
+            </Button>
+            {hasMenu && (
+              <MergeMenu
+                bypassMethod={canBypass ? method : undefined}
+                disabled={
+                  blockedReason != null ||
+                  merge.busy ||
+                  merge.confirming != null
+                }
+                method={method}
+                methods={capabilities.methods}
+                onBypass={() => merge.confirm('bypass')}
+                onMethodChange={setMethod}
+              />
+            )}
+          </span>
+        }
+      />
+      {merge.confirming != null && (
+        <MergeConfirmRow
+          baseRef={baseRef}
+          bypass={merge.confirming === 'bypass'}
+          busy={merge.busy}
+          method={method}
+          pullNumber={pullRequest.number}
+          onCancel={merge.cancel}
+          onConfirm={() => merge.submit(method)}
+        />
+      )}
+      {blockedReason != null && (
+        <p className="text-muted-foreground text-xs">{blockedReason}</p>
+      )}
+      {details.mergeable == null && blockedReason == null && (
+        <p className="text-muted-foreground text-xs">
+          GitHub is still computing mergeability; merging may be rejected.
+        </p>
+      )}
+    </div>
+  );
+}
 
-  function submit() {
+// A direct merge through GitHub's merge endpoint (which applies the
+// viewer's bypass rights when the confirm step was the bypass one), with
+// the two-step confirm: `confirming` says which button asked.
+function useDirectMerge({
+  getGitHubToken,
+  headSha,
+  onMerged,
+  pullRequest,
+}: {
+  getGitHubToken(): string | undefined;
+  headSha: string | undefined;
+  onMerged(): void;
+  pullRequest: PullRequestRef;
+}): {
+  busy: boolean;
+  cancel(): void;
+  confirm(kind: 'bypass' | 'merge'): void;
+  confirming: 'bypass' | 'merge' | null;
+  submit(method: PullMergeMethod): void;
+} {
+  const [confirming, setConfirming] = useState<'bypass' | 'merge' | null>(null);
+  const { busy, run } = useMergeAction(getGitHubToken);
+  function submit(method: PullMergeMethod) {
     void run(async (token) => {
       try {
         const result = await mergePullRequest(
@@ -1492,92 +1675,156 @@ function MergeControls({
           );
         }
       } finally {
-        setConfirming(false);
+        setConfirming(null);
       }
     }, 'Merging the pull request failed.');
   }
+  return {
+    busy,
+    cancel: () => setConfirming(null),
+    confirm: setConfirming,
+    confirming,
+    submit,
+  };
+}
+
+// The merge button's attached menu: the repo's merge methods, each with what
+// it does, and (when `bypassMethod` is set) merging without waiting for
+// GitHub's requirements, set apart in red as GitHub does.
+function MergeMenu({
+  bypassMethod,
+  disabled,
+  method,
+  methods,
+  onBypass,
+  onMethodChange,
+}: {
+  bypassMethod: PullMergeMethod | undefined;
+  disabled: boolean;
+  method: PullMergeMethod | undefined;
+  methods: readonly PullMergeMethod[];
+  onBypass(): void;
+  onMethodChange?(method: PullMergeMethod): void;
+}) {
+  const dropdownThemeStyle = useDropdownChromeStyle();
   return (
-    <div className="flex flex-col gap-2">
-      <FooterActionRow
-        lead={
-          // A single allowed method needs no picker: the merge button's
-          // label already names it, and a one-option group beside it reads
-          // as a second, duplicate button.
-          capabilities.methods.length > 1 && (
-            <ButtonGroup
-              size="sm"
-              value={method}
-              onValueChange={(value) => setMethod(value as PullMergeMethod)}
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="default"
+          size="sm"
+          disabled={disabled}
+          aria-label="Merge options"
+          className="rounded-l-none border-l border-emerald-700/60 bg-emerald-600 px-1.5 hover:bg-emerald-700"
+        >
+          <IconChevronSm className="size-3" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        className="w-72"
+        style={dropdownThemeStyle}
+      >
+        {onMethodChange != null &&
+          methods.length > 1 &&
+          methods.map((value) => (
+            <DropdownMenuItem
+              key={value}
+              className="items-start gap-2"
+              onSelect={() => onMethodChange(value)}
             >
-              {capabilities.methods.map((value) => (
-                <ButtonGroupItem
-                  key={value}
-                  value={value}
-                  // Picking a method means nothing while merging is blocked.
-                  disabled={blockedReason != null || isMerging}
-                >
-                  {MERGE_METHOD_LABELS[value]}
-                </ButtonGroupItem>
-              ))}
-            </ButtonGroup>
-          )
-        }
-        secondary={secondaryActions}
-        primary={
-          // Why it's disabled, on hover (on a wrapper: a disabled button
-          // takes no pointer events); the same reason shows under the row.
-          <span className="flex" title={blockedReason ?? undefined}>
-            <Button
-              type="button"
-              variant="default"
-              size="sm"
-              disabled={blockedReason != null || isMerging || confirming}
-              className="bg-emerald-600 hover:bg-emerald-700"
-              onClick={() => setConfirming(true)}
-            >
-              <IconMerged className="size-3.5" />
-              {isMerging ? 'Merging…' : MERGE_ACTION_LABELS[method]}
-            </Button>
-          </span>
-        }
-      />
-      {confirming && (
-        <div className="flex items-center justify-between gap-2 text-xs">
-          <span>
-            {MERGE_ACTION_LABELS[method]} #{pullRequest.number} into{' '}
-            <BaseBranchLabel baseRef={baseRef} />?
-          </span>
-          <span className="flex gap-1.5">
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              disabled={isMerging}
-              onClick={() => setConfirming(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="default"
-              size="xs"
-              disabled={isMerging}
-              className="bg-emerald-600 hover:bg-emerald-700"
-              onClick={submit}
-            >
-              Confirm merge
-            </Button>
-          </span>
-        </div>
-      )}
-      {blockedReason != null && (
-        <p className="text-muted-foreground text-xs">{blockedReason}</p>
-      )}
-      {details.mergeable == null && blockedReason == null && (
-        <p className="text-muted-foreground text-xs">
-          GitHub is still computing mergeability; merging may be rejected.
-        </p>
-      )}
+              <IconCheck
+                aria-hidden
+                className={cn(
+                  'mt-0.5 size-3.5 shrink-0',
+                  value !== method && 'invisible'
+                )}
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">
+                  {MERGE_ACTION_LABELS[value]}
+                </span>
+                <span className="text-muted-foreground text-xs">
+                  {MERGE_METHOD_DESCRIPTIONS[value]}
+                </span>
+              </span>
+            </DropdownMenuItem>
+          ))}
+        {bypassMethod != null && (
+          <>
+            {onMethodChange != null && methods.length > 1 && (
+              <DropdownMenuSeparator />
+            )}
+            <DropdownMenuItem className="items-start gap-2" onSelect={onBypass}>
+              <span aria-hidden className="size-3.5 shrink-0" />
+              <span className="flex flex-col gap-0.5">
+                <span className="text-destructive font-medium">
+                  Merge without waiting for requirements
+                </span>
+                <span className="text-muted-foreground text-xs">
+                  {MERGE_ACTION_LABELS[bypassMethod]} now, skipping required
+                  checks, reviews, and any merge queue.
+                </span>
+              </span>
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// The confirm step under the footer row. A bypass says what it skips and
+// confirms in red.
+function MergeConfirmRow({
+  baseRef,
+  busy,
+  bypass,
+  method,
+  onCancel,
+  onConfirm,
+  pullNumber,
+}: {
+  baseRef: string | undefined;
+  busy: boolean;
+  bypass: boolean;
+  method: PullMergeMethod;
+  onCancel(): void;
+  onConfirm(): void;
+  pullNumber: number | string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 text-xs">
+      <span>
+        {MERGE_ACTION_LABELS[method]} #{pullNumber} into{' '}
+        <BaseBranchLabel baseRef={baseRef} />
+        {bypass
+          ? ' without waiting for required checks, reviews, or the merge queue?'
+          : '?'}
+      </span>
+      <span className="flex shrink-0 gap-1.5">
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          disabled={busy}
+          onClick={onCancel}
+        >
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          variant={bypass ? 'destructive' : 'default'}
+          size="xs"
+          autoFocus
+          disabled={busy}
+          className={bypass ? undefined : 'bg-emerald-600 hover:bg-emerald-700'}
+          onClick={onConfirm}
+        >
+          {bypass ? 'Merge without waiting' : 'Confirm merge'}
+        </Button>
+      </span>
     </div>
   );
 }

@@ -7,7 +7,7 @@ import {
   IconShare,
   IconX,
 } from '@pierre/icons';
-import { useEffect, useMemo, useState } from 'react';
+import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 
 import { AppPermissionsProvider } from './AppPermissionsContext';
 import { revealScrollbarWhileScrolling } from './autoHideScrollbar';
@@ -20,9 +20,12 @@ import {
   PANEL_MAIN_CLASS,
   PANEL_SIDEBAR_CLASS,
   PanelSection,
-  PanelSectionSlot,
 } from './PanelSection';
-import { PullDetailsPanel, usePullDetailsModel } from './PullDetailsControl';
+import {
+  PANEL_GUTTERED_INSET_CLASS,
+  PullDetailsPanel,
+  usePullDetailsModel,
+} from './PullDetailsControl';
 import { MergeStatusCard } from './PullOverview';
 import { useQueuedPullPath } from './PullQueueLinkContext';
 import {
@@ -31,6 +34,7 @@ import {
 } from './reviewThreadsClient';
 import { usePullInfo } from './usePullInfo';
 import { cn } from '@/lib/cn';
+import { withUnresolvedComments } from '@/lib/constants';
 import {
   githubPullURL,
   pullKey,
@@ -231,14 +235,33 @@ function LoadedPreview({
     pullRequest,
   });
   const githubHref = githubPullURL(webURL, pull);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const titleScrolledAway = useTitleScrolledAway(
+    scrollerRef,
+    contentRef,
+    model != null
+  );
 
   return (
     <aside aria-label={`Preview of ${pull.title}`} className={PANE_CLASS}>
       <div className="bg-muted/30 flex h-11 shrink-0 items-center gap-2 border-b px-3">
-        {/* The number sits beside the title below; the bar names the repo. */}
-        <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
-          {pull.owner}/{pull.repo}
-        </span>
+        {/* The bar names the repo while the panel's title is on screen
+            (the number sits beside it there), and takes over the number and
+            title once a long description scrolls them away, like GitHub's
+            sticky pull header. */}
+        {titleScrolledAway ? (
+          <span className="min-w-0 flex-1 truncate text-xs font-medium">
+            <span className="text-muted-foreground font-normal">
+              #{pull.number}
+            </span>{' '}
+            {model?.details.title ?? pull.title}
+          </span>
+        ) : (
+          <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
+            {pull.owner}/{pull.repo}
+          </span>
+        )}
         <MuteAuthorButton muted={muted} pull={pull} onMute={onMute} />
         <Button
           type="button"
@@ -290,10 +313,14 @@ function LoadedPreview({
           it, which would float the panel's pinned action footer above the
           bottom edge with content showing beneath. */}
       <div
+        ref={scrollerRef}
         className="cv-autohide-scrollbar min-h-0 flex-1 overflow-y-auto"
         onScroll={revealScrollbarWhileScrolling}
       >
-        <div className="p-3">
+        <div
+          ref={contentRef}
+          className={cn('py-3', PANEL_GUTTERED_INSET_CLASS)}
+        >
           {model != null ? (
             <PullDetailsPanel
               diffStats={null}
@@ -317,6 +344,16 @@ function LoadedPreview({
                 }
               }}
               onMerged={onPullChanged}
+              onOpenComments={() => {
+                // The preview has no comment list; the diff's Comments tab
+                // does, so open the diff there, on its unresolved threads.
+                onOpenDiff(pull);
+                window.open(
+                  withUnresolvedComments(queuedPath),
+                  '_blank',
+                  'noopener'
+                );
+              }}
             />
           ) : loadFailed ? (
             <div className="flex flex-col items-start gap-2 text-sm">
@@ -418,35 +455,68 @@ function PreviewSkeleton({ pull }: { pull: PullSummary }) {
       />
       <div className={cn('flex flex-col gap-3', PANEL_GRID_CLASS)}>
         <div className={PANEL_SIDEBAR_CLASS}>
-          <PanelSection heading="Labels">
-            <div className="flex flex-wrap items-center gap-1">
-              {pull.labels != null && pull.labels.length > 0 ? (
-                pull.labels.map((label) => (
+          {/* The list row already says whether there are labels; reviewers
+              are unknown until the details load, so they wait inline, the
+              shape an empty section takes. */}
+          {pull.labels != null && pull.labels.length > 0 ? (
+            <PanelSection heading="Labels">
+              <div className="flex flex-wrap items-center gap-1">
+                {pull.labels.map((label) => (
                   <LabelChip key={label.name} label={label} />
-                ))
-              ) : (
-                <PanelSectionSlot>
-                  <span className="bg-muted h-3 w-16 animate-pulse rounded" />
-                </PanelSectionSlot>
-              )}
-            </div>
-          </PanelSection>
-          <PanelSection heading="Reviewers">
-            <PanelSectionSlot>
-              <p className="text-muted-foreground animate-pulse text-xs">
-                Loading reviewers…
-              </p>
-            </PanelSectionSlot>
+                ))}
+              </div>
+            </PanelSection>
+          ) : (
+            <PanelSection inline heading="Labels">
+              <span className="bg-muted h-3 w-12 animate-pulse rounded" />
+            </PanelSection>
+          )}
+          <PanelSection inline heading="Reviewers">
+            <p className="text-muted-foreground animate-pulse text-xs">
+              Loading…
+            </p>
           </PanelSection>
         </div>
         <div className={PANEL_MAIN_CLASS}>
-          <PanelSection heading="Description">
-            <div className="bg-muted/60 h-24 animate-pulse rounded-md" />
-          </PanelSection>
+          <div className="bg-muted/60 h-24 animate-pulse rounded-md" />
         </div>
       </div>
     </div>
   );
+}
+
+// Whether the details panel's title row (the content's first element) has
+// scrolled out of the pane, watched with an IntersectionObserver rooted at
+// the scroller. `ready` re-arms it once the panel (not the loading skeleton)
+// renders, since that swaps the element being watched.
+function useTitleScrolledAway(
+  scrollerRef: RefObject<HTMLDivElement | null>,
+  contentRef: RefObject<HTMLDivElement | null>,
+  ready: boolean
+): boolean {
+  const [away, setAway] = useState(false);
+  useEffect(() => {
+    const root = scrollerRef.current;
+    const title = contentRef.current?.firstElementChild?.firstElementChild;
+    if (
+      !ready ||
+      root == null ||
+      title == null ||
+      typeof IntersectionObserver === 'undefined'
+    ) {
+      return undefined;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => setAway(entry != null && !entry.isIntersecting),
+      { root, threshold: 0 }
+    );
+    observer.observe(title);
+    return () => {
+      observer.disconnect();
+      setAway(false);
+    };
+  }, [contentRef, ready, scrollerRef]);
+  return away;
 }
 
 // Resolved vs total review conversations for the overview's Comments cell.

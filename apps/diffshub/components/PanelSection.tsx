@@ -6,20 +6,37 @@ import type { PullLabel } from '@/lib/pullInfoClient';
 // A titled block of the pull details panel. `action` sits at the heading's
 // right edge (GitHub's sidebar puts each section's edit control there). The
 // heading row is as tall as an xs button, so an Edit control arriving once
-// permissions load doesn't push the section down.
+// permissions load doesn't push the section down. `inline` puts a one-line
+// section (an empty one's Add button or note) beside its heading instead of
+// under it, so empty labels and reviewers share a row rather than pushing
+// the description down; the panel's sidebar wraps inline sections side by
+// side (PANEL_SIDEBAR_CLASS).
 export function PanelSection({
   action,
   children,
   heading,
+  inline = false,
 }: {
   action?: ReactNode;
   children: ReactNode;
   heading: string;
+  inline?: boolean;
 }) {
+  const title = (
+    <h4 className="text-muted-foreground text-xs font-medium">{heading}</h4>
+  );
+  if (inline) {
+    return (
+      <section className="flex min-h-5.5 items-center gap-2">
+        {title}
+        {children}
+      </section>
+    );
+  }
   return (
-    <section className="flex flex-col gap-1.5">
+    <section className="flex w-full flex-col gap-1.5">
       <div className="flex min-h-5.5 items-center justify-between gap-2">
-        <h4 className="text-muted-foreground text-xs font-medium">{heading}</h4>
+        {title}
         {action}
       </div>
       {children}
@@ -59,5 +76,5 @@ export function LabelChip({
 export const PANEL_GRID_CLASS =
   '@3xl:grid @3xl:grid-cols-[minmax(0,1fr)_17rem] @3xl:items-start @3xl:gap-x-6';
 export const PANEL_SIDEBAR_CLASS =
-  'flex min-w-0 flex-col gap-3 @3xl:col-start-2 @3xl:row-start-1';
+  'flex min-w-0 flex-wrap items-start gap-x-6 gap-y-3 @3xl:col-start-2 @3xl:row-start-1';
 export const PANEL_MAIN_CLASS = 'min-w-0 @3xl:col-start-1 @3xl:row-start-1';

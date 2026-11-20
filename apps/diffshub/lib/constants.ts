@@ -49,6 +49,14 @@ export const CODE_VIEW_CUSTOM_CSS = `
   }
 }
 
+/* Paint the whole row behind an inline thread card in the gutter color, so
+   the card band reads as one strip set apart from the code and the card
+   stands clear of it. The library paints only the row's gutter cell that way
+   and the rest in the code color. */
+[data-line-annotation] {
+  --diffs-annotation-bg: var(--diffs-bg-context-gutter);
+}
+
 /* While a rendered markdown document is showing, hide the source diff so only
    the document (and its annotations) remains. MarkdownDocAnnotation stamps
    data-diffshub-doc-open on the container host with the diff side hosting the

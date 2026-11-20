@@ -6,13 +6,9 @@ import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { CHROME_ICON_BUTTON_CLASS } from './chromeButtonStyles';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from './Dialog';
+import { Dialog, DialogDescription, DialogTitle } from './Dialog';
 import { Spinner } from './Spinner';
+import { ThemedDialogContent } from './ThemedDialogContent';
 import { ThemedFile } from './ThemedFile';
 import { ThemedUnresolvedFile } from './ThemedUnresolvedFile';
 import { Button } from '@/components/Button';
@@ -217,7 +213,7 @@ export function PullConflictResolver({
         }
       }}
     >
-      <DialogContent
+      <ThemedDialogContent
         className="inset-0 top-0 left-0 flex h-full w-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none border-0 p-0 shadow-none sm:max-w-none"
         showCloseButton={false}
       >
@@ -408,7 +404,7 @@ export function PullConflictResolver({
             </Button>
           </form>
         </footer>
-      </DialogContent>
+      </ThemedDialogContent>
     </Dialog>
   );
 }

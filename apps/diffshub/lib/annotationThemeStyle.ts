@@ -10,6 +10,9 @@ const ANNOTATION_THEME_STYLE_KEYS = [
   '--diffshub-annotation-strong-fg',
   '--diffshub-annotation-shadow',
   '--diffshub-popover-muted-fg',
+  // The chrome canvas, painted behind the diff so the space past the last
+  // file continues the page rather than showing the bare document body.
+  '--diffshub-sidebar-surface',
   // Inter-file separator hairline. Carries the themed border-opaque value
   // (same weight as the header/sidebar chrome borders) so it stays visible
   // on any theme without reading darker than the surrounding chrome.

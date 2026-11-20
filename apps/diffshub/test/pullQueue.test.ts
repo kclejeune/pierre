@@ -54,13 +54,23 @@ describe('pull queue', () => {
     expect(parsePullQueue('nope', now)).toBeNull();
     expect(parsePullQueue(null, now)).toBeNull();
     expect(parsePullQueue(stored(now, 'x'), now)).toBeNull();
-    // The way back must stay on /pulls.
+    // The way back must stay on the dashboard, /pulls or /owner/repo/pulls.
+    const repoListPath = '/acme/a/pulls?pull=acme/a/1';
     expect(
-      parsePullQueue(
-        { items, listPath: 'https://evil.example/', savedAt: now },
-        now
-      )
-    ).toBeNull();
+      parsePullQueue({ items, listPath: repoListPath, savedAt: now }, now)
+        ?.listPath
+    ).toBe(repoListPath);
+    for (const offSite of [
+      'https://evil.example/',
+      '//evil.example/x/pulls',
+      '/\\evil.example/x/pulls',
+      '/a/b/c/pulls',
+      '/pullsx',
+    ]) {
+      expect(
+        parsePullQueue({ items, listPath: offSite, savedAt: now }, now)
+      ).toBeNull();
+    }
     expect(
       parsePullQueue(
         stored(now, [{ path: 'relative', title: 'x' }, items[0]]),

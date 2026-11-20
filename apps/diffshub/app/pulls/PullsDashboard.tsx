@@ -191,18 +191,21 @@ export function PullsDashboard() {
 // previous repository, while filter edits replace the current one.
 function usePullsPageState() {
   const [state, setState] = useState(() =>
-    readPullsPageState(window.location.search)
+    readPullsPageState(window.location.search, window.location.pathname)
   );
   useEffect(() => {
     // Canonicalizes the URL once (e.g. a legacy ?bucket= link becomes the
-    // ?involves= it maps onto).
+    // ?involves= it maps onto, and ?repo= moves into the /owner/repo/pulls
+    // path).
     window.history.replaceState(
       window.history.state,
       '',
       writePullsPageState(new URL(window.location.href), state)
     );
     const onPopState = () =>
-      setState(readPullsPageState(window.location.search));
+      setState(
+        readPullsPageState(window.location.search, window.location.pathname)
+      );
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
     // Mount-only: later writes go through `update`.

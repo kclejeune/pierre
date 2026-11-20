@@ -254,7 +254,7 @@ describe('buildRepoSections', () => {
     );
     expect(repository?.items[1].action).toEqual({
       type: 'navigate',
-      path: '/pulls?repo=oven-sh%2Fbun',
+      path: '/oven-sh/bun/pulls',
     });
   });
 

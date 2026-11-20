@@ -3,6 +3,8 @@
 // title); dashboard and palette clicks record with a title, and merging keeps
 // whichever title is known so path-only revisits never erase one.
 
+import { isPullsListPath } from './pullsListPath';
+
 const STORAGE_KEY = 'diffshub.recent-diffs';
 
 export const MAX_RECENT_DIFFS = 20;
@@ -76,10 +78,10 @@ export function mergeRecentDiff(
 
 // The app's own dashboards and home page, which are where views are picked
 // from rather than views worth listing.
-const NOT_A_VIEW = /^\/(pulls|browse)?\/?(?:[?#]|$)/;
+const NOT_A_VIEW = /^\/(browse)?\/?(?:[?#]|$)/;
 
 export function isRecentDiffPath(path: string): boolean {
-  return !NOT_A_VIEW.test(path);
+  return !NOT_A_VIEW.test(path) && !isPullsListPath(path);
 }
 
 export function recordRecentDiff(entry: {

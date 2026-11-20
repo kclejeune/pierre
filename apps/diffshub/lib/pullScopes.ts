@@ -11,7 +11,8 @@ import {
   type ReviewRequestScope,
 } from './githubPullSummaries';
 import { isValidRepoName } from './pinnedRepos';
-import { hasNarrowingQualifier } from './pullSearchQuery';
+import { hasNarrowingQualifier, stripPullTypeTerms } from './pullSearchQuery';
+import { pullsListPathname, readPullsPathRepo } from './pullsListPath';
 
 export type PullScope =
   // Every repository the viewer's search can see.
@@ -102,10 +103,13 @@ const LEGACY_BUCKET_INVOLVES = new Map<string, readonly PullInvolvement[]>([
   ['assigned', ['assigned']],
 ]);
 
-function parseScope(params: URLSearchParams): PullScope {
-  const repo = params.get('repo');
-  if (repo != null && isValidRepoName(repo)) {
-    return { kind: 'repo', repo };
+// The repository in an /owner/repo/pulls path wins; ?repo= is the older
+// spelling of the same scope, still read so existing links keep working.
+function parseScope(params: URLSearchParams, pathname: string): PullScope {
+  for (const repo of [readPullsPathRepo(pathname), params.get('repo')]) {
+    if (repo != null && isValidRepoName(repo)) {
+      return { kind: 'repo', repo };
+    }
   }
   return params.get('scope') === 'pinned' ? { kind: 'pinned' } : ALL_SCOPE;
 }
@@ -133,9 +137,21 @@ function parseAudience(
 
 const DEFAULT_REVIEW_REQUESTS: ReviewRequestScope = 'direct';
 
-export function readPullsPageState(search: string): PullsPageState {
+// The query text from ?q=, minus GitHub's redundant is:pr (see
+// stripPullTypeTerms), so a GitHub `?q=is:pr is:open` reads as the default
+// text and drops out of the URL.
+function parseQueryText(raw: string | null): string {
+  return raw == null ? DEFAULT_QUERY_TEXT : stripPullTypeTerms(raw);
+}
+
+// Reads the dashboard state from its URL. `pathname` defaults to plain
+// /pulls for callers that only have a query string.
+export function readPullsPageState(
+  search: string,
+  pathname = '/pulls'
+): PullsPageState {
   const params = new URLSearchParams(search);
-  const scope = parseScope(params);
+  const scope = parseScope(params, pathname);
   const requests = params.get('requests');
   return {
     involves: parseAudience(params, scope),
@@ -145,7 +161,7 @@ export function readPullsPageState(search: string): PullsPageState {
         : DEFAULT_REVIEW_REQUESTS,
     scope,
     mutedView: parseMutedView(params.get('muted')),
-    text: params.get('q') ?? DEFAULT_QUERY_TEXT,
+    text: parseQueryText(params.get('q')),
   };
 }
 
@@ -163,18 +179,20 @@ function serializeAudience(involves: PullAudience): string {
   return involves.length === 0 ? 'me' : involves.join(',');
 }
 
-// Writes the page state onto `url`'s params, leaving defaults out so a plain
-// /pulls stays plain. The legacy ?bucket= is dropped once its meaning has
-// moved into ?involves=.
+// Writes the page state onto `url`, leaving defaults out so a plain /pulls
+// stays plain. A repository scope moves into the path (/owner/repo/pulls);
+// the legacy ?repo= and ?bucket= are dropped once their meaning has moved
+// into the path and ?involves=.
 export function writePullsPageState(url: URL, state: PullsPageState): URL {
   const next = new URL(url);
+  next.pathname = pullsListPathname(
+    state.scope.kind === 'repo' ? state.scope.repo : null
+  );
   const params = next.searchParams;
   params.delete('bucket');
   params.delete('repo');
   params.delete('scope');
-  if (state.scope.kind === 'repo') {
-    params.set('repo', state.scope.repo);
-  } else if (state.scope.kind === 'pinned') {
+  if (state.scope.kind === 'pinned') {
     params.set('scope', 'pinned');
   }
   if (audiencesEqual(state.involves, defaultAudience(state.scope))) {
@@ -200,8 +218,8 @@ export function writePullsPageState(url: URL, state: PullsPageState): URL {
   return next;
 }
 
-// The /pulls URL (path and query) scoped to one repository, with every other
-// filter at its default, as the dashboard itself would write it.
+// The dashboard URL (path and query) scoped to one repository, with every
+// other filter at its default, as the dashboard itself would write it.
 export function buildPullsRepoPath(repo: string): string {
   const scope: PullScope = { kind: 'repo', repo };
   const url = writePullsPageState(

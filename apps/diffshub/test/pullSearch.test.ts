@@ -149,7 +149,83 @@ describe('pulls page URL state', () => {
       scope: { kind: 'repo', repo: 'oven-sh/bun' },
       text: 'is:open',
     });
-    expect(repoUrl.search).toBe('?repo=oven-sh%2Fbun');
+    expect(repoUrl.pathname).toBe('/oven-sh/bun/pulls');
+    expect(repoUrl.search).toBe('');
+  });
+
+  test('leaving a repository scope returns to plain /pulls', () => {
+    const url = writePullsPageState(
+      new URL('https://x.test/oven-sh/bun/pulls'),
+      {
+        involves: 'anyone',
+        reviewRequests: 'direct',
+        mutedView: 'hide',
+        scope: { kind: 'pinned' },
+        text: 'is:open',
+      }
+    );
+    expect(`${url.pathname}${url.search}`).toBe('/pulls?scope=pinned');
+  });
+
+  test('reads the repository from a GitHub-shaped path', () => {
+    expect(readPullsPageState('', '/oven-sh/bun/pulls').scope).toEqual({
+      kind: 'repo',
+      repo: 'oven-sh/bun',
+    });
+    expect(readPullsPageState('', '/oven-sh/bun/pulls/').scope).toEqual({
+      kind: 'repo',
+      repo: 'oven-sh/bun',
+    });
+    expect(readPullsPageState('', '/a%/b/pulls').scope).toEqual({
+      kind: 'all',
+    });
+    // The path wins over a stray ?repo=.
+    expect(
+      readPullsPageState('?repo=a%2Fb', '/oven-sh/bun/pulls').scope
+    ).toEqual({ kind: 'repo', repo: 'oven-sh/bun' });
+  });
+
+  test('legacy ?repo= links canonicalize onto the path', () => {
+    const legacy = new URL(
+      'https://x.test/pulls?repo=oven-sh%2Fbun&q=is%3Amerged'
+    );
+    const state = readPullsPageState(legacy.search, legacy.pathname);
+    expect(state.scope).toEqual({ kind: 'repo', repo: 'oven-sh/bun' });
+    const url = writePullsPageState(legacy, state);
+    expect(`${url.pathname}${url.search}`).toBe(
+      '/oven-sh/bun/pulls?q=is%3Amerged'
+    );
+  });
+
+  test("GitHub's ?q= keeps its filters without the redundant is:pr", () => {
+    const read = (q: string) =>
+      readPullsPageState(`?q=${encodeURIComponent(q)}`, '/a/b/pulls').text;
+    expect(read('is:pr is:open')).toBe('is:open');
+    expect(read('is:pr is:open author:octocat')).toBe('is:open author:octocat');
+    expect(read('is:pr is:closed  label:"needs review"')).toBe(
+      'is:closed label:"needs review"'
+    );
+    expect(read('type:pr IS:PR')).toBe('');
+    // Only the positive is:pr goes; anything else stays as typed.
+    expect(read('-is:pr is:open')).toBe('-is:pr is:open');
+    // Under an OR or inside a group it may be what widens the search, so
+    // it stays as written.
+    expect(read('is:pr OR author:octocat')).toBe('is:pr OR author:octocat');
+    expect(read('NOT (-is:pr author:octocat)')).toBe(
+      'NOT (-is:pr author:octocat)'
+    );
+    expect(read('(is:pr author:octocat) is:open')).toBe(
+      '(is:pr author:octocat) is:open'
+    );
+    // A top-level one beside a group is still ANDed with it, so it goes.
+    expect(read('is:pr (author:a OR author:b)')).toBe('(author:a OR author:b)');
+  });
+
+  test('a GitHub default list URL comes out as the bare repo path', () => {
+    const github = new URL('https://x.test/a/b/pulls?q=is%3Apr+is%3Aopen');
+    const state = readPullsPageState(github.search, github.pathname);
+    const url = writePullsPageState(github, state);
+    expect(`${url.pathname}${url.search}`).toBe('/a/b/pulls');
   });
 
   test('round-trips non-default state', () => {
@@ -164,7 +240,7 @@ describe('pulls page URL state', () => {
     expect(url.searchParams.get('involves')).toBe('me');
     expect(url.searchParams.get('requests')).toBe('teams');
     expect(url.searchParams.get('muted')).toBe('show');
-    expect(readPullsPageState(url.search)).toEqual(state);
+    expect(readPullsPageState(url.search, url.pathname)).toEqual(state);
   });
 
   test('round-trips ?muted=only and ignores unknown values', () => {

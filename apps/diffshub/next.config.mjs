@@ -104,6 +104,22 @@ const nextConfig = {
       { source: '/((?!api/).*)', headers: SECURITY_HEADERS },
     ]);
   },
+  // GitHub's repository pull request list, /owner/repo/pulls, serves the
+  // /pulls dashboard, which reads the repository scope from the path (see
+  // lib/pullsListPath.ts). Sharing one page keeps /pulls statically
+  // prerendered and lets scope switches move between the two paths with
+  // history.pushState instead of a navigation. As a plain array these run
+  // after filesystem routes but before the [...path] viewer catch-all; a
+  // ?domain= request is an alternate-host viewer path and is left to it.
+  rewrites() {
+    return Promise.resolve([
+      {
+        source: '/:owner/:repo/pulls',
+        destination: '/pulls',
+        missing: [{ type: 'query', key: 'domain' }],
+      },
+    ]);
+  },
 };
 
 export default nextConfig;

@@ -7,6 +7,7 @@ import {
   deriveRepoSearchQuery,
   type PaletteSection,
   parseRepoShorthand,
+  repoPullSearchText,
   type RepoSectionsInput,
   type RootSectionsInput,
 } from '@/lib/paletteItems';
@@ -207,6 +208,16 @@ describe('buildRootSections pull request search', () => {
   });
 });
 
+describe('repoPullSearchText', () => {
+  test('skips text the repository level already answers', () => {
+    expect(repoPullSearchText('abc1234', refs, pulls)).toBe('');
+    expect(repoPullSearchText('fix-ci', refs, pulls)).toBe('');
+    expect(repoPullSearchText('#12', refs, pulls)).toBe('');
+    expect(repoPullSearchText('#40', refs, pulls)).toBe('#40');
+    expect(repoPullSearchText('palette', refs, pulls)).toBe('palette');
+  });
+});
+
 describe('isPullSearchQuery', () => {
   test('numbers at any length, title words from three characters', () => {
     expect(isPullSearchQuery('8')).toBe(true);
@@ -281,6 +292,31 @@ describe('buildRepoSections', () => {
     ).toEqual(['Default', undefined, 'Current']);
   });
 
+  test('search hits title a typed number and add pulls the open list lacks', () => {
+    const pullHits = [
+      {
+        number: 40,
+        repo: 'oven-sh/bun',
+        state: 'merged',
+        title: 'Old palette',
+      },
+      { number: 12, repo: 'oven-sh/bun', state: 'open', title: 'Add palette' },
+    ] as const;
+    const byNumber = inRepo({ query: '#40', pullHits });
+    expect(byNumber[0].items[0]).toMatchObject({
+      key: 'open-pull:40',
+      label: '#40 · Old palette',
+      detail: 'merged',
+    });
+    const byTitle = inRepo({ query: 'palette', pullHits });
+    // One row per number: #12 once (open list and search agree), then the
+    // merged pull the open list can't show.
+    expect(
+      outline(byTitle).filter(([heading]) => heading.includes('ull'))
+    ).toEqual([['Pull requests', ['pull:12', 'pull:40']]]);
+    expect(byTitle[0].items[1]).toMatchObject({ detail: 'merged' });
+  });
+
   test('a typed number opens that pull, even one not in the open list', () => {
     // Number prefixes narrow the open list; refs aren't matched at all.
     expect(outline(inRepo({ query: '1' }))).toEqual([
@@ -325,13 +361,10 @@ describe('buildRepoSections', () => {
       ['Browse', ['browse-ref:1234567']],
       ['Pull request', ['open-pull:1234567']],
     ]);
-    // An explicit "#" is a pull even there.
+    // An explicit "#" is a pull even there, listed once in "Go to".
     expect(
       outline(inRepo({ prefer: 'refs', query: '#12', refsFirst: true }))
-    ).toEqual([
-      ['Go to', ['open-pull:12']],
-      ['Open pull requests', ['pull:12']],
-    ]);
+    ).toEqual([['Go to', ['open-pull:12']]]);
   });
 
   test('the repository row links to its scope on the pull dashboard', () => {

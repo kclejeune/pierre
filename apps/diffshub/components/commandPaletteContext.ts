@@ -33,9 +33,10 @@ export interface CommandPaletteContextValue {
   // empty (the /pulls scopes).
   scopes?: readonly PaletteRunnableEntry[];
   commands?: readonly PaletteRunnableEntry[];
-  // Typed queries at the top level also search pull requests (by number or
-  // title, any state) within these repositories, or every one for 'all':
-  // the /pulls dashboard's scope. Absent, the top level doesn't.
+  // Where typed queries at the top level search pull requests (by number or
+  // title, any state): these repositories, or every one for 'all'. Absent
+  // means 'all'; [] turns the search off. The /pulls dashboard passes its
+  // scope.
   pullSearchRepos?: PullSearchRepos;
 }
 

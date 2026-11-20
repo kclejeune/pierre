@@ -103,7 +103,7 @@ import {
   type PullConflictsResult,
 } from '@/lib/pullConflictsClient';
 import type { ConversationCounts } from '@/lib/pullOverview';
-import { recordRecentDiff } from '@/lib/recentDiffs';
+import { addRecentDiffTitle, recordRecentDiff } from '@/lib/recentDiffs';
 import { removeSavedCommentSidebarEntry } from '@/lib/removeSavedCommentSidebarEntry';
 import { docCommentTarget } from '@/lib/renderedDocDom';
 import { buildDiffHeadTreePath } from '@/lib/repoBrowser';
@@ -362,6 +362,14 @@ function ReviewUIInner({
       openUnresolvedComments();
     }
   }, [openUnresolvedComments]);
+  // The recents entry for this view: the path, with ?domain= for a patch
+  // from another host.
+  const recentPath =
+    domain == null || domain === '' ? path : domainViewerHref(path, domain);
+  // Read when the load finishes; set from the pull's details below, tagged
+  // with the path it belongs to so a load finishing mid-navigation never
+  // takes the previous view's title.
+  const recentTitleRef = useRef<{ path: string; title?: string }>({ path });
   const {
     applyCollapseModeToLoaded,
     applyCollapsePatternsToLoaded,
@@ -396,10 +404,11 @@ function ReviewUIInner({
     // typo, a deleted pull) never shows as recently viewed.
     onLoaded: () =>
       recordRecentDiff({
-        path:
-          domain == null || domain === ''
-            ? path
-            : domainViewerHref(path, domain),
+        path: recentPath,
+        title:
+          recentTitleRef.current.path === recentPath
+            ? recentTitleRef.current.title
+            : undefined,
       }),
     path,
     tokenHydrated: githubTokenHydrated,
@@ -443,6 +452,29 @@ function ReviewUIInner({
     [githubSource, pullInfo]
   );
   // The Conversation's description, reflecting edits from the header panel.
+  // A pull's title, once its details load, goes into its recents entry: the
+  // patch stream that records the visit carries none, so a pull opened by
+  // URL would otherwise list as a bare path. Whichever lands second adds
+  // it: the load records with the title already known, and a later title
+  // fills in the entry the load made (never one for a load that failed).
+  // The identity check (repository and number) skips a previous pull's
+  // details still showing right after a navigation.
+  const recentTitle =
+    pullInfo != null &&
+    pullRequest != null &&
+    pullInfo.number === pullRequest.number &&
+    pullInfo.baseRepo.owner.toLowerCase() === pullRequest.owner.toLowerCase() &&
+    pullInfo.baseRepo.repo.toLowerCase() === pullRequest.repo.toLowerCase()
+      ? pullInfo.details?.title
+      : undefined;
+  useEffect(() => {
+    recentTitleRef.current = { path: recentPath, title: recentTitle };
+  }, [recentPath, recentTitle]);
+  useEffect(() => {
+    if (recentTitle != null) {
+      addRecentDiffTitle({ path: recentPath, title: recentTitle });
+    }
+  }, [recentPath, recentTitle]);
   const pullAuthorLogin = pullInfo?.details?.authorLogin;
   const pullBody = pullInfo?.details?.body;
   const pullDescription = useMemo(

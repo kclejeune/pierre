@@ -32,6 +32,11 @@ services:
       DIFFSHUB_TOKEN_ENCRYPTION_KEY: ${DIFFSHUB_TOKEN_ENCRYPTION_KEY:-}
       DIFFSHUB_DEFAULT_LIGHT_THEME: ${DIFFSHUB_DEFAULT_LIGHT_THEME:-}
       DIFFSHUB_DEFAULT_DARK_THEME: ${DIFFSHUB_DEFAULT_DARK_THEME:-}
+      # /pulls muting presets: bot login globs, branch-prefix mutes, and the
+      # default staleness cutoff. Unset keeps the built-ins (see the README).
+      DIFFSHUB_BOT_LOGIN_PATTERNS: ${DIFFSHUB_BOT_LOGIN_PATTERNS:-}
+      DIFFSHUB_MUTE_BRANCH_PRESETS: ${DIFFSHUB_MUTE_BRANCH_PRESETS:-}
+      DIFFSHUB_STALE_AFTER_DEFAULT: ${DIFFSHUB_STALE_AFTER_DEFAULT:-}
       # Per-user preferences (never credentials) live in the valkey service
       # below. Point this at an external Redis/Valkey instead if you have one.
       DIFFSHUB_REDIS_URL: ${DIFFSHUB_REDIS_URL:-redis://valkey:6379}

@@ -95,6 +95,8 @@ describe('isRecentDiffPath', () => {
       '/',
       '/pulls',
       '/pulls?repo=a%2Fb',
+      '/a/b/pulls',
+      '/a/b/pulls?q=is%3Amerged',
       '/browse',
       '/browse/?repo=a%2Fb',
     ]) {

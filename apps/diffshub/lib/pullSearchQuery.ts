@@ -481,14 +481,14 @@ function replaceQualifier(
 // don't show as chosen.
 function replaceTerms(
   text: string,
-  remove: (token: PullQueryToken, negated: boolean) => boolean,
+  remove: (token: PullQueryToken, negated: boolean, index: number) => boolean,
   replacement: string | null
 ): string {
   const tokens = tokenizePullQuery(text);
   const { negated } = qualifierNegations(tokens);
   const removed = new Set<number>();
   tokens.forEach((token, index) => {
-    if (remove(token, negated.get(token) ?? false)) {
+    if (remove(token, negated.get(token) ?? false, index)) {
       removed.add(index);
       const before = neighbor(tokens, index, -1);
       if (tokens[before]?.raw === 'NOT') {
@@ -730,6 +730,39 @@ export function splitPullSort(text: string): { rest: string; sort?: string } {
   const sort = tokens.filter(isSort).at(-1)?.value?.toLowerCase() ?? '';
   const rest = joinTokens(tokens.filter((token) => !isSort(token)));
   return sort === '' ? { rest } : { rest, sort };
+}
+
+// Drops GitHub's `is:pr` / `type:pr` from a search: a GitHub pull request
+// list URL always carries one, and the dashboard adds is:pr to every search
+// itself. Only a term ANDed with the whole search goes, where removing it
+// can't change the results: one outside every group, not negated, in a
+// search with no top-level OR. Anywhere else it can be what widens the
+// search (`is:pr OR author:x`, or `NOT (-is:pr author:x)`, both matching
+// every pull), so it stays as written.
+export function stripPullTypeTerms(text: string): string {
+  const tokens = tokenizePullQuery(text);
+  if (hasTopLevelOr(tokens)) {
+    return text.trim();
+  }
+  let depth = 0;
+  const topLevel = tokens.map((token) => {
+    if (isOpenParen(token)) {
+      depth += 1;
+    } else if (isCloseParen(token)) {
+      depth = Math.max(0, depth - 1);
+    }
+    return depth === 0;
+  });
+  return replaceTerms(
+    text,
+    (token, negated, index) =>
+      topLevel[index] === true &&
+      token.kind === 'qualifier' &&
+      !negated &&
+      (token.key === 'is' || token.key === 'type') &&
+      (token.value ?? '').toLowerCase() === 'pr',
+    null
+  );
 }
 
 // The Filters menu's "Clear filters": drops every term the presets set (an

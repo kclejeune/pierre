@@ -14,6 +14,7 @@
 // dashboard opens diffs in new tabs without an opener, and those tabs start
 // with empty session storage, so only the id can travel, in the URL.
 
+import { isPullsListPath } from './pullsListPath';
 import { consumeSearchParam, withSearchParam } from './searchParams';
 import { readStoredJSON, writeStoredJSON } from './storedJSON';
 
@@ -144,7 +145,7 @@ export function parsePullQueue(value: unknown, now: number): PullQueue | null {
     now - stored.savedAt > QUEUE_TTL_MS ||
     !Array.isArray(stored.items) ||
     typeof stored.listPath !== 'string' ||
-    !stored.listPath.startsWith('/pulls')
+    !isPullsListPath(stored.listPath)
   ) {
     return null;
   }

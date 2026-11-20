@@ -1645,6 +1645,44 @@ function MuteMenu({
       ? // Counts pulls, not rules: "63 muted pulls" from one bot.
         `${mutedCount.toLocaleString()} muted ${mutedCount === 1 ? 'pull' : 'pulls'}`
       : 'Muted';
+  // Shift-click range selection over the branch items (presets, then the
+  // viewer's own prefixes), as on the pull rows: shift-clicking an item sets
+  // every item between it and the last one clicked to the clicked item's new
+  // state. Radix's onCheckedChange carries no event, so the shift key is
+  // read on pointer and key down.
+  const branchAnchor = useRef<string | null>(null);
+  const branchShift = useRef(false);
+  const branchOrder = [
+    ...branchPresets.map((preset) => preset.prefix),
+    ...customBranches,
+  ];
+  const toggleBranches = (prefix: string, mute: boolean) => {
+    const anchor = branchShift.current ? branchAnchor.current : null;
+    const from = anchor == null ? -1 : branchOrder.indexOf(anchor);
+    const to = branchOrder.indexOf(prefix);
+    const range =
+      from === -1 || to === -1
+        ? [prefix]
+        : branchOrder.slice(Math.min(from, to), Math.max(from, to) + 1);
+    for (const each of range) {
+      if (mute) {
+        muting.onMuteBranch(each);
+      } else {
+        muting.onUnmuteBranch(each);
+      }
+    }
+    branchAnchor.current = prefix;
+  };
+  const branchItemProps = (prefix: string, checked: boolean) => ({
+    onPointerDown: (event: { shiftKey: boolean }) => {
+      branchShift.current = event.shiftKey;
+    },
+    onKeyDown: (event: { shiftKey: boolean }) => {
+      branchShift.current = event.shiftKey;
+    },
+    onSelect: (event: Event) => event.preventDefault(),
+    onCheckedChange: () => toggleBranches(prefix, !checked),
+  });
   const stopTypeahead = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     // Keep typing inside the field instead of triggering the menu's
     // typeahead or item activation.
@@ -1726,12 +1764,7 @@ function MuteMenu({
               key={preset.prefix}
               checked={checked}
               disabled={!checked && branches.length >= MAX_MUTED_BRANCHES}
-              onSelect={(event) => event.preventDefault()}
-              onCheckedChange={(next) =>
-                next === true
-                  ? muting.onMuteBranch(preset.prefix)
-                  : muting.onUnmuteBranch(preset.prefix)
-              }
+              {...branchItemProps(preset.prefix, checked)}
             >
               <span className="flex-1">{preset.label}</span>
               <span className="text-muted-foreground font-mono text-xs">
@@ -1744,8 +1777,7 @@ function MuteMenu({
           <DropdownMenuCheckboxItem
             key={prefix}
             checked
-            onSelect={(event) => event.preventDefault()}
-            onCheckedChange={() => muting.onUnmuteBranch(prefix)}
+            {...branchItemProps(prefix, true)}
           >
             <span className="font-mono text-xs">{prefix}*</span>
           </DropdownMenuCheckboxItem>

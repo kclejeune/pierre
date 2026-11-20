@@ -192,8 +192,8 @@ DropdownMenuItem.displayName = DropdownMenuPrimitive.Item.displayName;
 const DropdownMenuCheckboxItem = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.CheckboxItem>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.CheckboxItem> & {
-    // 'left' (default) keeps the conventional checkmark gutter on the leading
-    // edge. 'right' renders the checkmark inline at the trailing edge instead,
+    // 'left' (default) puts a checkbox in a gutter on the leading edge.
+    // 'right' renders a checkmark inline at the trailing edge instead,
     // which suits items that already carry their own leading icon/badge (where
     // the absolute left gutter would otherwise overlap that icon).
     indicatorSide?: 'left' | 'right';
@@ -216,9 +216,18 @@ const DropdownMenuCheckboxItem = React.forwardRef<
       {...props}
     >
       {indicatorSide === 'left' && (
-        <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
-          {indicator}
-        </span>
+        // A visible box whether or not the item is checked, so the menu reads
+        // as a list of choices. The same native checkbox as the /pulls rows;
+        // the item itself carries the role and aria-checked, so the box is
+        // presentational.
+        <input
+          type="checkbox"
+          aria-hidden
+          tabIndex={-1}
+          checked={checked === true}
+          readOnly
+          className="accent-foreground pointer-events-none absolute left-2.5 size-3.5"
+        />
       )}
       {children}
       {indicatorSide === 'right' && (

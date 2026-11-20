@@ -56,11 +56,16 @@ export function usePanelPicker(getGitHubToken: () => string | undefined) {
 // heading; with none it's an outlined "Add …" where the items would be.
 export function PanelPickerToggle({
   addLabel,
+  addText = addLabel,
   empty,
   onToggle,
   open,
 }: {
+  // The Add button's accessible name, e.g. "Add labels".
   addLabel: string;
+  // Its visible text when the section heading already names the thing
+  // (an inline empty section: "Labels  + Add").
+  addText?: string;
   empty: boolean;
   onToggle(): void;
   open: boolean;
@@ -71,6 +76,7 @@ export function PanelPickerToggle({
       variant={empty ? 'outline' : 'ghost'}
       size="xs"
       aria-expanded={open}
+      aria-label={empty && !open ? addLabel : undefined}
       onClick={onToggle}
     >
       {open ? (
@@ -78,7 +84,7 @@ export function PanelPickerToggle({
       ) : empty ? (
         <>
           <IconPlus className="size-3" />
-          {addLabel}
+          {addText}
         </>
       ) : (
         'Edit'

@@ -178,6 +178,27 @@ describe('merge capabilities', () => {
     });
   });
 
+  // GitHub's "Bypass requirements": offered to viewers who may merge as
+  // admin, only while the pull isn't already mergeable.
+  test('offers a bypass only to admins of a blocked pull', () => {
+    const capabilities = (
+      viewerCanMergeAsAdmin: boolean,
+      mergeStateStatus: string
+    ) =>
+      parsePullMergeCapabilities({
+        repository: {
+          viewerPermission: 'ADMIN',
+          squashMergeAllowed: true,
+          pullRequest: { mergeStateStatus, viewerCanMergeAsAdmin },
+        },
+      }).canBypass;
+    expect(capabilities(true, 'BLOCKED')).toBe(true);
+    expect(capabilities(true, 'BEHIND')).toBe(true);
+    expect(capabilities(true, 'CLEAN')).toBeUndefined();
+    expect(capabilities(true, 'UNKNOWN')).toBeUndefined();
+    expect(capabilities(false, 'BLOCKED')).toBeUndefined();
+  });
+
   test('reads where the pull stands in a merge queue', () => {
     expect(
       parsePullMergeQueueStatus({

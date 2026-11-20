@@ -68,6 +68,11 @@ export interface PullMergeQueueStatus {
 export interface PullMergeCapabilities {
   canMerge: boolean;
   methods: PullMergeMethod[];
+  // The viewer may merge now although GitHub's requirements (required
+  // checks or reviews, the merge queue) aren't met: GitHub's "Bypass
+  // requirements" (viewerCanMergeAsAdmin), offered only while the pull
+  // isn't already mergeable.
+  canBypass?: true;
 }
 
 // canUpdate gates title/body/state/draft edits (author or push access);

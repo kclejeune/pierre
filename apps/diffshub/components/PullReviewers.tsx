@@ -90,6 +90,7 @@ export function PullReviewers({
   const pickerToggle = editable ? (
     <PanelPickerToggle
       addLabel="Request reviewers"
+      addText="Request"
       empty={empty}
       open={picker.open}
       onToggle={picker.toggle}
@@ -105,7 +106,11 @@ export function PullReviewers({
   const query = picker.filter.trim();
 
   return (
-    <PanelSection action={!empty && pickerToggle} heading="Reviewers">
+    <PanelSection
+      action={!empty && pickerToggle}
+      heading="Reviewers"
+      inline={empty && !picker.open && verdicts !== 'unavailable'}
+    >
       {empty ? (
         <PanelEmptyLine
           emptyText="No reviewers requested."

@@ -453,7 +453,8 @@ export function parsePullMergeCapabilities(
   data: unknown
 ): PullMergeCapabilities {
   const repository = asRecord(asRecord(data)?.repository);
-  return {
+  const pull = asRecord(repository?.pullRequest);
+  const capabilities: PullMergeCapabilities = {
     canMerge: MERGE_PERMISSIONS.has(
       readStringPath(repository, ['viewerPermission']) ?? ''
     ),
@@ -463,6 +464,18 @@ export function parsePullMergeCapabilities(
       ...(repository?.rebaseMergeAllowed === true ? (['rebase'] as const) : []),
     ],
   };
+  // Bypass only means something while GitHub wouldn't merge the pull as
+  // is; an unknown state (still computing) doesn't offer it either.
+  const state = readStringPath(pull, ['mergeStateStatus']);
+  if (
+    pull?.viewerCanMergeAsAdmin === true &&
+    state != null &&
+    state !== 'UNKNOWN' &&
+    !READY_MERGE_STATES.has(state)
+  ) {
+    capabilities.canBypass = true;
+  }
+  return capabilities;
 }
 
 // The pull's merge-queue standing from a GraphQL PullRequest node carrying
@@ -568,6 +581,8 @@ const PULL_ACCESS_QUERY = `query ($owner: String!, $name: String!, $number: Int!
     rebaseMergeAllowed
     pullRequest(number: $number) {
       viewerCanUpdate
+      viewerCanMergeAsAdmin
+      mergeStateStatus
       ${MERGE_QUEUE_FIELDS}
     }
   }

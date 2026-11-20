@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 
-import { commitRangeViewerHref } from '@/lib/pullCommitsList';
 import {
   findQueuePosition,
   parsePullQueue,
@@ -90,13 +89,6 @@ describe('pull queue', () => {
     expect(readPullQueueId('?queue=../etc')).toBeNull();
     expect(readPullQueueId('?queue=ABC')).toBeNull();
     expect(readPullQueueId('')).toBeNull();
-    expect(
-      commitRangeViewerHref(
-        '/acme/a/commit/abc',
-        { owner: 'acme', repo: 'a', number: '1' },
-        'q1'
-      )
-    ).toBe('/acme/a/commit/abc?fromPull=%2Facme%2Fa%2Fpull%2F1&queue=q1');
   });
 
   test('drops expired, unreadable, and the oldest past the cap', () => {

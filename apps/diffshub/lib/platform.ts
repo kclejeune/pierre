@@ -22,3 +22,18 @@ export function isEditableEventTarget(event: KeyboardEvent): boolean {
     target.closest('input, textarea, select, [contenteditable]') != null
   );
 }
+
+// Whether a key event should drive a single-key page shortcut (the pull
+// queue's [ and ], the dashboard's row keys, comment n and p): an unmodified,
+// unhandled press outside text entry, with no dialog or menu open to own the
+// keyboard.
+export function isPageShortcutEvent(event: KeyboardEvent): boolean {
+  return !(
+    event.defaultPrevented ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.altKey ||
+    isEditableEventTarget(event) ||
+    document.querySelector('[role="dialog"], [role="menu"]') != null
+  );
+}

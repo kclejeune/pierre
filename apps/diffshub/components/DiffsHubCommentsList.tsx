@@ -37,12 +37,14 @@ import { ReactionChipList, useCommentReactions } from './CommentReactions';
 import { MarkdownContent, RawMarkdownFallback } from './MarkdownContent';
 import { SidebarPanelHeader } from './SidebarPanelHeader';
 import { useGitHubUser } from './useGitHubUser';
+import { annotationBorderColor } from '@/lib/annotation';
 import { cn } from '@/lib/cn';
 import { readCommentDraft } from '@/lib/commentDrafts';
 import {
   createCommentSidebarPreview,
   summarizeCommentBody,
 } from '@/lib/commentSidebarPreview';
+import type { DiffHunkSnippetLine } from '@/lib/diffHunkSnippet';
 import type {
   CommentAuthor,
   CommentLineType,
@@ -439,6 +441,62 @@ function getCommentLineClassName(
   return side === 'additions'
     ? 'text-[var(--diffshub-comment-add-fg,#047857)] dark:text-[var(--diffshub-comment-add-fg,#34d399)]'
     : 'text-[var(--diffshub-comment-del-fg,#be123c)] dark:text-[var(--diffshub-comment-del-fg,#fb7185)]';
+}
+
+// The code an outdated thread was written on, as GitHub shows it: the last
+// lines of its hunk, ending at the commented line (marked), since the diff
+// no longer has that line to scroll to.
+function OutdatedSnippet({ lines }: { lines: readonly DiffHunkSnippetLine[] }) {
+  return (
+    <div
+      className={`w-full overflow-x-auto rounded-md border ${annotationBorderColor} py-1 font-mono text-[12px] leading-5`}
+    >
+      {lines.map((line, index) => {
+        const color =
+          line.kind === 'addition'
+            ? 'var(--diffshub-comment-add-fg,#047857)'
+            : line.kind === 'deletion'
+              ? 'var(--diffshub-comment-del-fg,#be123c)'
+              : null;
+        const commented = index === lines.length - 1;
+        return (
+          <div
+            key={index}
+            className={cn(
+              'flex min-w-max pr-3',
+              commented && 'shadow-[inset_2px_0_0_var(--color-ring)]'
+            )}
+            style={
+              color == null
+                ? undefined
+                : {
+                    background: `color-mix(in srgb, ${color} 10%, transparent)`,
+                  }
+            }
+          >
+            <span
+              aria-hidden
+              className="text-muted-foreground w-10 shrink-0 pr-2 text-right select-none"
+            >
+              {line.lineNumber}
+            </span>
+            <span
+              aria-hidden
+              className="w-3 shrink-0 select-none"
+              style={color == null ? undefined : { color }}
+            >
+              {line.kind === 'addition'
+                ? '+'
+                : line.kind === 'deletion'
+                  ? '-'
+                  : ''}
+            </span>
+            <span className="whitespace-pre">{line.text}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 // Wraps a click handler so users can drag-select text inside the row without
@@ -979,6 +1037,9 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
                         )}
                       </span>
                     </CardHeader>
+                    {comment.detached?.snippet != null && (
+                      <OutdatedSnippet lines={comment.detached.snippet} />
+                    )}
                     <DeferredMarkdown
                       className={COLLAPSED_SIDEBAR_MARKDOWN_CLASS}
                       markdown={comment.message}

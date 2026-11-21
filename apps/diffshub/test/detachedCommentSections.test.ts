@@ -57,6 +57,28 @@ describe('buildDetachedCommentSections', () => {
     ['item-0', { fileOrder: 0, path: 'src/index.ts' }],
   ]);
 
+  test('an outdated thread carries the code it was written on', () => {
+    const snippet = [
+      { kind: 'addition' as const, lineNumber: 40, text: 'const a = 1;' },
+    ];
+    const [outdated] = buildDetachedCommentSections({
+      commentFileByItemId,
+      pathToItemId,
+      states: null,
+      threads: [
+        [
+          createComment({
+            id: 1,
+            line: null,
+            originalLine: 40,
+            originalSnippet: snippet,
+          }),
+        ],
+      ],
+    });
+    expect(outdated?.comments[0]?.detached?.snippet).toEqual(snippet);
+  });
+
   test('lists an outdated thread under its file at its original line', () => {
     const root = createComment({ id: 1, line: null, originalLine: 40 });
     const reply = createComment({

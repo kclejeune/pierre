@@ -1,6 +1,7 @@
 import type { AnnotationSide, SelectedLineRange } from '@pierre/diffs';
 import type { FileTreeGitStatusPatch, GitStatusEntry } from '@pierre/trees';
 
+import type { DiffHunkSnippetLine } from './diffHunkSnippet';
 import type { CommentReaction } from './reactions';
 
 export type ViewerLoadState =
@@ -89,6 +90,10 @@ export interface PullReviewComment {
   // The line the comment was written on, in the commit it was written
   // against. The only anchor an outdated comment (`line` null) still has.
   originalLine?: number;
+  // The last lines of the code the comment was written on, ending at its
+  // line, from GitHub's `diff_hunk`. What an outdated thread shows of code
+  // the diff no longer has.
+  originalSnippet?: DiffHunkSnippetLine[];
   path: string;
   // Non-zero emoji reaction tallies, in GitHub's picker order.
   reactions?: CommentReaction[];
@@ -223,6 +228,9 @@ export interface DetachedCommentThread {
   fileInDiff: boolean;
   htmlUrl: string | null;
   outdated: boolean;
+  // The code the thread was written on, when it is outdated and GitHub
+  // sent the hunk.
+  snippet?: readonly DiffHunkSnippetLine[];
 }
 
 export interface DiffsHubSavedCommentEntry {

@@ -326,8 +326,8 @@ export const DiffsHubSidebar = memo(function DiffsHubSidebar({
         <div className="flex items-center gap-3 px-4 pt-5 pb-2 md:px-3 md:pt-0.5 md:pb-0">
           <ButtonGroup
             aria-label="Sidebar sections"
-            className="mr-auto flex min-w-0 gap-3 bg-transparent md:gap-2"
-            variant="ghost"
+            className="mr-auto flex min-w-0 gap-3 md:gap-2"
+            variant="tabs"
             value={activeTab}
             onValueChange={(value) => selectTab(value as SidebarTab)}
           >

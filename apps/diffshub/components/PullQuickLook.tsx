@@ -176,18 +176,13 @@ export function PullQuickLook({
               // The group defaults to self-start; center it in the header row
               // with the stepper and buttons around it.
               className="shrink-0 self-center"
-              size="xs"
               value={diffStyle}
               onValueChange={(value) =>
                 setDiffStyle(value === 'unified' ? 'unified' : 'split')
               }
             >
-              <ButtonGroupItem value="split" className="h-7 px-2.5">
-                Split
-              </ButtonGroupItem>
-              <ButtonGroupItem value="unified" className="h-7 px-2.5">
-                Unified
-              </ButtonGroupItem>
+              <ButtonGroupItem value="split">Split</ButtonGroupItem>
+              <ButtonGroupItem value="unified">Unified</ButtonGroupItem>
             </ButtonGroup>
             <Button
               asChild

@@ -16,7 +16,8 @@ export function CountChip(props: HTMLAttributes<HTMLSpanElement>) {
 // The title row every sidebar tab starts with: the tab's name, an optional
 // count, and the tab's own controls at the right. A fixed height, so each
 // tab's content starts at the same place and switching tabs doesn't make it
-// jump.
+// jump. Touch screens get 40px, room for a segmented control's 32px
+// segments on its inset track.
 export function SidebarPanelHeader({
   children,
   count,
@@ -27,7 +28,7 @@ export function SidebarPanelHeader({
   title: string;
 }) {
   return (
-    <div className="flex h-8 shrink-0 items-center gap-2 px-3">
+    <div className="flex h-8 shrink-0 items-center gap-2 px-3 pointer-coarse:h-10">
       <h2 className="text-foreground flex min-w-0 items-center gap-1.5 text-[13px] font-semibold">
         <span className="truncate">{title}</span>
         {count != null && count > 0 && <CountChip>{count}</CountChip>}

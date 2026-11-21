@@ -34,6 +34,10 @@ const buttonVariants = cva(
       },
       size: {
         xs: 'h-5.5 rounded-sm gap-1.5 px-1.5 text-xs',
+        // One option of a ButtonGroup segmented control or chip row: 24px,
+        // grown to 32px on touch screens.
+        segment:
+          'h-6 rounded-md gap-1 px-2 text-xs font-normal pointer-coarse:h-8',
         // List toolbars and the batch bar: 28px, grown to 36px on touch
         // screens so every control on those bars takes a thumb.
         toolbar: 'h-7 rounded-md gap-1 px-1.5 text-xs pointer-coarse:h-9',

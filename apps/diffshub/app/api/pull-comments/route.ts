@@ -1,5 +1,6 @@
 import { type NextRequest } from 'next/server';
 
+import { readDiffHunkSnippet } from '@/lib/diffHunkSnippet';
 import { sendGitHubGraphQL } from '@/lib/githubCommitServer';
 import { isFullCommitSha } from '@/lib/githubDiffSource';
 import {
@@ -588,6 +589,22 @@ async function resolvePullHeadCommit(
   return commitId;
 }
 
+// The few lines of `diff_hunk` the panel shows for an outdated thread,
+// parsed here so the payload carries those instead of the whole hunk. A
+// file-level comment has no line, so its hunk names none.
+function readOriginalSnippet(
+  record: Record<string, unknown>
+): Pick<PullReviewComment, 'originalSnippet'> {
+  if (typeof record.diff_hunk !== 'string' || record.subject_type === 'file') {
+    return {};
+  }
+  const snippet = readDiffHunkSnippet(
+    record.diff_hunk,
+    record.side === 'LEFT' ? 'LEFT' : 'RIGHT'
+  );
+  return snippet.length === 0 ? {} : { originalSnippet: snippet };
+}
+
 // Normalizes a GitHub review-comment payload into the app's shape, dropping
 // entries that lack the fields the viewer depends on.
 function normalizeReviewComment(comment: unknown): PullReviewComment | null {
@@ -622,6 +639,7 @@ function normalizeReviewComment(comment: unknown): PullReviewComment | null {
     ...(typeof record.original_line === 'number'
       ? { originalLine: record.original_line }
       : {}),
+    ...readOriginalSnippet(record),
     path: record.path,
     side: isGitHubDiffSide(record.side) ? record.side : null,
     startLine: typeof record.start_line === 'number' ? record.start_line : null,

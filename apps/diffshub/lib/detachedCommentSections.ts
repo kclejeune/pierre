@@ -116,6 +116,9 @@ function createDetachedEntry(
       fileInDiff,
       htmlUrl: root.htmlUrl,
       outdated: current == null,
+      ...(current == null && root.originalSnippet != null
+        ? { snippet: root.originalSnippet }
+        : {}),
     },
     itemId,
     key: `thread-${root.id}`,

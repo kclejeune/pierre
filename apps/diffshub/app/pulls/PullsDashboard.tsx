@@ -878,10 +878,7 @@ function AudienceFilter({
           isSelected &&
             'bg-accent dark:bg-accent border-transparent font-medium shadow-none'
         )
-      : // Slightly tighter than the sm default so more chips fit a row.
-        // Unselected chips keep a transparent border so selecting one
-        // doesn't shift its neighbors.
-        cn('px-2.5', !isSelected && 'border border-transparent');
+      : undefined;
   const selected: readonly PullInvolvement[] = value === 'anyone' ? [] : value;
   const toggle = (involvement: PullInvolvement) =>
     onChange(
@@ -903,14 +900,14 @@ function AudienceFilter({
       className={
         vertical
           ? 'w-full flex-col gap-0.5 self-stretch bg-transparent'
-          : 'flex-wrap gap-1 bg-transparent max-sm:w-full max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:[scrollbar-width:none] max-sm:[&>*]:shrink-0'
+          : 'flex-wrap max-sm:w-full max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:[scrollbar-width:none] max-sm:[&>*]:shrink-0'
       }
-      size="sm"
+      size={vertical ? 'sm' : undefined}
+      variant="chips"
     >
       {anyoneAllowed && (
         <ButtonGroupItem
           className={itemClassName(value === 'anyone')}
-          aria-pressed={value === 'anyone'}
           selected={value === 'anyone'}
           title="Every pull request in this scope, whoever it involves"
           value="anyone"
@@ -921,7 +918,6 @@ function AudienceFilter({
       )}
       <ButtonGroupItem
         className={itemClassName(value !== 'anyone' && value.length === 0)}
-        aria-pressed={value !== 'anyone' && value.length === 0}
         selected={value !== 'anyone' && value.length === 0}
         title="Pull requests involving you in any way below"
         value="me"
@@ -933,7 +929,6 @@ function AudienceFilter({
         <ButtonGroupItem
           key={involvement}
           className={itemClassName(selected.includes(involvement))}
-          aria-pressed={selected.includes(involvement)}
           selected={selected.includes(involvement)}
           title={PULL_ACTIVITY_LABELS[involvement]}
           value={involvement}
@@ -1280,31 +1275,42 @@ function PullList({
           />
         ) : (
           <div className="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1">
-            <div
-              role="radiogroup"
+            <ButtonGroup
               aria-label="Pull request state"
               // From 20-30rem (most phones) the tabs get their own fully
               // labeled row, spaced like the menus row under them. Narrower
               // phones keep the compact tabs, and the row wraps as a last
               // resort rather than clipping its last tab.
-              className="flex flex-wrap items-center @max-[30rem]/header:gap-2"
+              className="flex-wrap @max-[30rem]/header:gap-2"
+              value={state}
+              variant="tabs"
+              onValueChange={(next) =>
+                onApplyText(
+                  writePullStateFilter(
+                    text,
+                    STATE_TOGGLES.find((option) => option.value === next)
+                      ?.value ?? state
+                  )
+                )
+              }
             >
               {STATE_TOGGLES.map((option) => (
-                <button
+                <ButtonGroupItem
                   key={option.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={state === option.value}
                   // The tooltip names the tab where only its glyph shows.
                   title={option.label}
                   className={cn(
-                    'focus-visible:ring-ring inline-flex h-7 cursor-pointer items-center justify-center gap-1 rounded-md px-1.5 text-xs outline-none focus-visible:ring-2 pointer-coarse:h-9',
-                    state === option.value
-                      ? 'text-foreground font-medium'
-                      : 'text-muted-foreground hover:text-foreground pointer-coarse:min-w-9'
+                    state !== option.value && 'pointer-coarse:min-w-9'
                   )}
-                  onClick={() =>
-                    onApplyText(writePullStateFilter(text, option.value))
+                  value={option.value}
+                  count={
+                    state !== option.value ? undefined : loading ? (
+                      // Refetching: the count and any rows below are the
+                      // previous answer until the search returns.
+                      <Spinner className="size-3" />
+                    ) : (
+                      totalCount.toLocaleString()
+                    )
                   }
                 >
                   <option.Icon aria-hidden="true" className="size-3.5" />
@@ -1319,19 +1325,9 @@ function PullList({
                   >
                     {option.label}
                   </span>
-                  {state === option.value &&
-                    (loading ? (
-                      // Refetching: the count and any rows below are the
-                      // previous answer until the search returns.
-                      <Spinner className="text-muted-foreground size-3" />
-                    ) : (
-                      <span className="text-muted-foreground font-normal tabular-nums">
-                        {totalCount.toLocaleString()}
-                      </span>
-                    ))}
-                </button>
+                </ButtonGroupItem>
               ))}
-            </div>
+            </ButtonGroup>
             <div className="-mx-0.5 flex items-center @max-[30rem]/header:mx-0 @max-[30rem]/header:gap-2">
               <PullFilterMenus
                 muting={muting}
@@ -1756,8 +1752,7 @@ function MenuSegments<T extends string>({
     >
       <ButtonGroup
         aria-label={label}
-        className="w-full self-stretch border p-0.5"
-        size="xs"
+        className="w-full self-stretch"
         value={value}
       >
         {options.map((option) => (
@@ -1768,7 +1763,7 @@ function MenuSegments<T extends string>({
             onSelect={(event) => event.preventDefault()}
           >
             <ButtonGroupItem
-              className="data-[highlighted]:ring-ring h-6 flex-1 px-1.5 tabular-nums outline-none data-[highlighted]:ring-2"
+              className="data-[highlighted]:ring-ring flex-1 px-1.5 tabular-nums outline-none data-[highlighted]:ring-2"
               title={option.title}
               value={option.value}
             >

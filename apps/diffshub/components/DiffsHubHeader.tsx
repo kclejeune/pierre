@@ -502,19 +502,35 @@ export const DiffsHubHeader = memo(function DiffsHubHeader({
                 >
                   <span>Indicator style</span>
                   <ButtonGroup
+                    aria-label="Indicator style"
                     className="ml-auto"
                     value={diffIndicators}
                     onValueChange={(value) =>
                       setDiffIndicators(value as DiffIndicators)
                     }
                   >
-                    <ButtonGroupItem value="bars" className="size-7 p-0">
+                    <ButtonGroupItem
+                      aria-label="Bars"
+                      className="w-7 px-0"
+                      title="Bars"
+                      value="bars"
+                    >
                       <IconCodeStyleBars className="size-3" />
                     </ButtonGroupItem>
-                    <ButtonGroupItem value="classic" className="size-7 p-0">
+                    <ButtonGroupItem
+                      aria-label="Classic"
+                      className="w-7 px-0"
+                      title="Classic"
+                      value="classic"
+                    >
                       <IconSymbolDiffstat className="size-3" />
                     </ButtonGroupItem>
-                    <ButtonGroupItem value="none" className="size-7 p-0">
+                    <ButtonGroupItem
+                      aria-label="None"
+                      className="w-7 px-0"
+                      title="None"
+                      value="none"
+                    >
                       <IconEyeSlash className="size-3" />
                     </ButtonGroupItem>
                   </ButtonGroup>
@@ -630,6 +646,7 @@ function ThemeDropdown({
               onSelect={(event) => event.preventDefault()}
             >
               <ButtonGroup
+                aria-label="Color mode"
                 className="w-full"
                 value={colorMode}
                 onValueChange={(value) => {
@@ -643,15 +660,15 @@ function ThemeDropdown({
                 }}
               >
                 <ButtonGroupItem value="system" className="flex-1">
-                  <IconColorAuto />
+                  <IconColorAuto className="size-3.5" />
                   Auto
                 </ButtonGroupItem>
                 <ButtonGroupItem value="light" className="flex-1">
-                  <IconColorLight />
+                  <IconColorLight className="size-3.5" />
                   Light
                 </ButtonGroupItem>
                 <ButtonGroupItem value="dark" className="flex-1">
-                  <IconColorDark />
+                  <IconColorDark className="size-3.5" />
                   Dark
                 </ButtonGroupItem>
               </ButtonGroup>

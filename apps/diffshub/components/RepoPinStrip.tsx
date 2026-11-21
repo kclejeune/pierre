@@ -3,6 +3,10 @@
 import { IconPin, IconPlus } from '@pierre/icons';
 import type { ReactNode } from 'react';
 
+import {
+  SELECTED_SEGMENT_CLASS,
+  UNSELECTED_CHIP_CLASS,
+} from '@/components/ButtonGroup';
 import { cn } from '@/lib/cn';
 import { isRepoPinned, MAX_PINNED_REPOS } from '@/lib/pinnedRepos';
 import { splitPath } from '@/lib/splitPath';
@@ -166,8 +170,8 @@ export function ScopeChip({
         selected
           ? fill
             ? 'bg-accent text-foreground border-transparent font-medium'
-            : 'bg-background text-foreground shadow-xs'
-          : 'text-muted-foreground hover:text-foreground hover:bg-accent/50 border-transparent',
+            : SELECTED_SEGMENT_CLASS
+          : UNSELECTED_CHIP_CLASS,
         dashed && 'border-dashed'
       )}
     >

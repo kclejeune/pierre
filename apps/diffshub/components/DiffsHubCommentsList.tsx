@@ -887,19 +887,16 @@ export const DiffsHubCommentsList = memo(function DiffsHubCommentsList({
         <SidebarPanelHeader title="Comments" count={totalCount}>
           {showFilter && (
             <ButtonGroup
-              size="xs"
               aria-label="Show comments"
               value={activeFilter}
               onValueChange={(value) => onFilterChange(value as CommentFilter)}
             >
               <ButtonGroupItem value="all">All</ButtonGroupItem>
-              <ButtonGroupItem value="unresolved" className="gap-1">
+              <ButtonGroupItem
+                value="unresolved"
+                count={unresolvedCount > 0 ? unresolvedCount : undefined}
+              >
                 Unresolved
-                {unresolvedCount > 0 && (
-                  <span className="text-muted-foreground tabular-nums">
-                    {unresolvedCount}
-                  </span>
-                )}
               </ButtonGroupItem>
               {viewerLogin != null && (
                 <ButtonGroupItem value="mine">Mine</ButtonGroupItem>
